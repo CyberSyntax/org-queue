@@ -123,9 +123,20 @@
 
 (require 'pulse)
 
+(defun my-launch-anki ()
+  "Launch Anki application if it exists."
+  (let* ((user-profile (getenv "USERPROFILE"))  ; Get the user's home directory on Windows
+         (anki-path (expand-file-name "AppData/Local/Programs/Anki/anki.exe" user-profile)))
+    (if (file-exists-p anki-path)
+        (condition-case err
+            (start-process "Anki" nil anki-path)
+          (error (message "Failed to launch Anki: %s" (error-message-string err))))
+      (message "Anki executable not found at: %s" anki-path))))
+
 (defun my-show-next-outstanding-task ()
   "Show the next outstanding task in priority order.
 If the list is exhausted, it refreshes the list."
+  (my-launch-anki)
   (interactive)
   (unless (and my-outstanding-tasks-list
                (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
