@@ -39,14 +39,11 @@ Replace `"/path/to/org-queue/"` with the actual path where you cloned the reposi
 
 org-queue provides a range of custom commands to help you navigate and manage your task queue efficiently:
 
-- **Outstanding Tasks**: View tasks that are overdue or due today.
-- **Future Tasks**: Display tasks scheduled for the future.
-- **Unscheduled Tasks**: See tasks without a specific schedule.
 - **Queue Navigation**:
-  - `C-c t n`: Show the next outstanding task.
-  - `C-c t p`: Show the previous outstanding task.
-  - `C-c t c`: Show the current outstanding task.
-  - `C-c t r`: Reset the queue index to the first outstanding task.
+  - `C-c q n`: Show the next outstanding task.
+  - `C-c q p`: Show the previous outstanding task.
+  - `C-c q c`: Show the current outstanding task.
+  - `C-c q r`: Reset the queue index to the first outstanding task.
 
 With these commands, you can stay focused on critical tasks and manage your agenda effectively.
 
