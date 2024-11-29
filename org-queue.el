@@ -46,47 +46,6 @@
         (tags priority-down)
         (search category-keep)))
 
-;; Define custom commands with explicit sorting strategies
-(setq org-agenda-custom-commands
-      '(("o" "Outstanding Tasks (Overdue or Due Today)"
-         ((agenda ""
-                  ((org-agenda-span 'day)
-                   (org-agenda-skip-function 'my-org-agenda-skip-non-outstanding-tasks)
-                   (org-agenda-overriding-header "\nOutstanding Tasks (Overdue or Due Today)\n")
-                   (org-agenda-sorting-strategy '(priority-down time-up)))))
-         )
-        ("f" "Future Tasks (Scheduled for Tomorrow and Beyond)"
-         ((agenda ""
-                  ((org-agenda-start-day "+1d")
-                   (org-agenda-span 14)
-                   (org-agenda-skip-function 'my-org-agenda-skip-past-and-today-tasks)
-                   (org-agenda-overriding-header "\nFuture Tasks (Scheduled for Tomorrow and Beyond)\n")
-                   (org-agenda-sorting-strategy '(priority-down time-up)))))
-         )
-        ("u" "Unscheduled Tasks (No SCHEDULED Date)"
-         ((todo ""
-                ((org-agenda-skip-function 'my-org-agenda-skip-scheduled-tasks)
-                 (org-agenda-overriding-header "\nUnscheduled Tasks (No SCHEDULED Date)\n")
-                 (org-agenda-sorting-strategy '(priority-down)))))
-         )
-        ("c" "Combined Agenda View"
-         ((agenda ""
-                  ((org-agenda-span 'day)
-                   (org-agenda-skip-function 'my-org-agenda-skip-non-outstanding-tasks)
-                   (org-agenda-overriding-header "\nOutstanding Tasks (Overdue or Due Today)\n")
-                   (org-agenda-sorting-strategy '(priority-down time-up))))
-          (agenda ""
-                  ((org-agenda-start-day "+1d")
-                   (org-agenda-span 14)
-                   (org-agenda-skip-function 'my-org-agenda-skip-past-and-today-tasks)
-                   (org-agenda-overriding-header "\nFuture Tasks (Scheduled for Tomorrow and Beyond)\n")
-                   (org-agenda-sorting-strategy '(priority-down time-up))))
-          (todo ""
-                ((org-agenda-skip-function 'my-org-agenda-skip-scheduled-tasks)
-                 (org-agenda-overriding-header "\nUnscheduled Tasks (No SCHEDULED Date)\n")
-                 (org-agenda-sorting-strategy '(priority-down)))))
-         )))
-
 ;; Define a function to get the priority value considering numerical priorities
 (defun my-get-priority-value ()
   "Get the numerical priority value of the current task."
@@ -203,12 +162,13 @@ If the list is exhausted, it refreshes the list."
 (defun my-reset-outstanding-tasks-index ()
   "Reset the outstanding tasks index to start from the first task."
   (interactive)
+  (my-get-outstanding-tasks)
   (setq my-outstanding-tasks-index 0)
   (message "Outstanding tasks index reset."))
 
 ;; Define a prefix command for your tasks
 (define-prefix-command 'my-tasks-map)
-(global-set-key (kbd "C-c t") 'my-tasks-map)
+(global-set-key (kbd "C-c q") 'my-tasks-map)
 
 ;; Bind your functions to keys under the prefix
 (define-key my-tasks-map (kbd "n") 'my-show-next-outstanding-task)
