@@ -7,7 +7,6 @@
 - **Incremental Task Prioritization**: Organize tasks by priority levels ranging from 1 to 64, accommodating highly granular task importance.
 - **Outstanding Task Management**: Track overdue or due-today tasks with a dedicated view and quickly navigate through outstanding items.
 - **Queue-Based Task Navigation**: Move through your task queue seamlessly, focusing on one task at a time based on priority and due date.
-- **Custom Agenda Views**: Access personalized agenda commands to view outstanding, future, and unscheduled tasks, or combine them for a full overview.
 
 ## Why org-queue?
 
