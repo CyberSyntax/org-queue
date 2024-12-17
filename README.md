@@ -4,13 +4,15 @@
 
 ## Features
 
-- **Incremental Task Prioritization**: Organize tasks by priority levels ranging from 1 to 64, accommodating highly granular task importance.
-- **Outstanding Task Management**: Track overdue or due-today tasks with a dedicated view and quickly navigate through outstanding items.
-- **Queue-Based Task Navigation**: Move through your task queue seamlessly, focusing on one task at a time based on priority and due date.
+- **Incremental Task Prioritization**: Tasks are organized using a **priority range of 1 to 64**, providing highly granular control over importance.
+- **Dynamic Scheduling**: Tasks are automatically scheduled within a specified time frame to distribute workload evenly.
+- **Randomized Prioritization**: Priorities are randomly assigned within configurable ranges to avoid bias.
+- **Outstanding Task Management**: Easily track overdue tasks and navigate to tasks due today or in the near future.
+- **Queue-Based Task Navigation**: Move seamlessly through a prioritized task queue, focusing on one task at a time.
 
 ## Why org-queue?
 
-org-queue leverages the powerful capabilities of org-mode to bring a dynamic, queue-based task management system that emphasizes progressive prioritization and scheduling. With org-queue, tasks can be revisited according to a carefully balanced priority system, making it ideal for users who benefit from structured task flow and adaptive scheduling.
+org-queue leverages the powerful capabilities of **org-mode** to provide a dynamic task management system. It combines structured queuing, randomization, and progressive scheduling to help you efficiently tackle tasks while maintaining flexibility.
 
 ## Installation
 
@@ -19,33 +21,71 @@ org-queue leverages the powerful capabilities of org-mode to bring a dynamic, qu
     git clone https://github.com/CyberSyntax/org-queue.git
     ```
 
-2. Add `org-queue` to your Emacs configuration by setting up the load path and requiring the package:
+2. Add `org-queue` to your Emacs configuration:
     ```emacs-lisp
     ;; Set the path to the org-queue directory
     (setq org-queue-dir "/path/to/org-queue/")
-    ;; Add the org-queue directory to Emacs load path
     (add-to-list 'load-path (file-name-as-directory org-queue-dir))
 
     ;; Load org-queue
     (require 'org-queue)
     ```
 
-Replace `"/path/to/org-queue/"` with the actual path where you cloned the repository. For example, if you cloned it into `~/emacs/org-queue/`, you would set `org-queue-dir` to `"/home/your-username/emacs/org-queue/"`.
+Replace `"/path/to/org-queue/"` with the directory where you cloned the repository. For example:  
+`/home/username/emacs/org-queue/`
 
-3. Start using `org-queue` with your existing org-mode setup!
+3. Restart Emacs, and you're ready to use `org-queue`!
 
 ## Usage
 
-org-queue provides a range of custom commands to help you navigate and manage your task queue efficiently:
+org-queue enhances your **org-mode** workflow with powerful commands for task prioritization and navigation:
 
-- **Queue Navigation**:
-  - `C-c q n`: Show the next outstanding task.
-  - `C-c q p`: Show the previous outstanding task.
-  - `C-c q c`: Show the current outstanding task.
-  - `C-c q r`: Reset the queue index to the first outstanding task.
+### Task Prioritization
 
-With these commands, you can stay focused on critical tasks and manage your agenda effectively.
+- Priorities are managed automatically within the range you configure:
+    - Highest priority: **1**
+    - Lowest priority: **64**
+    - Default priority: **32**
+
+- Random priorities are assigned when creating new tasks, ensuring balanced task distribution.
+
+### Task Scheduling
+
+Tasks are scheduled randomly within the next **two months**, helping you distribute tasks evenly over time.
+
+### Queue Navigation Commands
+
+- **`C-c q n`**: Navigate to the **next outstanding task**.  
+- **`C-c q p`**: Navigate to the **previous outstanding task**.  
+- **`C-c q c`**: Show the **current outstanding task**.  
+- **`C-c q r`**: Reset the queue to the **first outstanding task**.
+
+With these commands, you can seamlessly move through your task queue without manually searching through your Org files.
+
+### Configuration
+
+If needed, you can customize the priority range in your `init.el`:
+
+```emacs-lisp
+(setq org-priority-highest 1)   ;; Highest priority
+(setq org-priority-lowest 64)   ;; Lowest priority
+(setq org-priority-default 32)  ;; Default priority
+```
+
+This setup allows org-queue to work perfectly with your tasks and priorities.
+
+## Workflow Example
+
+1. **Insert Tasks**: Use `C-<return>` to create a new heading in org-mode.  
+   - Tasks will automatically be assigned a **random priority** and **random schedule**.
+
+2. **Navigate Tasks**:  
+   - Use `C-c q n` and `C-c q p` to move through your outstanding tasks.  
+
+3. **Focus on What Matters**:  
+   - Priorities and scheduling adapt dynamically, keeping your workload balanced.
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0 (GPL-3.0). See the [LICENSE](./LICENSE) file for details.
+This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)**.  
+See the [LICENSE](./LICENSE) file for details.
