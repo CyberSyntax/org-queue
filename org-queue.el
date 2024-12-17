@@ -9,7 +9,7 @@
 ;; Set extended numerical priority range
 (setq org-priority-highest 1)
 (setq org-priority-lowest 64)
-(setq org-priority-default 50)
+(setq org-priority-default 32)
 
 (defun my-post-org-insert-heading (&rest _args)
   "Run after `org-insert-heading` to assign a random priority and schedule more robustly."
