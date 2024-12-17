@@ -1,9 +1,7 @@
-;;; org-queue.el
-
 ;; Ensure Org Agenda is loaded
 (require 'org-agenda)
 
-;; Ensure the random number generator is seeded once
+;; Ensure the random number generator is seeded once, at the top of your init file
 (random t)
 
 ;; Set extended numerical priority range
@@ -12,16 +10,14 @@
 (setq org-priority-default 32)
 
 (defun my-post-org-insert-heading (&rest _args)
-  "Run after `org-insert-heading` to assign a random priority and schedule more robustly."
+  "Run after `org-insert-heading` to assign random priority and schedule."
   (when (eq major-mode 'org-mode)
-    ;; First, set the priority to the default explicitly
-    (org-priority org-priority-default)
-
-    ;; Calculate how far down from default to go (0 = default, up to lowest-default)
-    (let ((steps (random (1+ (- org-priority-lowest org-priority-default)))))
-      ;; Move down the priority 'steps' times using built-in command
-      (dotimes (_ steps)
-        (org-priority-down)))
+    ;; Randomize priority within [org-priority-default, org-priority-lowest]
+    (let* ((min-priority org-priority-default)
+           (max-priority org-priority-lowest)
+           (random-priority (+ min-priority (random (1+ (- max-priority min-priority))))))
+      ;; Directly set the numeric priority
+      (org-priority random-priority))
 
     ;; Random schedule within ~2 months
     (let* ((today (current-time))
@@ -29,10 +25,10 @@
            (random-date (time-add today (days-to-time days-ahead))))
       (org-schedule nil (format-time-string "%Y-%m-%d" random-date)))
 
-    ;; Move cursor to the end of the line
+    ;; Move cursor to end of the line
     (end-of-line)))
 
-;; Advise `org-insert-heading` to run custom behavior after inserting a heading
+;; Advise the function that `C-<return>` calls, typically `org-insert-heading`
 (advice-add 'org-insert-heading :after #'my-post-org-insert-heading)
 
 ;; Ensure org-agenda-files is set (adjust the path as needed)
