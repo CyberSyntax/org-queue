@@ -1,7 +1,7 @@
 ;; Ensure Org Agenda is loaded
 (require 'org-agenda)
 
-;; Ensure the random number generator is seeded once, at the top of your init file
+;; Ensure the random number generator is seeded once
 (random t)
 
 ;; Set extended numerical priority range
@@ -200,3 +200,4 @@ If the list is exhausted, it refreshes the list."
 (define-key my-tasks-map (kbd "r") 'my-reset-outstanding-tasks-index)
 
 (provide 'org-queue) ;; Provide the 'org-queue' feature to make it available for require statements
+
