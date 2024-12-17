@@ -3,10 +3,37 @@
 ;; Ensure Org Agenda is loaded
 (require 'org-agenda)
 
+;; Ensure the random number generator is seeded once
+(random t)
+
 ;; Set extended numerical priority range
 (setq org-priority-highest 1)
 (setq org-priority-lowest 64)
 (setq org-priority-default 50)
+
+(defun my-post-org-insert-heading (&rest _args)
+  "Run after `org-insert-heading` to assign a random priority and schedule more robustly."
+  (when (eq major-mode 'org-mode)
+    ;; First, set the priority to the default explicitly
+    (org-priority org-priority-default)
+
+    ;; Calculate how far down from default to go (0 = default, up to lowest-default)
+    (let ((steps (random (1+ (- org-priority-lowest org-priority-default)))))
+      ;; Move down the priority 'steps' times using built-in command
+      (dotimes (_ steps)
+        (org-priority-down)))
+
+    ;; Random schedule within ~2 months
+    (let* ((today (current-time))
+           (days-ahead (random (* 2 30))) ;; 0-60 days
+           (random-date (time-add today (days-to-time days-ahead))))
+      (org-schedule nil (format-time-string "%Y-%m-%d" random-date)))
+
+    ;; Move cursor to the end of the line
+    (end-of-line)))
+
+;; Advise `org-insert-heading` to run custom behavior after inserting a heading
+(advice-add 'org-insert-heading :after #'my-post-org-insert-heading)
 
 ;; Ensure org-agenda-files is set (adjust the path as needed)
 ;; (setq org-agenda-files
@@ -177,5 +204,3 @@ If the list is exhausted, it refreshes the list."
 (define-key my-tasks-map (kbd "r") 'my-reset-outstanding-tasks-index)
 
 (provide 'org-queue) ;; Provide the 'org-queue' feature to make it available for require statements
-
-;;; End of org-queue.el
