@@ -9,23 +9,36 @@
 (setq org-priority-lowest 64)
 (setq org-priority-default 32)
 
+(defvar my-random-schedule-default-months 3
+  "Default number of months to schedule if none is specified.")
+
+(defun my-random-schedule (months)
+  "Non-interactive function that schedules an Org heading MONTHS months in the future."
+  (let* ((today (current-time))
+         (days-ahead (random (* months 30)))
+         (random-date (time-add today (days-to-time days-ahead))))
+    (org-schedule nil (format-time-string "%Y-%m-%d" random-date))))
+
+(defun my-random-schedule-command (&optional months)
+  "Interactive command to schedule MONTHS months in the future (defaults to my-random-schedule-default-months)."
+  (interactive
+   (list (read-number
+          (format "Enter the upper month limit: "
+                  my-random-schedule-default-months)
+          my-random-schedule-default-months)))
+  (my-random-schedule (or months my-random-schedule-default-months)))
+
 (defun my-post-org-insert-heading (&rest _args)
   "Run after `org-insert-heading` to assign random priority and schedule."
   (when (eq major-mode 'org-mode)
     ;; Randomize priority within [org-priority-default, org-priority-lowest]
     (let* ((min-priority org-priority-default)
            (max-priority org-priority-lowest)
-           (random-priority (+ min-priority (random (1+ (- max-priority min-priority))))))
-      ;; Directly set the numeric priority
+           (random-priority (+ min-priority
+                               (random (1+ (- max-priority min-priority))))))
       (org-priority random-priority))
-
-    ;; Random schedule within ~2 months
-    (let* ((today (current-time))
-           (days-ahead (random (* 2 30))) ;; 0-60 days
-           (random-date (time-add today (days-to-time days-ahead))))
-      (org-schedule nil (format-time-string "%Y-%m-%d" random-date)))
-
-    ;; Move cursor to end of the line
+    ;; Call the lower-level function directly to schedule default months out with no interactive prompt.
+    (my-random-schedule my-random-schedule-default-months)
     (end-of-line)))
 
 ;; Advise the function that `C-<return>` calls, typically `org-insert-heading`
@@ -194,10 +207,10 @@ If the list is exhausted, it refreshes the list."
 (global-set-key (kbd "C-c q") 'my-tasks-map)
 
 ;; Bind your functions to keys under the prefix
+(define-key my-tasks-map (kbd "s") 'my-random-schedule-command)
 (define-key my-tasks-map (kbd "n") 'my-show-next-outstanding-task)
 (define-key my-tasks-map (kbd "p") 'my-show-previous-outstanding-task)
 (define-key my-tasks-map (kbd "c") 'my-show-current-outstanding-task)
 (define-key my-tasks-map (kbd "r") 'my-reset-outstanding-tasks-index)
 
 (provide 'org-queue) ;; Provide the 'org-queue' feature to make it available for require statements
-
