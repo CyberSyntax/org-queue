@@ -1,70 +1,101 @@
 # org-queue
 
-**org-queue** is an Emacs package designed for incremental task management within **org-mode**, bringing advanced priority handling, scheduling, and queuing capabilities to help you stay organized and focused. Inspired by incremental learning techniques, org-queue helps you prioritize, defer, and sequentially handle tasks according to urgency and importance.
+**org-queue** is an Emacs package designed to enhance **org-mode** with advanced incremental task management capabilities. By introducing features such as priority-based task handling, dynamic scheduling, and queue navigation, org-queue helps you stay focused and organized. Drawing inspiration from incremental learning techniques, it allows you to prioritize, defer, and manage tasks based on their urgency and importance.
 
-## Features
+## Key Features
 
-- **Incremental Task Prioritization**: Tasks are organized using a **priority range of 1 to 64**, providing highly granular control over importance.
-- **Dynamic Scheduling**: Tasks are automatically scheduled within a specified time frame to distribute workload evenly.
-- **Randomized Prioritization**: Priorities are randomly assigned within configurable ranges to avoid bias.
-- **Outstanding Task Management**: Easily track overdue tasks and navigate to tasks due today or in the near future.
-- **Queue-Based Task Navigation**: Move seamlessly through a prioritized task queue, focusing on one task at a time.
+- **Granular Task Prioritization**:  
+  Assign priorities on a scale of **1 (highest)** to **64 (lowest)** for precise task ranking.
 
-## Why org-queue?
+- **Dynamic and Randomized Scheduling**:  
+  Automatically distribute tasks across a specified time frame, ensuring even workload distribution. Randomized prioritization minimizes bias when assigning task importance.
 
-org-queue leverages the powerful capabilities of **org-mode** to provide a dynamic task management system. It combines structured queuing, randomization, and progressive scheduling to help you efficiently tackle tasks while maintaining flexibility.
+- **Outstanding Task Tracking**:  
+  Effortlessly monitor overdue tasks and navigate through tasks due today or in the near future.
+
+- **Queue-Based Navigation**:  
+  Work sequentially through a prioritized task queue, maintaining focus on one task at a time.
+
+## Why Choose org-queue?
+
+org-queue builds upon the powerful foundation of **org-mode** to provide a robust and flexible task management system. By combining features like structured queues, randomization, and progressive scheduling, it enables users to manage tasks efficiently while maintaining flexibility and control.
+
+---
 
 ## Installation
 
-1. Clone the repository:
-    ```sh
-    git clone https://github.com/CyberSyntax/org-queue.git
-    ```
+1. **Clone the Repository**:  
+   Open your terminal and run:  
+   ```sh
+   git clone https://github.com/CyberSyntax/org-queue.git
+   ```
 
-2. Add `org-queue` to your Emacs configuration:
-    ```emacs-lisp
-    ;; Set the path to the org-queue directory
-    (setq org-queue-dir "/path/to/org-queue/")
-    (add-to-list 'load-path (file-name-as-directory org-queue-dir))
+2. **Configure org-queue in Emacs**:  
+   Add the following lines to your Emacs configuration file (`.emacs` or `init.el`):  
+   ```emacs-lisp
+   ;; Set the path to the org-queue directory
+   (setq org-queue-dir "/path/to/org-queue/")
+   (add-to-list 'load-path (file-name-as-directory org-queue-dir))
 
-    ;; Load org-queue
-    (require 'org-queue)
-    ```
+   ;; Load org-queue
+   (require 'org-queue)
+   ```  
+   Replace `/path/to/org-queue/` with the directory where you cloned the repository (e.g., `/home/username/emacs/org-queue/`).
 
-Replace `"/path/to/org-queue/"` with the directory where you cloned the repository. For example:  
-`/home/username/emacs/org-queue/`
+3. **Restart Emacs**:  
+   Once configured, restart Emacs, and org-queue will be ready to use!
 
-3. Restart Emacs, and you're ready to use `org-queue`!
+---
 
 ## Usage
 
-org-queue enhances your **org-mode** workflow with powerful commands for task prioritization and navigation:
+org-queue enhances your **org-mode** workflow by introducing powerful tools for task prioritization, scheduling, and queue navigation.
 
 ### Task Prioritization
 
-- Priorities are managed automatically within the range you configure:
-    - Highest priority: **1**
-    - Lowest priority: **64**
-    - Default priority: **32**
+Tasks in org-queue are assigned priorities based on the following scale:  
+- **Highest Priority**: `1`  
+- **Lowest Priority**: `64`  
+- **Default Priority**: `32`  
 
-- Random priorities are assigned when creating new tasks, ensuring balanced task distribution.
+When you create a new task, org-queue may randomly assign a priority (within configurable limits), ensuring a balanced workload distribution.
 
-### Task Scheduling
+---
 
-Tasks are scheduled randomly within the next **two months**, helping you distribute tasks evenly over time.
+### Scheduling Tasks
 
-### Queue Navigation Commands
+**1. Non-Interactive Scheduling**:  
+Create a new heading (e.g., with `C-<return>`). org-queue will automatically:  
+- Assign a random priority.  
+- Schedule the task randomly within the next **two months** (configurable).  
 
-- **`C-c q n`**: Navigate to the **next outstanding task**.  
-- **`C-c q p`**: Navigate to the **previous outstanding task**.  
-- **`C-c q c`**: Show the **current outstanding task**.  
-- **`C-c q r`**: Reset the queue to the **first outstanding task**.
+This ensures tasks are evenly distributed over time.
 
-With these commands, you can seamlessly move through your task queue without manually searching through your Org files.
+**2. Interactive Scheduling** (`C-c q s`):  
+Press `C-c q s` to schedule a task interactively:  
+- You’ll be prompted to specify the number of months ahead for scheduling.  
+- The task will then be scheduled randomly within the selected range.  
 
-### Configuration
+For programmatic scheduling without user interaction, you can call `(my-random-schedule <months>)` directly.
 
-If needed, you can customize the priority range in your `init.el`:
+---
+
+### Navigating the Task Queue
+
+org-queue provides several convenient commands for navigating outstanding tasks:
+
+- **`C-c q n`**: Move to the next outstanding task.  
+- **`C-c q p`**: Move to the previous outstanding task.  
+- **`C-c q c`**: Show the current outstanding task.  
+- **`C-c q r`**: Reset the queue to the first outstanding task.
+
+These commands help you work sequentially through your task queue without needing to manually search your Org file.
+
+---
+
+## Configuration
+
+To optimize your experience, configure org-mode’s priority settings to align with org-queue:
 
 ```emacs-lisp
 (setq org-priority-highest 1)   ;; Highest priority
@@ -72,20 +103,31 @@ If needed, you can customize the priority range in your `init.el`:
 (setq org-priority-default 32)  ;; Default priority
 ```
 
-This setup allows org-queue to work perfectly with your tasks and priorities.
+You can also adjust the default scheduling range by updating the `my-random-schedule-default-months` variable:
+
+```emacs-lisp
+(defvar my-random-schedule-default-months 3
+  "Default number of months to schedule if none is specified.")
+```
+
+---
 
 ## Workflow Example
 
-1. **Insert Tasks**: Use `C-<return>` to create a new heading in org-mode.  
-   - Tasks will automatically be assigned a **random priority** and **random schedule**.
+1. **Insert Tasks**:  
+   Create a new heading (e.g., using `C-<return>`). org-queue will automatically assign a random priority and schedule the task within your configured months range.
 
-2. **Navigate Tasks**:  
-   - Use `C-c q n` and `C-c q p` to move through your outstanding tasks.  
+2. **Interactive Scheduling**:  
+   Use `C-c q s` to manually specify the scheduling range for any task.
 
-3. **Focus on What Matters**:  
-   - Priorities and scheduling adapt dynamically, keeping your workload balanced.
+3. **Navigate the Queue**:  
+   Use commands like `C-c q n` and `C-c q p` to navigate outstanding tasks and stay focused.
+
+This workflow balances automation (non-interactive scheduling) with manual intervention (interactive scheduling), offering a flexible and efficient approach to task management.
+
+---
 
 ## License
 
-This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)**.  
-See the [LICENSE](./LICENSE) file for details.
+org-queue is licensed under the **GNU General Public License v3.0 (GPL-3.0)**.  
+Refer to the LICENSE file for detailed terms and conditions.
