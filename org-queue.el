@@ -9,34 +9,84 @@
 (setq org-priority-lowest 64)
 (setq org-priority-default 32)
 
+(defun my-set-priority-with-heuristics ()
+  "Set a random priority within a user-defined heuristic range.
+Defaults to range 9 if no input is provided."
+  (interactive)
+  (let* ((priority-ranges '((0 . (1 . 2))
+                            (1 . (2 . 5))
+                            (2 . (5 . 12))
+                            (3 . (12 . 18))
+                            (4 . (18 . 24))
+                            (5 . (24 . 30))
+                            (6 . (30 . 37))
+                            (7 . (37 . 45))
+                            (8 . (45 . 58))
+                            (9 . (58 . 64))))
+         ;; Prompt the user for input, defaulting to range 9
+         (user-choice (read-number "Select a priority range (0-9): " 9))
+         ;; Retrieve the range for the chosen priority
+         (range (cdr (assoc user-choice priority-ranges))))
+    (if (and range (<= user-choice 9) (>= user-choice 0))
+        (let* ((min-priority (car range))
+               (max-priority (cdr range))
+               (random-priority (+ min-priority
+                                   (random (1+ (- max-priority min-priority))))))
+          (org-priority random-priority)
+          (message "Priority set to: %d" random-priority))
+      (message "Invalid input. Please select a number between 0 and 9."))))
+
+(defun my-ensure-priority-set ()
+  "Ensure the current heading has a priority set.
+If not, assign a random priority within the default range."
+  (save-excursion
+    ;; Move to the current heading
+    (org-back-to-heading t)
+    ;; Ensure the heading is fully visible
+    (org-show-entry)
+    ;; Check if PRIORITY is set
+    (let ((current-priority (org-entry-get nil "PRIORITY")))
+      ;; If PRIORITY is not set, assign one
+      (unless (and current-priority (not (string= current-priority " ")))
+        (let* ((min-priority org-priority-default)
+               (max-priority org-priority-lowest)
+               (random-priority (+ min-priority
+                                   (random (1+ (- max-priority min-priority))))))
+          (org-priority random-priority))))))
+
 (defvar my-random-schedule-default-months 3
   "Default number of months to schedule if none is specified.")
 
 (defun my-random-schedule (months)
-  "Non-interactive function that schedules an Org heading MONTHS months in the future."
-  (let* ((today (current-time))
-         (days-ahead (random (* months 30)))
-         (random-date (time-add today (days-to-time days-ahead))))
-    (org-schedule nil (format-time-string "%Y-%m-%d" random-date))))
+  "Non-interactive function that schedules an Org heading MONTHS months in the future.
+Guarded to avoid execution during Emacs initialization."
+  (when (and (not noninteractive)  ;; Avoid running in batch mode
+             (eq major-mode 'org-mode)) ;; Ensure it's only in Org mode
+    (let* ((today (current-time))
+           (days-ahead (random (* months 30)))
+           (random-date (time-add today (days-to-time days-ahead))))
+      (org-schedule nil (format-time-string "%Y-%m-%d" random-date)))))
 
 (defun my-random-schedule-command (&optional months)
-  "Interactive command to schedule MONTHS months in the future (defaults to my-random-schedule-default-months)."
+  "Interactive command to schedule MONTHS months in the future (defaults to my-random-schedule-default-months).
+If the current heading does not have a priority, assign one automatically."
   (interactive
    (list (read-number
           (format "Enter the upper month limit: "
                   my-random-schedule-default-months)
           my-random-schedule-default-months)))
-  (my-random-schedule (or months my-random-schedule-default-months)))
+  (save-excursion
+    ;; Schedule the current heading
+    (my-random-schedule (or months my-random-schedule-default-months))
+    ;; Ensure priority is set for the current heading
+    (my-ensure-priority-set)))
 
 (defun my-post-org-insert-heading (&rest _args)
-  "Run after `org-insert-heading` to assign random priority and schedule."
-  (when (eq major-mode 'org-mode)
-    ;; Randomize priority within [org-priority-default, org-priority-lowest]
-    (let* ((min-priority org-priority-default)
-           (max-priority org-priority-lowest)
-           (random-priority (+ min-priority
-                               (random (1+ (- max-priority min-priority))))))
-      (org-priority random-priority))
+  "Run after `org-insert-heading` to assign priority and schedule."
+  (when (and (not noninteractive)  ;; Avoid running in batch mode
+             (eq major-mode 'org-mode)) ;; Ensure it's only in Org mode
+    ;; Ensure priority is set (handled inside `my-ensure-priority-set`)
+    (my-ensure-priority-set)
     ;; Call the lower-level function directly to schedule default months out with no interactive prompt.
     (my-random-schedule my-random-schedule-default-months)
     (end-of-line)))
@@ -207,6 +257,7 @@ If the list is exhausted, it refreshes the list."
 (global-set-key (kbd "C-c q") 'my-tasks-map)
 
 ;; Bind your functions to keys under the prefix
+(define-key my-tasks-map (kbd ",") 'my-set-priority-with-heuristics)
 (define-key my-tasks-map (kbd "s") 'my-random-schedule-command)
 (define-key my-tasks-map (kbd "n") 'my-show-next-outstanding-task)
 (define-key my-tasks-map (kbd "p") 'my-show-previous-outstanding-task)
