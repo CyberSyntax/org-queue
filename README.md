@@ -67,7 +67,9 @@
      - **Default Priority**: Defined by `org-priority-default` (default: `32`)  
      - **Lowest Priority**: Defined by `org-priority-lowest` (default: `64`)  
 
-     When you create a new task (e.g., with `C-RET`) or perform interactive random scheduling (e.g., with `C-c q s`), `org-queue` automatically assigns a random priority within the range defined by `org-priority-default` and `org-priority-lowest`, provided the task does not already have a priority.
+     When you create a new task (e.g., with `C-RET`), `org-queue` automatically assigns a random priority within the range defined by `org-priority-default` and `org-priority-lowest`, provided the task does not already have a priority.
+
+     For interactive random scheduling (e.g., with `C-c q s`), if the task does not have a priority, `org-queue` assigns a random priority within the range defined by `org-priority-default` and `org-priority-lowest`. If the task already has a priority, `org-queue` identifies the heuristic range it belongs to and assigns a new random priority within the same range.
 
      This ensures a flexible system that adapts to your workflow while maintaining a balanced workload distribution.
 
@@ -77,7 +79,7 @@
    - **Shortcut**: `C-c q s`  
    - **Description**: Prompts the user to specify an upper limit in months for scheduling the current task. The task will then be scheduled randomly within the range of **1 day** to the specified upper limit in months.  
 
-     If the current heading does not already have a priority, a random priority will be assigned automatically after scheduling.
+     If the current heading does not already have a priority, a random priority will be assigned automatically within the range defined by `org-priority-default` and `org-priority-lowest`. If the heading already has a priority, a new random priority will be assigned within the same heuristic range.
 
      #### How it works:
      - This command combines **user input** for flexibility and **random scheduling** for dynamic workload distribution.
