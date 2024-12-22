@@ -6,6 +6,8 @@
 
 - **Granular Task Prioritization**:  
   Assign priorities on a scale of **1 (highest)** to **64 (lowest)** for precise task ranking.
+  
+  *Note:* While Org-mode traditionally uses characters (A, B, C) for priorities, `org-queue` utilizes numerical values to provide a more granular prioritization system. This approach is fully supported in the latest versions of Emacs.
 
 - **Dynamic and Randomized Scheduling**:  
   Automatically distribute tasks across a specified time frame, ensuring even workload distribution. Randomized prioritization minimizes bias when assigning task importance.
@@ -42,9 +44,16 @@
    ;; Load org-queue
    (require 'org-queue)
    ```  
-   Replace `/path/to/org-queue/` with the directory where you cloned the repository (e.g., `/home/username/emacs/org-queue/`).
 
-3. **Restart Emacs**:  
+   Replace `/path/to/org-queue/` with the full directory path where you cloned the repository. Examples for different operating systems:
+
+   - **Linux**: `/home/<your-username>/<repository-folder>/org-queue/`  
+   - **macOS**: `/Users/<your-username>/<repository-folder>/org-queue/`  
+   - **Windows**: `C:/Users/<your-username>/<repository-folder>/org-queue/`  
+
+   **Note**: Replace `<your-username>` with your actual system username and `<repository-folder>` with the name of the folder where you saved the `org-queue` repository. Use the correct path format for your operating system.
+
+4. **Restart Emacs**:  
    Once configured, restart Emacs, and `org-queue` will be ready to use!
 
 ---
@@ -57,29 +66,20 @@
 
 ### Key Commands and Shortcuts
 
-#### 1. **Automatic Priority Assignment**  
-   - **Shortcut**: `C-RET`  
-   - **Description**: Automatically assigns a random priority and schedules a new heading within the default range of three months.  
+#### 1. **Automatic Priority Assignment**
+   - **Shortcut**: `C-RET`
+   - **Description**: Automatically assigns a random priority and schedules a new heading within the default range of three months.
 
      #### Task Prioritization
-     Tasks in `org-queue` are assigned priorities based on the following scale:  
-     - **Highest Priority**: `1`  
-     - **Default Priority**: Defined by `org-priority-default` (default: `32`)  
-     - **Lowest Priority**: Defined by `org-priority-lowest` (default: `64`)  
-
-     When you create a new task (e.g., with `C-RET`), `org-queue` automatically assigns a random priority within the range defined by `org-priority-default` and `org-priority-lowest`, provided the task does not already have a priority.
-
-     For interactive random scheduling (e.g., with `C-c q s`), if the task does not have a priority, `org-queue` assigns a random priority within the range defined by `org-priority-default` and `org-priority-lowest`. If the task already has a priority, `org-queue` identifies the heuristic range it belongs to and assigns a new random priority within the same range.
-
-     This ensures a flexible system that adapts to your workflow while maintaining a balanced workload distribution.
-
+     When you create a new task using `C-RET`, `org-queue` identifies the priority ranges that include both `org-priority-default` and `org-priority-lowest`. It then combines these ranges, including any intermediate ranges, to form a continuous set of eligible ranges. From this combined set, `org-queue` randomly selects one range and assigns a random priority within that selected range. Subsequently, the task is scheduled to occur randomly within the next three months. This approach ensures that each new task receives a priority that aligns with your predefined heuristic ranges, promoting a balanced and adaptable workload distribution.
+     
 ---
 
 #### 2. **Interactive Random Scheduling**  
    - **Shortcut**: `C-c q s`  
    - **Description**: Prompts the user to specify an upper limit in months for scheduling the current task. The task will then be scheduled randomly within the range of **1 day** to the specified upper limit in months.  
 
-     If the current heading does not already have a priority, a random priority will be assigned automatically within the range defined by `org-priority-default` and `org-priority-lowest`. If the heading already has a priority, a new random priority will be assigned within the same heuristic range.
+     When you use interactive random scheduling (e.g., with `C-c q s`), `org-queue` assigns a random priority by first identifying all predefined priority ranges that include both `org-priority-default` and `org-priority-lowest`. It then randomly selects one of these ranges and assigns a random priority within the chosen range. This approach ensures that tasks are prioritized consistently within their heuristic groups while being scheduled dynamically based on your input.
 
      #### How it works:
      - This command combines **user input** for flexibility and **random scheduling** for dynamic workload distribution.
@@ -156,6 +156,7 @@ You can also adjust the default scheduling range by updating the `my-random-sche
 (defvar my-random-schedule-default-months 3
   "Default number of months to schedule if none is specified.")
 ```
+
 ---
 
 ## License
