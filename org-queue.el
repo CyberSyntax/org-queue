@@ -6,8 +6,8 @@
 
 ;; Set extended numerical priority range
 (setq org-priority-highest 1)
-(setq org-priority-lowest 64)
 (setq org-priority-default 32)
+(setq org-priority-lowest 64)
 
 (defun my-set-priority-with-heuristics ()
   "Set a random priority within a user-defined heuristic range.
