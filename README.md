@@ -144,8 +144,8 @@ To optimize your experience, configure org-mode’s priority settings to align w
 
 ```emacs-lisp
 (setq org-priority-highest 1)   ;; Highest priority
-(setq org-priority-lowest 64)   ;; Lowest priority
 (setq org-priority-default 32)  ;; Default priority
+(setq org-priority-lowest 64)   ;; Lowest priority
 ```
 
 You can also adjust the default scheduling range by updating the `my-random-schedule-default-months` variable:
