@@ -162,4 +162,4 @@ You can also adjust the default scheduling range by updating the `my-random-sche
 ## License
 
 `org-queue` is licensed under the **GNU General Public License v3.0 (GPL-3.0)**.  
-Refer to the LICENSE file for detailed terms and conditions.
+Refer to the [LICENSE](./LICENSE) file for detailed terms and conditions.
