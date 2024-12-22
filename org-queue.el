@@ -1,5 +1,6 @@
-;; Ensure Org Agenda is loaded
+;; Ensure Org Agenda and cl-lib are loaded
 (require 'org-agenda)
+(require 'cl-lib)  ;; Required for cl-find-if and cl-remove-if-not
 
 ;; Ensure the random number generator is seeded once
 (random t)
@@ -61,7 +62,7 @@ Defaults to range 9 if no input is provided."
 
 (defun my-ensure-priority-set ()
   "Ensure the current heading has a priority set.
-If PRIORITY is not set, assign one within the default range.
+If PRIORITY is not set, assign one within the appropriate range.
 If PRIORITY is set, reassign a priority within the same range."
   (save-excursion
     ;; Move to the current heading
@@ -80,9 +81,24 @@ If PRIORITY is set, reassign a priority within the same range."
                   (message "Priority reassigned within range %d." current-range))
               (message "Current priority %d does not fall within any defined range."
                        priority-value)))
-        ;; PRIORITY is not set; assign a random priority within default range (9)
-        (my-set-priority-with-heuristics 9)
-        (message "Priority was not set. Assigned default range priority.")))))
+        ;; PRIORITY is not set; assign a random priority within appropriate ranges
+        (let* ((matching-ranges
+                (cl-remove-if-not
+                 (lambda (range)
+                   (let ((min (car (cdr range)))
+                         (max (cdr (cdr range))))
+                     ;; Updated condition: min <= org-priority-lowest AND max >= org-priority-default
+                     (and (<= min org-priority-lowest)
+                          (>= max org-priority-default))))
+                 my-priority-ranges))
+               (range-ids (mapcar #'car matching-ranges)))
+          (if range-ids
+              (let ((selected-range (nth (random (length range-ids)) range-ids)))
+                (my-set-priority-with-heuristics selected-range)
+                (message "Priority was not set. Assigned random priority within range %d."
+                         selected-range))
+            ;; Fallback in case no ranges match the criteria
+            (message "No valid range found for default priority settings. Check configurations.")))))))
 
 (defvar my-random-schedule-default-months 3
   "Default number of months to schedule if none is specified.")
@@ -102,8 +118,7 @@ Guarded to avoid execution during Emacs initialization."
 If the current heading does not have a priority, assign one automatically."
   (interactive
    (list (read-number
-          (format "Enter the upper month limit: "
-                  my-random-schedule-default-months)
+          "Enter the upper month limit: "
           my-random-schedule-default-months)))
   (save-excursion
     ;; Schedule the current heading
@@ -128,20 +143,17 @@ If the current heading does not have a priority, assign one automatically."
 ;; (setq org-agenda-files
 ;;       (directory-files-recursively "~/org/" "\\.org$"))
 
-;; Define a function to determine if a task is outstanding (overdue or due today)
 (defun my-is-outstanding-task ()
   "Return non-nil if the current task is overdue or due today."
   (let ((scheduled-time (org-get-scheduled-time nil)))
     (and scheduled-time
          (<= (time-to-days scheduled-time) (time-to-days (current-time))))))
-
-;; Define a function to skip non-outstanding tasks (for use in agenda)
+  
 (defun my-org-agenda-skip-non-outstanding-tasks ()
   "Skip tasks that are not outstanding."
   (unless (my-is-outstanding-task)
     (org-end-of-subtree t)))
 
-;; Define functions to skip future and scheduled tasks (as before)
 (defun my-org-agenda-skip-past-and-today-tasks ()
   "Skip tasks that are scheduled for today or earlier; show only future tasks."
   (let ((scheduled-time (org-get-scheduled-time nil)))
@@ -162,13 +174,16 @@ If the current heading does not have a priority, assign one automatically."
         (tags priority-down)
         (search category-keep)))
 
-;; Define a function to get the priority value considering numerical priorities
 (defun my-get-priority-value ()
-  "Get the numerical priority value of the current task."
+  "Get the numerical priority value of the current task.
+If PRIORITY is not set, return a random value between `org-priority-default` and `org-priority-lowest`."
   (let ((priority-str (org-entry-get nil "PRIORITY")))
     (if priority-str
+        ;; If PRIORITY is set, return its value as a number
         (string-to-number priority-str)
-      org-priority-default)))
+      ;; If PRIORITY is not set, return a random value within the range
+      (+ org-priority-default
+         (random (1+ (- org-priority-lowest org-priority-default)))))))
 
 ;; Define variables for outstanding tasks list and index
 (defvar my-outstanding-tasks-list nil
@@ -177,7 +192,6 @@ If the current heading does not have a priority, assign one automatically."
 (defvar my-outstanding-tasks-index 0
   "Current index in the outstanding tasks list.")
 
-;; Define function to get outstanding tasks, sorted by priority
 (defun my-get-outstanding-tasks ()
   "Populate `my-outstanding-tasks-list` with outstanding tasks, sorted by priority."
   (setq my-outstanding-tasks-list nil)
