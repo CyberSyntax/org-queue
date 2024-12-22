@@ -9,22 +9,33 @@
 (setq org-priority-default 32)
 (setq org-priority-lowest 64)
 
-(defun my-set-priority-with-heuristics ()
+;; Declare priority-ranges as a global variable
+(defvar my-priority-ranges
+  '((0 . (1 . 2))
+    (1 . (2 . 5))
+    (2 . (5 . 12))
+    (3 . (12 . 18))
+    (4 . (18 . 24))
+    (5 . (24 . 30))
+    (6 . (30 . 37))
+    (7 . (37 . 45))
+    (8 . (45 . 58))
+    (9 . (58 . 64)))
+  "Global priority ranges for setting random priorities.
+Each entry is a cons cell where the car is the range identifier
+and the cdr is a cons cell representing the minimum and maximum priority values.")
+
+(defun my-set-priority-with-heuristics (&optional specific-range)
   "Set a random priority within a user-defined heuristic range.
+If SPECIFIC-RANGE is provided, use that range identifier instead of prompting the user.
 Defaults to range 9 if no input is provided."
   (interactive)
-  (let* ((priority-ranges '((0 . (1 . 2))
-                            (1 . (2 . 5))
-                            (2 . (5 . 12))
-                            (3 . (12 . 18))
-                            (4 . (18 . 24))
-                            (5 . (24 . 30))
-                            (6 . (30 . 37))
-                            (7 . (37 . 45))
-                            (8 . (45 . 58))
-                            (9 . (58 . 64))))
-         ;; Prompt the user for input, defaulting to range 9
-         (user-choice (read-number "Select a priority range (0-9): " 9))
+  (let* ((priority-ranges my-priority-ranges)
+         ;; Determine the range to use
+         (user-choice
+          (if (numberp specific-range)
+              specific-range
+            (read-number "Select a priority range (0-9): " 9)))
          ;; Retrieve the range for the chosen priority
          (range (cdr (assoc user-choice priority-ranges))))
     (if (and range (<= user-choice 9) (>= user-choice 0))
@@ -36,23 +47,42 @@ Defaults to range 9 if no input is provided."
           (message "Priority set to: %d" random-priority))
       (message "Invalid input. Please select a number between 0 and 9."))))
 
+(defun my-find-priority-range (priority)
+  "Find the range identifier for a given PRIORITY."
+  (let ((range-found
+         (cl-find-if
+          (lambda (range)
+            (let ((min (car (cdr range)))
+                  (max (cdr (cdr range))))
+              (and (>= priority min) (<= priority max))))
+          my-priority-ranges)))
+    (when range-found
+      (car range-found))))
+
 (defun my-ensure-priority-set ()
   "Ensure the current heading has a priority set.
-If not, assign a random priority within the default range."
+If PRIORITY is not set, assign one within the default range.
+If PRIORITY is set, reassign a priority within the same range."
   (save-excursion
     ;; Move to the current heading
     (org-back-to-heading t)
     ;; Ensure the heading is fully visible
     (org-show-entry)
-    ;; Check if PRIORITY is set
+    ;; Retrieve the current PRIORITY property
     (let ((current-priority (org-entry-get nil "PRIORITY")))
-      ;; If PRIORITY is not set, assign one
-      (unless (and current-priority (not (string= current-priority " ")))
-        (let* ((min-priority org-priority-default)
-               (max-priority org-priority-lowest)
-               (random-priority (+ min-priority
-                                   (random (1+ (- max-priority min-priority))))))
-          (org-priority random-priority))))))
+      (if (and current-priority (not (string= current-priority " ")))
+          ;; PRIORITY is set; determine its range and reassign within the same range
+          (let* ((priority-value (string-to-number current-priority))
+                 (current-range (my-find-priority-range priority-value)))
+            (if current-range
+                (progn
+                  (my-set-priority-with-heuristics current-range)
+                  (message "Priority reassigned within range %d." current-range))
+              (message "Current priority %d does not fall within any defined range."
+                       priority-value)))
+        ;; PRIORITY is not set; assign a random priority within default range (9)
+        (my-set-priority-with-heuristics 9)
+        (message "Priority was not set. Assigned default range priority.")))))
 
 (defvar my-random-schedule-default-months 3
   "Default number of months to schedule if none is specified.")
