@@ -26,28 +26,6 @@
 Each entry is a cons cell where the car is the range identifier
 and the cdr is a cons cell representing the minimum and maximum priority values.")
 
-(defun my-set-priority-with-heuristics (&optional specific-range)
-  "Set a random priority within a user-defined heuristic range.
-If SPECIFIC-RANGE is provided, use that range identifier instead of prompting the user.
-Defaults to range 9 if no input is provided."
-  (interactive)
-  (let* ((priority-ranges my-priority-ranges)
-         ;; Determine the range to use
-         (user-choice
-          (if (numberp specific-range)
-              specific-range
-            (read-number "Select a priority range (0-9): " 9)))
-         ;; Retrieve the range for the chosen priority
-         (range (cdr (assoc user-choice priority-ranges))))
-    (if (and range (<= user-choice 9) (>= user-choice 0))
-        (let* ((min-priority (car range))
-               (max-priority (cdr range))
-               (random-priority (+ min-priority
-                                   (random (1+ (- max-priority min-priority))))))
-          (org-priority random-priority)
-          (message "Priority set to: %d" random-priority))
-      (message "Invalid input. Please select a number between 0 and 9."))))
-
 (defun my-find-priority-range (priority)
   "Find the range identifier for a given PRIORITY."
   (let ((range-found
@@ -59,6 +37,53 @@ Defaults to range 9 if no input is provided."
           my-priority-ranges)))
     (when range-found
       (car range-found))))
+
+(defun my-get-current-priority-range ()
+  "Determine the priority range of the current heading.
+Returns the range identifier if priority is set; otherwise, nil."
+  (let ((current-priority (org-entry-get nil "PRIORITY")))
+    (when (and current-priority (not (string= current-priority " ")))
+      (let ((priority-value (string-to-number current-priority)))
+        (my-find-priority-range priority-value)))))
+
+(defun my-set-priority-with-heuristics (&optional specific-range)
+  "Set a random priority within a user-defined heuristic range.
+
+If called interactively:
+  - If SPECIFIC-RANGE is provided, use that range identifier without prompting.
+  - If SPECIFIC-RANGE is not provided, prompt the user to select a priority range,
+    defaulting to the current heading's range or 9.
+
+If called programmatically (non-interactively):
+  - If SPECIFIC-RANGE is provided, use that range identifier without prompting.
+  - If SPECIFIC-RANGE is not provided, use the current heading's range or 9 without prompting."
+  (interactive)
+  (let* ((priority-ranges my-priority-ranges)
+         (range
+          (cond
+           ;; If specific-range is provided, use it directly
+           (specific-range
+            (cdr (assoc specific-range priority-ranges)))
+
+           ;; If called interactively without specific-range, prompt the user
+           ((and (called-interactively-p 'any))
+            (let* ((default-range (or (my-get-current-priority-range) 9))
+                   (user-choice (read-number
+                                 (format "Select a priority range (0-9) [Default: %d]: " default-range)
+                                 default-range)))
+              (cdr (assoc user-choice priority-ranges))))
+
+           ;; If called programmatically without specific-range, use default
+           (t
+            (cdr (assoc (or (my-get-current-priority-range) 9) priority-ranges))))))
+    (if range
+        (let* ((min-priority (car range))
+               (max-priority (cdr range))
+               (random-priority (+ min-priority
+                                   (random (1+ (- max-priority min-priority))))))
+          (org-priority random-priority)
+          (message "Priority set to: %d" random-priority))
+      (message "Invalid range."))))
 
 (defun my-ensure-priority-set ()
   "Ensure the current heading has a priority set.
@@ -114,7 +139,7 @@ Guarded to avoid execution during Emacs initialization."
       (org-schedule nil (format-time-string "%Y-%m-%d" random-date)))))
 
 (defun my-random-schedule-command (&optional months)
-  "Interactive command to schedule MONTHS months in the future (defaults to my-random-schedule-default-months).
+  "Interactive command to schedule MONTHS months in the future (defaults to `my-random-schedule-default-months`).
 If the current heading does not have a priority, assign one automatically."
   (interactive
    (list (read-number
@@ -148,7 +173,7 @@ If the current heading does not have a priority, assign one automatically."
   (let ((scheduled-time (org-get-scheduled-time nil)))
     (and scheduled-time
          (<= (time-to-days scheduled-time) (time-to-days (current-time))))))
-  
+
 (defun my-org-agenda-skip-non-outstanding-tasks ()
   "Skip tasks that are not outstanding."
   (unless (my-is-outstanding-task)
