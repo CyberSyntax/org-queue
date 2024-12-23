@@ -69,7 +69,7 @@ If called programmatically (non-interactively):
            ((and (called-interactively-p 'any))
             (let* ((default-range (or (my-get-current-priority-range) 9))
                    (user-choice (read-number
-                                 (format "Select a priority range (0-9) [Default: %d]: " default-range)
+                                 "Select a priority range (0-9): "
                                  default-range)))
               (cdr (assoc user-choice priority-ranges))))
 
