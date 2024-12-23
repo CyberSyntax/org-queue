@@ -6,8 +6,6 @@
 
 - **Granular Task Prioritization**:  
   Assign priorities on a scale of **1 (highest)** to **64 (lowest)** for precise task ranking.
-  
-  *Note:* While Org-mode traditionally uses characters (A, B, C) for priorities, `org-queue` utilizes numerical values to provide a more granular prioritization system. This approach is fully supported in the latest versions of Emacs.
 
 - **Dynamic and Randomized Scheduling**:  
   Automatically distribute tasks across a specified time frame, ensuring even workload distribution. Randomized prioritization minimizes bias when assigning task importance.
