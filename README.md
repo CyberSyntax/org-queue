@@ -115,7 +115,9 @@
      - After selecting a group, the command randomly picks a priority within the specified range and assigns it to the current heading.
 
      #### Default Behavior:
-     - If no input is provided, it defaults to **Group 9 (58–64)**, assigning the task a lower priority for less urgent attention.
+     - **If no input is provided when invoking the command (`C-c q ,`):**
+       - **If the current heading has a priority set**, the command defaults to that priority's group and assigns a random priority within the same range.
+       - **If the current heading does not have a priority set**, it defaults to **Group 9 (58–64)**, assigning the task a lower priority for less urgent attention.
 
      #### Origin and Philosophy:
      This feature is inspired by a **community proposal for SuperMemo**, as detailed in the YouTube video ["Priority heuristics in SuperMemo"](https://www.youtube.com/watch?v=OwV5HPKMrbg). While SuperMemo already features a priority system for incremental learning, this proposal introduced a heuristic-based method to dynamically assign and adjust priorities. 
