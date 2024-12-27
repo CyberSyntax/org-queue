@@ -10,8 +10,7 @@
 (setq org-priority-default 32)
 (setq org-priority-lowest 64)
 
-;; Declare priority-ranges as a global variable
-(defvar my-priority-ranges
+(defcustom my-priority-ranges
   '((0 . (1 . 2))
     (1 . (2 . 5))
     (2 . (5 . 12))
@@ -24,7 +23,9 @@
     (9 . (58 . 64)))
   "Global priority ranges for setting random priorities.
 Each entry is a cons cell where the car is the range identifier
-and the cdr is a cons cell representing the minimum and maximum priority values.")
+and the cdr is a cons cell representing the minimum and maximum priority values."
+  :type '(alist :key-type integer :value-type (cons integer integer))
+  :group 'org-queue)
 
 (defun my-find-priority-range (priority)
   "Find the range identifier for a given PRIORITY."
@@ -125,8 +126,18 @@ If PRIORITY is set, reassign a priority within the same range."
             ;; Fallback in case no ranges match the criteria
             (message "No valid range found for default priority settings. Check configurations.")))))))
 
-(defvar my-random-schedule-default-months 3
-  "Default number of months to schedule if none is specified.")
+(defcustom my-random-schedule-default-months 3
+  "Default number of months to schedule if none is specified."
+  :type 'integer
+  :group 'org-queue)
+
+(defcustom my-random-schedule-exponent 1
+  "Exponent n controlling the bias of the scheduling distribution.
+- n = 0: Uniform distribution (no bias).
+- n = 1: Quadratic distribution (default).
+- n = 2: Cubic distribution (stronger bias towards later dates)."
+  :type 'integer
+  :group 'org-queue)
 
 (defun my-random-schedule (months)
   "Schedules an Org heading MONTHS months in the future using a mathematically elegant distribution."
@@ -134,9 +145,8 @@ If PRIORITY is set, reassign a priority within the same range."
              (eq major-mode 'org-mode))
     (let* ((today (current-time))
            (total-days (* months 30))
-           (n 1) ;; Choose n = 1 for quadratic, n = 2 for cubic, etc.
+           (n my-random-schedule-exponent) ;; Use the customizable exponent
            (u (/ (float (random 1000000)) 1000000.0))
-           ;; Correct the calculation of the exponent
            (exponent (/ 1.0 (+ n 1))) ;; Properly compute (1 / (n + 1))
            (x (expt u exponent))
            (days-ahead (floor (* total-days x)))
@@ -162,6 +172,7 @@ Previously, this function would also ensure the heading has a priority set, but 
           my-random-schedule-default-months)))
   ;; Schedule the current heading
   (my-random-schedule (or months my-random-schedule-default-months))
+  (my-ensure-priority-set)
   ;; Call 'my-set-priority-with-heuristics' interactively
   (call-interactively 'my-set-priority-with-heuristics))
 
@@ -261,9 +272,11 @@ If PRIORITY is not set, return a random value between `org-priority-default` and
           (error (message "Failed to launch Anki: %s" (error-message-string err))))
       (message "Anki executable not found at: %s" anki-path))))
 
-   ;; Define variables for Anki launch ratio and counter
-   (defvar my-anki-task-ratio 1
-     "Ratio of Anki launches to tasks displayed. Default is 1:1 (Anki launched every task).")
+   (defcustom my-anki-task-ratio 1
+     "Ratio of Anki launches to tasks displayed. Default is 1:1 (Anki launched every task).
+   Should be a positive integer."
+     :type 'integer
+     :group 'org-queue)
 
    (defvar my-anki-task-counter 0
      "Counter of tasks displayed since last Anki launch.")
