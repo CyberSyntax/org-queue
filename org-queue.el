@@ -247,11 +247,37 @@ If PRIORITY is not set, return a random value between `org-priority-default` and
           (error (message "Failed to launch Anki: %s" (error-message-string err))))
       (message "Anki executable not found at: %s" anki-path))))
 
+   ;; Define variables for Anki launch ratio and counter
+   (defvar my-anki-task-ratio 1
+     "Ratio of Anki launches to tasks displayed. Default is 1:1 (Anki launched every task).")
+
+   (defvar my-anki-task-counter 0
+     "Counter of tasks displayed since last Anki launch.")
+
+   ;; Function to set the Anki:Task ratio
+   (defun my-set-anki-task-ratio (ratio)
+     "Set the ratio of Anki launches to tasks displayed.
+
+   For example, if RATIO is 3, Anki will be launched once every 3 tasks. RATIO should be a positive integer."
+     (interactive "nSet Anki:Task ratio (positive integer): ")
+     (setq my-anki-task-ratio (max 1 ratio))
+     ;; Reset the counter whenever the ratio is changed
+     (setq my-anki-task-counter 0)
+     (message "Anki will be launched once every %d task(s)." my-anki-task-ratio))
+
+   ;; Helper function to launch Anki according to the ratio
+   (defun my-maybe-launch-anki ()
+     "Launch Anki according to the set ratio."
+     (setq my-anki-task-counter (1+ my-anki-task-counter))
+     (when (= (mod my-anki-task-counter my-anki-task-ratio) 0)
+       (my-launch-anki)))
+
 (defun my-show-next-outstanding-task ()
   "Show the next outstanding task in priority order.
 If the list is exhausted, it refreshes the list."
-  (my-launch-anki)
   (interactive)
+  ;; Launch Anki according to the user-defined ratio
+  (my-maybe-launch-anki)
   (unless (and my-outstanding-tasks-list
                (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
     (my-get-outstanding-tasks))
