@@ -129,12 +129,17 @@ If PRIORITY is set, reassign a priority within the same range."
   "Default number of months to schedule if none is specified.")
 
 (defun my-random-schedule (months)
-  "Non-interactive function that schedules an Org heading MONTHS months in the future.
-Guarded to avoid execution during Emacs initialization."
-  (when (and (not noninteractive)  ;; Avoid running in batch mode
-             (eq major-mode 'org-mode)) ;; Ensure it's only in Org mode
+  "Schedules an Org heading MONTHS months in the future using a mathematically elegant distribution."
+  (when (and (not noninteractive)
+             (eq major-mode 'org-mode))
     (let* ((today (current-time))
-           (days-ahead (random (* months 30)))
+           (total-days (* months 30))
+           (n 1) ;; Choose n = 1 for quadratic, n = 2 for cubic, etc.
+           (u (/ (float (random 1000000)) 1000000.0))
+           ;; Correct the calculation of the exponent
+           (exponent (/ 1.0 (+ n 1))) ;; Properly compute (1 / (n + 1))
+           (x (expt u exponent))
+           (days-ahead (floor (* total-days x)))
            (random-date (time-add today (days-to-time days-ahead))))
       (org-schedule nil (format-time-string "%Y-%m-%d" random-date)))))
 
