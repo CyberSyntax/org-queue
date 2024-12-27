@@ -88,7 +88,10 @@
    - **Shortcut**: `C-c q s`  
    - **Description**: Prompts the user to specify an upper limit in months for scheduling the current task. The task will then be scheduled randomly within the range of **1 day** to the specified upper limit in months.  
 
-     When you use interactive random scheduling (e.g., with `C-c q s`), `org-queue` assigns a random priority by first identifying all predefined priority ranges that include both `org-priority-default` and `org-priority-lowest`. It then randomly selects one of these ranges and assigns a random priority within the chosen range. This approach ensures that tasks are prioritized consistently within their heuristic groups while being scheduled dynamically based on your input.
+     When you use this command (`C-c q s`), `org-queue`:
+
+     - **Prompts for Scheduling**: Asks for the upper month limit and schedules the task randomly within the range of **1 day** to the specified number of months.
+     - **Prompts for Priority**: Immediately after scheduling, it prompts you to select a priority range (0–9), allowing you to assign a priority to the task interactively.
 
      #### How it works:
      - This command combines **user input** for flexibility and **random scheduling** for dynamic workload distribution.
@@ -99,7 +102,10 @@
        - Input `12` → The task is scheduled randomly within the next **1 year**.
        - Input `24` → The task is scheduled randomly within the next **2 years**.
 
-     If no input is provided, the default upper limit (`my-random-schedule-default-months`, which is `3` months) will be used.
+     - **Priority Setting**:
+       - After scheduling, you are prompted to select a priority group (0–9), and the priority is assigned accordingly as described in the **Set Priority with Heuristics** section.
+
+     If no input is provided for the upper month limit, the default (`my-random-schedule-default-months`, which is `3` months) will be used.
 
 ---
 
