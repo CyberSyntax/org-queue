@@ -84,28 +84,84 @@
      
 ---
 
-#### 2. **Interactive Random Scheduling**  
+#### 2. **Interactive Task Scheduling with Mathematical Distribution**  
    - **Shortcut**: `C-c q s`  
-   - **Description**: Prompts the user to specify an upper limit in months for scheduling the current task. The task will then be scheduled randomly within the range of **1 day** to the specified upper limit in months.  
+   - **Description**: Prompts you to specify an upper limit in months for scheduling the current task. The task is then scheduled within the range of **1 day** to the specified upper limit, using a mathematical model that biases the scheduling towards later dates in the range.
 
      When you use this command (`C-c q s`), `org-queue`:
 
-     - **Prompts for Scheduling**: Asks for the upper month limit and schedules the task randomly within the range of **1 day** to the specified number of months.
+     - **Prompts for Scheduling**: Asks for the maximum number of months you consider acceptable for postponing the task. It then schedules the task within **1 day** to the specified time frame, following a mathematically elegant distribution that naturally favors later scheduling dates within the range.
      - **Prompts for Priority**: Immediately after scheduling, it prompts you to select a priority range (0–9), allowing you to assign a priority to the task interactively.
 
-     #### How it works:
-     - This command combines **user input** for flexibility and **random scheduling** for dynamic workload distribution.
+     #### How It Works:
+     - This command combines **user input** for flexibility with a **mathematical scheduling model** to distribute your workload dynamically and appropriately.
      - For example:
-       - Input `1` → The task is scheduled randomly within the next **30 days**.
-       - Input `3` → The task is scheduled randomly within the next **90 days**.
-       - Input `6` → The task is scheduled randomly within the next **180 days**.
-       - Input `12` → The task is scheduled randomly within the next **1 year**.
-       - Input `24` → The task is scheduled randomly within the next **2 years**.
+       - Input `1` → The task is scheduled within the next **30 days**, with a higher likelihood towards the end of the period.
+       - Input `3` → The task is scheduled within the next **90 days**, with a higher likelihood towards the end of the period.
+       - Input `6` → The task is scheduled within the next **180 days**, with a higher likelihood towards the end of the period.
+       - Input `12` → The task is scheduled within the next **1 year**, with a higher likelihood towards the end of the period.
+       - Input `24` → The task is scheduled within the next **2 years**, with a higher likelihood towards the end of the period.
+
+     If no input is provided for the upper month limit, the default value (`my-random-schedule-default-months`, which is `3` months) will be used.
+
+     #### Mathematical Model:
+
+     The scheduling mechanism relies on a **mathematically sound probability distribution** to ensure tasks are more likely to be scheduled towards the end of the specified range, without introducing arbitrary parameters.
+
+     1. **Total Number of Days**:
+        \[
+        \text{total\_days} = \text{months} \times 30
+        \]
+        - Converts the specified number of months into total days.
+
+     2. **Probability Density Function (PDF)**:
+        - A polynomial distribution over the interval \([0,1]\) is used:
+          \[
+          f(x) = (n + 1) \cdot x^n
+          \]
+        - **Normalization**:
+          \[
+          \int_0^1 f(x) \, dx = 1
+          \]
+          - The coefficient \((n + 1)\) ensures the total probability integrates to 1.
+
+        - **Choice of \( n \)**:
+          - \( n \) is selected based on mathematical considerations:
+            - \( n = 0 \): Uniform distribution (equal likelihood across the range).
+            - \( n = 1 \): Quadratic distribution; moderate bias towards later dates.
+            - \( n = 2 \): Cubic distribution; stronger bias towards later dates.
+          - In the code, **\( n = 1 \)** is used for a quadratic distribution.
+
+     3. **Cumulative Distribution Function (CDF)**:
+        - The CDF is obtained by integrating the PDF:
+          \[
+          F(x) = x^{n+1}
+          \]
+        - For \( n = 1 \):
+          \[
+          F(x) = x^{2}
+          \]
+
+     4. **Inverting the CDF**:
+        - A uniform random variable \( u \) in \([0,1]\) is used to generate \( x \):
+          \[
+          x = u^{\frac{1}{n+1}}
+          \]
+        - For \( n = 1 \):
+          \[
+          x = \sqrt{u}
+          \]
+        - This inversion biases \( x \) towards values closer to 1, favoring later dates.
+
+     5. **Calculating the Scheduled Date**:
+        - The number of days ahead is computed as:
+          \[
+          \text{days\_ahead} = \text{total\_days} \times x
+          \]
+        - This ensures that the task is scheduled within the specified range, with a natural bias towards dates further in the future.
 
      - **Priority Setting**:
        - After scheduling, you are prompted to select a priority group (0–9), and the priority is assigned accordingly as described in the **Set Priority with Heuristics** section.
-
-     If no input is provided for the upper month limit, the default (`my-random-schedule-default-months`, which is `3` months) will be used.
 
 ---
 
