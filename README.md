@@ -105,60 +105,75 @@
      If no input is provided for the upper month limit, the default value (`my-random-schedule-default-months`, which is `3` months) will be used.
 
      #### Mathematical Model:
+     #### Mathematical Model:
 
      The scheduling mechanism relies on a **mathematically sound probability distribution** to ensure tasks are more likely to be scheduled towards the end of the specified range, without introducing arbitrary parameters.
 
-     1. **Total Number of Days**:
-        \[
-        \text{total\_days} = \text{months} \times 30
-        \]
-        - Converts the specified number of months into total days.
+     **1. Total Number of Days:**
 
-     2. **Probability Density Function (PDF)**:
-        - A polynomial distribution over the interval \([0,1]\) is used:
-          \[
-          f(x) = (n + 1) \cdot x^n
-          \]
-        - **Normalization**:
-          \[
-          \int_0^1 f(x) \, dx = 1
-          \]
-          - The coefficient \((n + 1)\) ensures the total probability integrates to 1.
+     Convert the specified number of months into total days:
 
-        - **Choice of \( n \)**:
-          - \( n \) is selected based on mathematical considerations:
-            - \( n = 0 \): Uniform distribution (equal likelihood across the range).
-            - \( n = 1 \): Quadratic distribution; moderate bias towards later dates.
-            - \( n = 2 \): Cubic distribution; stronger bias towards later dates.
-          - In the code, **\( n = 1 \)** is used for a quadratic distribution.
+     ```
+     total_days = months * 30
+     ```
 
-     3. **Cumulative Distribution Function (CDF)**:
-        - The CDF is obtained by integrating the PDF:
-          \[
-          F(x) = x^{n+1}
-          \]
-        - For \( n = 1 \):
-          \[
-          F(x) = x^{2}
-          \]
+     **2. Probability Density Function (PDF):**
 
-     4. **Inverting the CDF**:
-        - A uniform random variable \( u \) in \([0,1]\) is used to generate \( x \):
-          \[
-          x = u^{\frac{1}{n+1}}
-          \]
-        - For \( n = 1 \):
-          \[
-          x = \sqrt{u}
-          \]
-        - This inversion biases \( x \) towards values closer to 1, favoring later dates.
+     A polynomial distribution over the interval `[0, 1]` is used:
 
-     5. **Calculating the Scheduled Date**:
-        - The number of days ahead is computed as:
-          \[
-          \text{days\_ahead} = \text{total\_days} \times x
-          \]
-        - This ensures that the task is scheduled within the specified range, with a natural bias towards dates further in the future.
+     ```
+     f(x) = (n + 1) * x^n
+     ```
+
+     - **Normalization:** The coefficient `(n + 1)` ensures that the total probability integrates to 1 over the interval `[0, 1]`.
+
+     - **Choice of `n`:**
+
+       - `n = 0`: Uniform distribution (equal likelihood across the range).
+       - `n = 1`: Quadratic distribution; moderate bias towards later dates.
+       - `n = 2`: Cubic distribution; stronger bias towards later dates.
+
+       In the code, **`n = 1`** is used for a quadratic distribution.
+
+     **3. Cumulative Distribution Function (CDF):**
+
+     The CDF is obtained by integrating the PDF:
+
+     ```
+     F(x) = x^(n + 1)
+     ```
+
+     For `n = 1`:
+
+     ```
+     F(x) = x^2
+     ```
+
+     **4. Inverting the CDF:**
+
+     A uniform random variable `u` in `[0, 1]` is used to generate `x`:
+
+     ```
+     x = u^(1 / (n + 1))
+     ```
+
+     For `n = 1`:
+
+     ```
+     x = sqrt(u)
+     ```
+
+     This inversion biases `x` towards values closer to 1, favoring later dates.
+
+     **5. Calculating the Scheduled Date:**
+
+     The number of days ahead is computed as:
+
+     ```
+     days_ahead = total_days * x
+     ```
+
+     This ensures that the task is scheduled within the specified range, with a natural bias towards dates further in the future.
 
      - **Priority Setting**:
        - After scheduling, you are prompted to select a priority group (0–9), and the priority is assigned accordingly as described in the **Set Priority with Heuristics** section.
