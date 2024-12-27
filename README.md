@@ -13,8 +13,8 @@
 - **Outstanding Task Tracking**:  
   Effortlessly monitor overdue tasks and navigate through tasks due today or in the near future.
 
-- **Queue-Based Navigation**:  
-  Work sequentially through a prioritized task queue, maintaining focus on one task at a time.
+- **Queue-Based Navigation with Adjustable Anki Integration**:  
+  Work sequentially through a prioritized task queue, maintaining focus on one task at a time. Adjust the frequency of Anki launches relative to tasks displayed, integrating spaced repetition into your workflow at your preferred pace.
 
 ---
 
@@ -51,7 +51,7 @@
 
    **Note**: Replace `<your-username>` with your actual system username and `<repository-folder>` with the name of the folder where you saved the `org-queue` repository. Use the correct path format for your operating system.
 
-4. **Restart Emacs**:  
+3. **Restart Emacs**:  
    Once configured, restart Emacs, and `org-queue` will be ready to use!
 
 ---
@@ -135,8 +135,39 @@
 
    - **Description**: Provides efficient navigation through the queue of overdue or due-today tasks.  
 
-     #### Bonus Feature: Launch Anki
-     During the navigation (`C-c q n`), if the **Anki** application is installed, it will automatically launch to complement the task workflow with flashcard-based incremental learning.
+     ##### Adjustable Anki Launch Frequency
+
+     While navigating tasks, `org-queue` allows you to control how frequently the Anki application is launched. By default, Anki is launched every time you display a new task using `C-c q n`. However, you can adjust this frequency to suit your workflow using the `my-set-anki-task-ratio` function.
+
+     **How to Adjust the Anki Launch Frequency:**
+
+     - **Interactively Set the Ratio**:
+       - Invoke the function `my-set-anki-task-ratio` within Emacs.
+         - You can do this by typing `M-x my-set-anki-task-ratio` and pressing `Enter`.
+       - When prompted, enter a positive integer representing the number of tasks after which Anki should be launched.
+         - **Examples**:
+           - Enter `1` (default): Anki will be launched every time you display a new task.
+           - Enter `2`: Anki will be launched every **second** task.
+           - Enter `3`: Anki will be launched every **third** task.
+           - Enter `5`: Anki will be launched every **fifth** task.
+
+     - **Example Usage**:
+       - **Set Anki to Launch Every Third Task**:
+         1. Press `M-x`, type `my-set-anki-task-ratio`, and press `Enter`.
+         2. When prompted, enter `3`.
+         3. Anki will now launch every third task you display with `C-c q n`.
+       - **Adjust Anki Launch Frequency on the Fly**:
+         - You can change the frequency at any time by invoking `my-set-anki-task-ratio` again and entering a new ratio.
+
+     **Why Adjust the Anki Launch Frequency:**
+
+     - **Customize Your Workflow**: Tailor the integration of spaced repetition to match your current focus and workload.
+     - **Reduce Distractions**: If frequent launching of Anki interrupts your task flow, increase the ratio to have Anki launch less often.
+     - **Enhance Learning**: When you want to prioritize reviewing flashcards, decrease the ratio to launch Anki more frequently.
+
+     **Note**: Ensure that Anki is installed and properly configured to be launched from Emacs. The function `my-launch-anki` should correctly point to the Anki executable on your system.
+
+     **Tip**: If you find yourself adjusting the Anki launch frequency often, consider creating a custom keybinding for `my-set-anki-task-ratio` in your Emacs configuration for quicker access.
 
 ---
 
@@ -156,6 +187,21 @@ You can also adjust the default scheduling range by updating the `my-random-sche
 (defvar my-random-schedule-default-months 3
   "Default number of months to schedule if none is specified.")
 ```
+
+**Setting the Default Anki Launch Ratio:**
+
+By default, `org-queue` launches Anki every time you display a new task. If you prefer a different default frequency, you can set the `my-anki-task-ratio` variable in your Emacs configuration:
+
+```emacs-lisp
+(defvar my-anki-task-ratio 1
+  "Ratio of Anki launches to tasks displayed. Default is 1:1 (Anki launched every task).")
+```
+
+- **Example**:
+  - To set Anki to launch every third task by default, add the following line to your configuration:
+    ```emacs-lisp
+    (setq my-anki-task-ratio 3)
+    ```
 
 ---
 
