@@ -246,11 +246,11 @@
 
 ## Configuration
 
-To optimize your experience, you can customize `org-queue` settings in your Emacs configuration file.
+To optimize your experience, you can customize `org-queue` settings in your Emacs configuration file or through the Emacs customization interface.
 
-### Configure Org-Mode's Priority Settings
+### Configure Org Mode's Priority Settings
 
-Align org-mode's priority settings with `org-queue`:
+Align Org Mode's priority settings with `org-queue`:
 
 ```emacs-lisp
 (setq org-priority-highest 1)   ;; Highest priority
@@ -258,53 +258,171 @@ Align org-mode's priority settings with `org-queue`:
 (setq org-priority-lowest 64)   ;; Lowest priority
 ```
 
-### Adjust the Default Scheduling Range
+### Customize the Default Scheduling Range
 
-Set the default number of months for random scheduling:
+Set the default number of months for random scheduling by customizing `my-random-schedule-default-months`. This variable controls how far into the future tasks are scheduled when no specific value is provided.
+
+#### Option 1: Using Emacs Customization Interface
+
+1. Run `M-x customize-variable RET my-random-schedule-default-months RET`.
+2. Set the desired number of months (e.g., `6` for six months).
+3. Save your changes to persist them across sessions.
+
+#### Option 2: Setting in Emacs Configuration File
+
+Add the following line to your Emacs configuration file (`init.el` or `.emacs`):
 
 ```emacs-lisp
 (setq my-random-schedule-default-months 3)
 ```
 
 - **Example**:
-  - To set the default scheduling range to 6 months, add the following line:
+  - To set the default scheduling range to **6 months**, add:
 
     ```emacs-lisp
     (setq my-random-schedule-default-months 6)
     ```
 
+### Adjust the Scheduling Bias
+
+You can control the bias of the scheduling distribution towards later dates by customizing `my-random-schedule-exponent`. This variable defines the exponent `n` in the mathematical model used for scheduling.
+
+- **Values**:
+  - `0`: Uniform distribution (no bias).
+  - `1`: Quadratic distribution (default; moderate bias towards later dates).
+  - `2`: Cubic distribution (stronger bias towards later dates).
+
+#### Option 1: Using Emacs Customization Interface
+
+1. Run `M-x customize-variable RET my-random-schedule-exponent RET`.
+2. Set the desired exponent value (e.g., `2` for a stronger bias).
+3. Save your changes.
+
+#### Option 2: Setting in Emacs Configuration File
+
+Add the following line to your configuration file:
+
+```emacs-lisp
+(setq my-random-schedule-exponent 1)  ;; Default value
+```
+
+- **Example**:
+  - To use a cubic distribution for stronger bias towards later dates, add:
+
+    ```emacs-lisp
+    (setq my-random-schedule-exponent 2)
+    ```
+
 ### Setting the Default Anki Launch Ratio
 
-By default, `org-queue` launches Anki every time you display a new task. If you prefer a different default frequency, you can adjust the `my-anki-task-ratio` variable:
+By default, `org-queue` launches Anki every time you display a new task. To change the frequency, customize `my-anki-task-ratio`.
+
+#### Option 1: Using Emacs Customization Interface
+
+1. Run `M-x customize-variable RET my-anki-task-ratio RET`.
+2. Set the desired ratio (e.g., `3` to launch Anki every 3 tasks).
+3. Save your changes.
+
+#### Option 2: Setting in Emacs Configuration File
+
+Add the following line to your configuration file:
 
 ```emacs-lisp
 (setq my-anki-task-ratio 1)  ;; Default is 1:1 (Anki launched every task)
 ```
 
 - **Example**:
-  - To set Anki to launch every third task by default, add the following line:
+  - To set Anki to launch every third task, add:
 
     ```emacs-lisp
     (setq my-anki-task-ratio 3)  ;; Anki will launch every 3 tasks
     ```
 
-**Important Notes:**
+### Customize Priority Ranges
 
-- **Loading Order Matters**: Ensure that you have loaded `org-queue` before setting these variables. Place `(require 'org-queue)` before the configuration settings in your Emacs configuration file.
-  
-  ```emacs-lisp
-  ;; Add the path to the org-queue directory
-  (add-to-list 'load-path "/path/to/org-queue/")
+If you wish to adjust how priorities are assigned within `org-queue`, you can customize `my-priority-ranges`. This variable contains the mapping of priority ranges.
 
-  ;; Load org-queue
-  (require 'org-queue)
+#### Using Emacs Customization Interface
 
-  ;; Now set your configurations
-  (setq org-priority-highest 1)
-  ;; ... and so on
-  ```
+1. Run `M-x customize-variable RET my-priority-ranges RET`.
+2. Edit the priority ranges as desired.
+3. Save your changes.
 
-- **Using `setq`**: Always use `setq` to set or change the value of variables in your configuration file. Do not use `defvar` in your configuration file.
+**Note**: Editing `my-priority-ranges` requires understanding of how priorities are mapped. Each entry is a cons cell where the key is the range identifier, and the value is a cons cell of minimum and maximum priority values.
+
+### Important Notes
+
+- **Loading Order Matters**:
+  - Ensure that you have loaded `org-queue` before setting these variables. Place `(require 'org-queue)` before the configuration settings in your Emacs configuration file.
+
+    ```emacs-lisp
+    ;; Add the path to the org-queue directory
+    (add-to-list 'load-path "/path/to/org-queue/")
+
+    ;; Load org-queue
+    (require 'org-queue)
+
+    ;; Now set your configurations
+    (setq org-priority-highest 1)
+    ;; ... and so on
+    ```
+
+- **Customizable Variables**:
+  - Variables like `my-random-schedule-default-months`, `my-random-schedule-exponent`, `my-anki-task-ratio`, and `my-priority-ranges` are defined using `defcustom`. You can customize them via the Emacs customization interface or set them using `setq` in your configuration file.
+
+- **Using `setq`**:
+  - To set or change the value of these variables in your configuration file, use `setq`. Avoid using `defvar` or `defcustom` in your configuration file, as they are meant for variable definitions within the package code.
+
+- **Emacs Customization Interface**:
+  - Access the Emacs customization interface by running `M-x customize-group RET org-queue RET`. This interface allows you to view and modify all customizable variables related to `org-queue`.
+
+### Sample Configuration
+
+Here is how you might set up your Emacs configuration file with `org-queue`:
+
+```emacs-lisp
+;; Add the path to the org-queue directory
+(add-to-list 'load-path "/path/to/org-queue/")
+
+;; Load org-queue
+(require 'org-queue)
+
+;; Set Org Mode's priority settings
+(setq org-priority-highest 1)
+(setq org-priority-default 32)
+(setq org-priority-lowest 64)
+
+;; Customize org-queue variables
+(setq my-random-schedule-default-months 6)   ;; Default scheduling range of 6 months
+(setq my-random-schedule-exponent 2)         ;; Use cubic distribution for scheduling
+(setq my-anki-task-ratio 3)                  ;; Launch Anki every 3 tasks
+
+;; Optionally, customize priority ranges (only if you need to adjust defaults)
+;; (setq my-priority-ranges
+;;       '((0 . (1 . 2))
+;;         ;; ... your custom ranges ...
+;;         (9 . (58 . 64))))
+```
+
+**Note**: Replace `"/path/to/org-queue/"` with the actual path to where `org-queue` is located on your system.
+
+### Customizing via Emacs Interface vs. Configuration File
+
+- **Customization Interface**:
+  - Pros:
+    - User-friendly, no need to write code.
+    - Variables are documented and explained.
+  - Cons:
+    - Changes are saved in a separate file (`custom.el`), which may not be under version control.
+
+- **Configuration File (`init.el` or `.emacs`)**:
+  - Pros:
+    - All configurations are in one place.
+    - Easy to version control.
+  - Cons:
+    - Requires familiarity with Emacs Lisp.
+
+Choose the method that best fits your workflow.
 
 ---
 
