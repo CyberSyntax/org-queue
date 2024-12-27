@@ -140,16 +140,25 @@ Guarded to avoid execution during Emacs initialization."
 
 (defun my-random-schedule-command (&optional months)
   "Interactive command to schedule MONTHS months in the future (defaults to `my-random-schedule-default-months`).
-If the current heading does not have a priority, assign one automatically."
+Previously, this function would also ensure the heading has a priority set, but that functionality has been removed per your request."
   (interactive
    (list (read-number
           "Enter the upper month limit: "
           my-random-schedule-default-months)))
   (save-excursion
     ;; Schedule the current heading
-    (my-random-schedule (or months my-random-schedule-default-months))
-    ;; Ensure priority is set for the current heading
-    (my-ensure-priority-set)))
+    (my-random-schedule (or months my-random-schedule-default-months))))
+
+(defun my-schedule-and-set-priority-command (&optional months)
+  "Interactive command that schedules MONTHS months in the future and prompts for priority."
+  (interactive
+   (list (read-number
+          "Enter the upper month limit: "
+          my-random-schedule-default-months)))
+  ;; Schedule the current heading
+  (my-random-schedule (or months my-random-schedule-default-months))
+  ;; Call 'my-set-priority-with-heuristics' interactively
+  (call-interactively 'my-set-priority-with-heuristics))
 
 (defun my-post-org-insert-heading (&rest _args)
   "Run after `org-insert-heading` to assign priority and schedule."
@@ -353,7 +362,7 @@ If the list is exhausted, it refreshes the list."
 
 ;; Bind your functions to keys under the prefix
 (define-key my-tasks-map (kbd ",") 'my-set-priority-with-heuristics)
-(define-key my-tasks-map (kbd "s") 'my-random-schedule-command)
+(define-key my-tasks-map (kbd "s") 'my-schedule-and-set-priority-command)
 (define-key my-tasks-map (kbd "n") 'my-show-next-outstanding-task)
 (define-key my-tasks-map (kbd "p") 'my-show-previous-outstanding-task)
 (define-key my-tasks-map (kbd "c") 'my-show-current-outstanding-task)
