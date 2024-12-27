@@ -33,23 +33,34 @@
    ```
 
 2. **Configure org-queue in Emacs**:  
-   Add the following lines to your Emacs configuration file (`.emacs` or `init.el`):  
+   Add the following lines to your Emacs configuration file (`.emacs` or `init.el`):
+
    ```emacs-lisp
-   ;; Set the path to the org-queue directory
-   (setq org-queue-dir "/path/to/org-queue/")
-   (add-to-list 'load-path (file-name-as-directory org-queue-dir))
+   ;; Add the path to the org-queue directory
+   (add-to-list 'load-path "/path/to/org-queue/")
 
    ;; Load org-queue
    (require 'org-queue)
-   ```  
 
-   Replace `/path/to/org-queue/` with the full directory path where you cloned the repository. Examples for different operating systems:
+   ;; Set up org-mode priority settings to align with org-queue
+   (setq org-priority-highest 1)   ;; Highest priority
+   (setq org-priority-default 32)  ;; Default priority
+   (setq org-priority-lowest 64)   ;; Lowest priority
+
+   ;; Optional: Adjust the default scheduling range
+   (setq my-random-schedule-default-months 3)
+
+   ;; Optional: Set the default Anki launch ratio
+   (setq my-anki-task-ratio 1)  ;; Default is 1:1 (Anki launched every task)
+   ```
+
+   **Note**: Replace `"/path/to/org-queue/"` with the full directory path where you cloned the repository. Examples for different operating systems:
 
    - **Linux**: `/home/<your-username>/<repository-folder>/org-queue/`  
    - **macOS**: `/Users/<your-username>/<repository-folder>/org-queue/`  
    - **Windows**: `C:/Users/<your-username>/<repository-folder>/org-queue/`  
 
-   **Note**: Replace `<your-username>` with your actual system username and `<repository-folder>` with the name of the folder where you saved the `org-queue` repository. Use the correct path format for your operating system.
+   Replace `<your-username>` with your actual system username and `<repository-folder>` with the name of the folder where you saved the `org-queue` repository. Use the correct path format for your operating system.
 
 3. **Restart Emacs**:  
    Once configured, restart Emacs, and `org-queue` will be ready to use!
@@ -173,7 +184,11 @@
 
 ## Configuration
 
-To optimize your experience, configure org-mode’s priority settings to align with org-queue:
+To optimize your experience, you can customize `org-queue` settings in your Emacs configuration file.
+
+### Configure Org-Mode's Priority Settings
+
+Align org-mode's priority settings with `org-queue`:
 
 ```emacs-lisp
 (setq org-priority-highest 1)   ;; Highest priority
@@ -181,27 +196,53 @@ To optimize your experience, configure org-mode’s priority settings to align w
 (setq org-priority-lowest 64)   ;; Lowest priority
 ```
 
-You can also adjust the default scheduling range by updating the `my-random-schedule-default-months` variable:
+### Adjust the Default Scheduling Range
+
+Set the default number of months for random scheduling:
 
 ```emacs-lisp
-(defvar my-random-schedule-default-months 3
-  "Default number of months to schedule if none is specified.")
-```
-
-**Setting the Default Anki Launch Ratio:**
-
-By default, `org-queue` launches Anki every time you display a new task. If you prefer a different default frequency, you can set the `my-anki-task-ratio` variable in your Emacs configuration:
-
-```emacs-lisp
-(defvar my-anki-task-ratio 1
-  "Ratio of Anki launches to tasks displayed. Default is 1:1 (Anki launched every task).")
+(setq my-random-schedule-default-months 3)
 ```
 
 - **Example**:
-  - To set Anki to launch every third task by default, add the following line to your configuration:
+  - To set the default scheduling range to 6 months, add the following line:
+
     ```emacs-lisp
-    (setq my-anki-task-ratio 3)
+    (setq my-random-schedule-default-months 6)
     ```
+
+### Setting the Default Anki Launch Ratio
+
+By default, `org-queue` launches Anki every time you display a new task. If you prefer a different default frequency, you can adjust the `my-anki-task-ratio` variable:
+
+```emacs-lisp
+(setq my-anki-task-ratio 1)  ;; Default is 1:1 (Anki launched every task)
+```
+
+- **Example**:
+  - To set Anki to launch every third task by default, add the following line:
+
+    ```emacs-lisp
+    (setq my-anki-task-ratio 3)  ;; Anki will launch every 3 tasks
+    ```
+
+**Important Notes:**
+
+- **Loading Order Matters**: Ensure that you have loaded `org-queue` before setting these variables. Place `(require 'org-queue)` before the configuration settings in your Emacs configuration file.
+  
+  ```emacs-lisp
+  ;; Add the path to the org-queue directory
+  (add-to-list 'load-path "/path/to/org-queue/")
+
+  ;; Load org-queue
+  (require 'org-queue)
+
+  ;; Now set your configurations
+  (setq org-priority-highest 1)
+  ;; ... and so on
+  ```
+
+- **Using `setq`**: Always use `setq` to set or change the value of variables in your configuration file. Do not use `defvar` in your configuration file.
 
 ---
 
