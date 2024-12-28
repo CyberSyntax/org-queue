@@ -139,15 +139,17 @@ If PRIORITY is set, reassign a priority within the same range."
   :type 'integer
   :group 'org-queue)
 
-(defun my-random-schedule (months)
-  "Schedules an Org heading MONTHS months in the future using a mathematically elegant distribution."
+(defun my-random-schedule (months &optional n)
+  "Schedules an Org heading MONTHS months in the future using a mathematically elegant distribution.
+If N is provided, use that as the exponent. If it's not provided, fallback to `my-random-schedule-exponent'."
   (when (and (not noninteractive)
              (eq major-mode 'org-mode))
     (let* ((today (current-time))
            (total-days (* months 30))
-           (n my-random-schedule-exponent) ;; Use the customizable exponent
+           ;; If `n` is not passed in, use our existing defcustom value
+           (n (or n my-random-schedule-exponent))
            (u (/ (float (random 1000000)) 1000000.0))
-           (exponent (/ 1.0 (+ n 1))) ;; Properly compute (1 / (n + 1))
+           (exponent (/ 1.0 (+ n 1)))  ; compute 1/(n+1)
            (x (expt u exponent))
            (days-ahead (floor (* total-days x)))
            (random-date (time-add today (days-to-time days-ahead))))
@@ -183,10 +185,10 @@ Previously, this function would also ensure the heading has a priority set, but 
     ;; Ensure priority is set (handled inside `my-ensure-priority-set`)
     (my-ensure-priority-set)
     ;; Call the lower-level function directly to schedule default months out with no interactive prompt.
-    (my-random-schedule my-random-schedule-default-months)
+    (my-random-schedule my-random-schedule-default-months 0)
     (end-of-line)))
 
-;; Advise the function that `C-<return>` calls, typically `org-insert-heading`
+;; Advise the function that `C-RET` calls, typically `org-insert-heading`
 (advice-add 'org-insert-heading :after #'my-post-org-insert-heading)
 
 ;; Ensure org-agenda-files is set (adjust the path as needed)
