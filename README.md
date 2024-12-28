@@ -42,11 +42,6 @@
    ;; Load org-queue
    (require 'org-queue)
 
-   ;; Set up org-mode priority settings to align with org-queue
-   (setq org-priority-highest 1)   ;; Highest priority
-   (setq org-priority-default 32)  ;; Default priority
-   (setq org-priority-lowest 64)   ;; Lowest priority
-
    ;; Optional: Adjust the default scheduling range
    (setq my-random-schedule-default-months 3)
 
@@ -104,7 +99,6 @@
 
      If no input is provided for the upper month limit, the default value (`my-random-schedule-default-months`, which is `3` months) will be used.
 
-     #### Mathematical Model:
      #### Mathematical Model:
 
      The scheduling mechanism relies on a **mathematically sound probability distribution** to ensure tasks are more likely to be scheduled towards the end of the specified range, without introducing arbitrary parameters.
@@ -263,16 +257,6 @@
 
 To optimize your experience, you can customize `org-queue` settings in your Emacs configuration file or through the Emacs customization interface.
 
-### Configure Org Mode's Priority Settings
-
-Align Org Mode's priority settings with `org-queue`:
-
-```emacs-lisp
-(setq org-priority-highest 1)   ;; Highest priority
-(setq org-priority-default 32)  ;; Default priority
-(setq org-priority-lowest 64)   ;; Lowest priority
-```
-
 ### Customize the Default Scheduling Range
 
 Set the default number of months for random scheduling by customizing `my-random-schedule-default-months`. This variable controls how far into the future tasks are scheduled when no specific value is provided.
@@ -401,11 +385,6 @@ Here is how you might set up your Emacs configuration file with `org-queue`:
 
 ;; Load org-queue
 (require 'org-queue)
-
-;; Set Org Mode's priority settings
-(setq org-priority-highest 1)
-(setq org-priority-default 32)
-(setq org-priority-lowest 64)
 
 ;; Customize org-queue variables
 (setq my-random-schedule-default-months 6)   ;; Default scheduling range of 6 months
