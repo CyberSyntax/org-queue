@@ -91,6 +91,8 @@
      #### How It Works:
      - This command combines **user input** for flexibility with a **mathematical scheduling model** to distribute your workload dynamically and appropriately.
      - For example:
+       - Input `0.2` → The task is scheduled within the next **6 days**, with a higher likelihood towards the end of the period.
+       - Input `0.5` → The task is scheduled within the next **15 days**, with a higher likelihood towards the end of the period.
        - Input `1` → The task is scheduled within the next **30 days**, with a higher likelihood towards the end of the period.
        - Input `3` → The task is scheduled within the next **90 days**, with a higher likelihood towards the end of the period.
        - Input `6` → The task is scheduled within the next **180 days**, with a higher likelihood towards the end of the period.
