@@ -16,6 +16,9 @@
 - **Queue-Based Navigation with Adjustable Anki Integration**:  
   Work sequentially through a prioritized task queue, maintaining focus on one task at a time. Adjust the frequency of Anki launches relative to tasks displayed, integrating spaced repetition into your workflow at your preferred pace.
 
+- **Automatic Overdue Task Management**:
+Smart rescheduling of overdue tasks on Emacs startup using priority-based linear interpolation. Higher priority tasks are rescheduled more urgently while lower priority tasks are given more flexible future dates, ensuring optimal workload distribution.
+
 ---
 
 ## Why Choose org-queue?
@@ -252,6 +255,56 @@
      **Note**: Ensure that Anki is installed and properly configured to be launched from Emacs. The function `my-launch-anki` should correctly point to the Anki executable on your system.
 
      **Tip**: If you find yourself adjusting the Anki launch frequency often, consider creating a custom keybinding for `my-set-anki-task-ratio` in your Emacs configuration for quicker access.
+
+---
+
+
+#### 5. **Automatic Postponement of Overdue Tasks**
+   - **Activation**: Automatically runs at Emacs startup
+   - **Manual Override**: `M-x my-auto-postpone-overdue-tasks` (rarely needed)
+   - **Description**: Automatically manages overdue tasks using priority-based scheduling on Emacs startup.
+
+     This feature operates automatically when Emacs starts:
+
+     - **Background Processing**: Silently processes all overdue tasks in your agenda files during Emacs initialization.
+     - **Priority-Based Rescheduling**: Uses each task's priority to determine appropriate future dates.
+     - **Auto-Saving**: Handles file saving automatically before and after processing.
+
+     #### When to Use Manual Override:
+     - For users who keep Emacs running for extended periods
+     - When you want to force a complete task review outside the normal startup cycle
+     - If you need to resynchronize task schedules mid-session
+
+     The mathematical model and functionality remain the same as described earlier, but the key distinction is that this feature is primarily designed as an automatic startup process rather than a regularly used command.
+
+     #### Mathematical Model:
+
+     The postponement mechanism uses **linear interpolation** to calculate scheduling months based on priority values.
+
+     **1. Priority Range Mapping:**
+
+     The function maps priorities to months using linear interpolation:
+
+     ```
+     months = max_months * (priority - highest_priority) / (lowest_priority - highest_priority)
+     ```
+
+     **2. Linear Interpolation Formula:**
+
+     For a priority p in the range [highest_priority, lowest_priority]:
+
+     ```
+     interpolation_factor = (p - highest_priority) / (lowest_priority - highest_priority)
+     months = max_months * interpolation_factor
+     ```
+
+     - **Priority Handling:**
+       - Highest Priority (e.g., 1): Results in minimal postponement
+       - Default Priority (e.g., 32): Results in medium postponement
+       - Lowest Priority (e.g., 64): Results in maximum postponement
+       - Missing Priority: Automatically assigned within default-to-lowest range
+
+     The calculated months value is then passed to `my-random-schedule` for final scheduling with added randomness to prevent task clustering.
 
 ---
 
