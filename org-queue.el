@@ -22,8 +22,8 @@
     (8 . (45 . 58))
     (9 . (58 . 64)))
   "Global priority ranges for setting random priorities.
-				Each entry is a cons cell where the car is the range identifier
-				and the cdr is a cons cell representing the minimum and maximum priority values."
+				  Each entry is a cons cell where the car is the range identifier
+				  and the cdr is a cons cell representing the minimum and maximum priority values."
   :type '(alist :key-type integer :value-type (cons integer integer))
   :group 'org-queue)
 
@@ -41,7 +41,7 @@
 
 (defun my-get-current-priority-range ()
   "Determine the priority range of the current heading.
-				Returns the range identifier if priority is set; otherwise, nil."
+				  Returns the range identifier if priority is set; otherwise, nil."
   (let ((current-priority (org-entry-get nil "PRIORITY")))
     (when (and current-priority (not (string= current-priority " ")))
       (let ((priority-value (string-to-number current-priority)))
@@ -89,45 +89,62 @@
 	  success)
       (message "Invalid range."))))
 
-(defun my-ensure-priority-set ()
+(defun my-ensure-priority-set (&optional max-attempts)
   "Ensure the current heading has a priority set.
-				If PRIORITY is not set, assign one within the appropriate range.
-				If PRIORITY is set, reassign a priority within the same range."
-  (save-excursion
-    ;; Move to the current heading
-    (org-back-to-heading t)
-    ;; Ensure the heading is fully visible
-    (org-show-entry)
-    ;; Retrieve the current PRIORITY property
-    (let ((current-priority (org-entry-get nil "PRIORITY")))
-      (if (and current-priority (not (string= current-priority " ")))
-	  ;; PRIORITY is set; determine its range and reassign within the same range
-	  (let* ((priority-value (string-to-number current-priority))
-		 (current-range (my-find-priority-range priority-value)))
-	    (if current-range
-		(progn
-		  (my-set-priority-with-heuristics current-range)
-		  (message "Priority reassigned within range %d." current-range))
-	      (message "Current priority %d does not fall within any defined range."
-		       priority-value)))
-	;; PRIORITY is not set; assign a random priority within appropriate ranges
-	(let* ((matching-ranges
-		(cl-remove-if-not
-		 (lambda (range)
-		   (let ((min (car (cdr range)))
-			 (max (cdr (cdr range))))
-		     ;; Updated condition: min <= org-priority-lowest AND max >= org-priority-default
-		     (and (<= min org-priority-lowest)
-			  (>= max org-priority-default))))
-		 my-priority-ranges))
-	       (range-ids (mapcar #'car matching-ranges)))
-	  (if range-ids
-	      (let ((selected-range (nth (random (length range-ids)) range-ids)))
-		(my-set-priority-with-heuristics selected-range)
-		(message "Priority was not set. Assigned random priority within range %d."
-			 selected-range))
-	    ;; Fallback in case no ranges match the criteria
-	    (message "No valid range found for default priority settings. Check configurations.")))))))
+If PRIORITY is not set, assign one within the appropriate range.
+If PRIORITY is set, reassign a priority within the same range.
+MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 30)."
+  (let ((max-attempts (or max-attempts 30))
+	(attempt 0)
+	(success nil))
+
+    (while (and (not success) (< attempt max-attempts))
+      (setq attempt (1+ attempt))
+
+      (condition-case err
+	  (save-excursion
+	    ;; Move to the current heading
+	    (org-back-to-heading t)
+	    ;; Ensure the heading is fully visible
+	    (org-show-entry)
+	    ;; Retrieve the current PRIORITY property
+	    (let ((current-priority (org-entry-get nil "PRIORITY")))
+	      (if (and current-priority (not (string= current-priority " ")))
+		  ;; PRIORITY is set; determine its range and reassign within the same range
+		  (let* ((priority-value (string-to-number current-priority))
+			 (current-range (my-find-priority-range priority-value)))
+		    (if current-range
+			(progn
+			  (my-set-priority-with-heuristics current-range)
+			  (message "Priority reassigned within range %d." current-range)
+			  (setq success t))
+		      (message "Current priority %d does not fall within any defined range."
+			       priority-value)))
+		;; PRIORITY is not set; assign a random priority within appropriate ranges
+		(let* ((matching-ranges
+			(cl-remove-if-not
+			 (lambda (range)
+			   (let ((min (car (cdr range)))
+				 (max (cdr (cdr range))))
+			     (and (<= min org-priority-lowest)
+				  (>= max org-priority-default))))
+			 my-priority-ranges))
+		       (range-ids (mapcar #'car matching-ranges)))
+		  (if range-ids
+		      (let ((selected-range (nth (random (length range-ids)) range-ids)))
+			(my-set-priority-with-heuristics selected-range)
+			(message "Priority was not set. Assigned random priority within range %d."
+				 selected-range)
+			(setq success t))
+		    (error "No valid range found for default priority settings. Check configurations."))))))
+	(error
+	 (message "Attempt %d/%d failed in my-ensure-priority-set: %s" 
+		  attempt max-attempts (error-message-string err))
+	 (when (>= attempt max-attempts)
+	   (signal (car err) (cdr err))))))
+
+    (unless success
+      (error "Failed to set priority after %d attempts" max-attempts))))
 
 (defcustom my-random-schedule-default-months 3
   "Default number of months to schedule if none is specified."
@@ -136,15 +153,15 @@
 
 (defcustom my-random-schedule-exponent 1
   "Exponent n controlling the bias of the scheduling distribution.
-				- n = 0: Uniform distribution (no bias).
-				- n = 1: Quadratic distribution (default).
-				- n = 2: Cubic distribution (stronger bias towards later dates)."
+				  - n = 0: Uniform distribution (no bias).
+				  - n = 1: Quadratic distribution (default).
+				  - n = 2: Cubic distribution (stronger bias towards later dates)."
   :type 'integer
   :group 'org-queue)
 
 (defun my-random-schedule (months &optional n)
   "Schedules an Org heading MONTHS months in the future using a mathematically elegant distribution.
-				If N is provided, use that as the exponent. If it's not provided, fallback to `my-random-schedule-exponent'."
+				  If N is provided, use that as the exponent. If it's not provided, fallback to `my-random-schedule-exponent'."
   (when (and (not noninteractive)
 	     (eq major-mode 'org-mode))
     (let* ((today (current-time))
@@ -160,7 +177,7 @@
 
 (defun my-random-schedule-command (&optional months)
   "Interactive command to schedule MONTHS months in the future (defaults to `my-random-schedule-default-months`).
-				Previously, this function would also ensure the heading has a priority set, but that functionality has been removed per your request."
+				  Previously, this function would also ensure the heading has a priority set, but that functionality has been removed per your request."
   (interactive
    (list (read-number
 	  "Enter the upper month limit: "
@@ -183,8 +200,8 @@
 
 (defun my-ensure-priorities-and-schedules-for-all-headings (&optional max-attempts)
   "Ensure priorities and schedules are set for all headings across Org agenda files.
-   Repeatedly processes headings until all have priorities and schedules, or max-attempts is reached.
-   MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 10)."
+     Repeatedly processes headings until all have priorities and schedules, or max-attempts is reached.
+     MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 10)."
   (interactive)
   (let ((max-attempts (or max-attempts 10))
 	(attempt 0)
@@ -298,7 +315,7 @@
 
 (defun my-get-priority-value ()
   "Get the numerical priority value of the current task.
-				If PRIORITY is not set, return a random value between `org-priority-default` and `org-priority-lowest`."
+				  If PRIORITY is not set, return a random value between `org-priority-default` and `org-priority-lowest`."
   (let ((priority-str (org-entry-get nil "PRIORITY")))
     (if priority-str
 	;; If PRIORITY is set, return its value as a number
@@ -334,9 +351,9 @@
 
 (defun my-auto-postpone-overdue-tasks ()
   "Auto-postpone all overdue tasks using linear interpolation for priorities.
-	     If a task's priority is not set, use `org-priority-default` to `org-priority-lowest`
-	     as the basis for linear interpolation. The calculated `months` is passed to
-	     `my-random-schedule` for randomness. Save all modified files before and after processing."
+	       If a task's priority is not set, use `org-priority-default` to `org-priority-lowest`
+	       as the basis for linear interpolation. The calculated `months` is passed to
+	       `my-random-schedule` for randomness. Save all modified files before and after processing."
   (interactive)
   ;; Save all modified buffers before processing
   (save-some-buffers t) ;; Save all modified buffers without prompting
@@ -381,7 +398,7 @@
 
 (defcustom my-anki-task-ratio 1
   "Ratio of Anki launches to tasks displayed. Default is 1:1 (Anki launched every task).
-				   Should be a positive integer."
+				     Should be a positive integer."
   :type 'integer
   :group 'org-queue)
 
@@ -392,7 +409,7 @@
 (defun my-set-anki-task-ratio (ratio)
   "Set the ratio of Anki launches to tasks displayed.
 
-				   For example, if RATIO is 3, Anki will be launched once every 3 tasks. RATIO should be a positive integer."
+				     For example, if RATIO is 3, Anki will be launched once every 3 tasks. RATIO should be a positive integer."
   (interactive "nSet Anki:Task ratio (positive integer): ")
   (setq my-anki-task-ratio (max 1 ratio))
   ;; Reset the counter whenever the ratio is changed
@@ -408,7 +425,7 @@
 
 (defun my-show-next-outstanding-task ()
   "Show the next outstanding task in priority order.
-				If the list is exhausted, it refreshes the list."
+				  If the list is exhausted, it refreshes the list."
   (interactive)
   ;; Launch Anki according to the user-defined ratio
   (my-maybe-launch-anki)
