@@ -180,7 +180,10 @@ Smart rescheduling of overdue tasks on Emacs startup using priority-based linear
 ---
 
 #### 3. **Set Priority with Heuristics**  
-   - **Shortcut**: `C-c q ,`  
+   - **Shortcut**: `C-c q ,`
+   - **Additional Shortcuts**:
+     - `C-c q i`: Increase priority range (move to higher priority group)
+     - `C-c q d`: Decrease priority range (move to lower priority group)
    - **Description**: Inspired by a **community proposal discussed in the YouTube video [Priority heuristics in SuperMemo](https://www.youtube.com/watch?v=OwV5HPKMrbg)**, this feature builds on the concept of **priorities** already present in SuperMemo. However, it introduces a heuristic-based approach for assigning priorities dynamically, making the process more flexible and adaptable.
 
      #### How it works:
