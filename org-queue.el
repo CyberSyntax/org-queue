@@ -22,8 +22,8 @@
     (8 . (45 . 58))
     (9 . (58 . 64)))
   "Global priority ranges for setting random priorities.
-  Each entry is a cons cell where the car is the range identifier
-  and the cdr is a cons cell representing the minimum and maximum priority values."
+			    Each entry is a cons cell where the car is the range identifier
+			    and the cdr is a cons cell representing the minimum and maximum priority values."
   :type '(alist :key-type integer :value-type (cons integer integer))
   :group 'org-queue)
 
@@ -41,7 +41,7 @@
 
 (defun my-get-current-priority-range ()
   "Determine the priority range of the current heading.
-  Returns the range identifier if priority is set; otherwise, nil."
+			    Returns the range identifier if priority is set; otherwise, nil."
   (let ((current-priority (org-entry-get nil "PRIORITY")))
     (when (and current-priority (not (string= current-priority " ")))
       (let ((priority-value (string-to-number current-priority)))
@@ -91,8 +91,8 @@
 
 (defun my-ensure-priority-set ()
   "Ensure the current heading has a priority set.
-  If PRIORITY is not set, assign one within the appropriate range.
-  If PRIORITY is set, reassign a priority within the same range."
+			    If PRIORITY is not set, assign one within the appropriate range.
+			    If PRIORITY is set, reassign a priority within the same range."
   (save-excursion
     ;; Move to the current heading
     (org-back-to-heading t)
@@ -136,15 +136,15 @@
 
 (defcustom my-random-schedule-exponent 1
   "Exponent n controlling the bias of the scheduling distribution.
-  - n = 0: Uniform distribution (no bias).
-  - n = 1: Quadratic distribution (default).
-  - n = 2: Cubic distribution (stronger bias towards later dates)."
+			    - n = 0: Uniform distribution (no bias).
+			    - n = 1: Quadratic distribution (default).
+			    - n = 2: Cubic distribution (stronger bias towards later dates)."
   :type 'integer
   :group 'org-queue)
 
 (defun my-random-schedule (months &optional n)
   "Schedules an Org heading MONTHS months in the future using a mathematically elegant distribution.
-  If N is provided, use that as the exponent. If it's not provided, fallback to `my-random-schedule-exponent'."
+			    If N is provided, use that as the exponent. If it's not provided, fallback to `my-random-schedule-exponent'."
   (when (and (not noninteractive)
 	     (eq major-mode 'org-mode))
     (let* ((today (current-time))
@@ -160,7 +160,7 @@
 
 (defun my-random-schedule-command (&optional months)
   "Interactive command to schedule MONTHS months in the future (defaults to `my-random-schedule-default-months`).
-  Previously, this function would also ensure the heading has a priority set, but that functionality has been removed per your request."
+			    Previously, this function would also ensure the heading has a priority set, but that functionality has been removed per your request."
   (interactive
    (list (read-number
 	  "Enter the upper month limit: "
@@ -181,14 +181,31 @@
   ;; Call 'my-set-priority-with-heuristics' interactively
   (call-interactively 'my-set-priority-with-heuristics))
 
+(defun my-ensure-priorities-and-schedules-for-all-headings ()
+  "Ensure priorities and schedules are set for all headings across Org agenda files.
+   Only processes headings that are missing a priority or a schedule.
+   If a heading has no priority, ensure it using `my-ensure-priority-set`.
+   If a heading has no schedule, assign one using `my-random-schedule`."
+  (interactive)
+  (org-map-entries
+   (lambda ()
+     ;; Ensure priority is set only if missing
+     (let ((current-priority (org-entry-get nil "PRIORITY")))
+       (when (or (not current-priority) (string= current-priority " "))
+	 (my-ensure-priority-set)))
+     ;; Ensure schedule is set only if missing
+     (unless (org-entry-get nil "SCHEDULED") ;; Check if the task already has a schedule
+       (my-random-schedule my-random-schedule-default-months 0)))
+   nil 'agenda)) ;; 'agenda ensures it processes all headings in agenda files
+
 (defun my-post-org-insert-heading (&rest _args)
   "Run after `org-insert-heading` to assign priority and schedule."
   (when (and (not noninteractive)  ;; Avoid running in batch mode
 	     (eq major-mode 'org-mode)) ;; Ensure it's only in Org mode
-    ;; Ensure priority is set (handled inside `my-ensure-priority-set`)
-    (my-ensure-priority-set)
     ;; Call the lower-level function directly to schedule default months out with no interactive prompt.
     (my-random-schedule my-random-schedule-default-months 0)
+    ;; Ensure priority is set (handled inside `my-ensure-priority-set`)
+    (my-ensure-priority-set)
     (end-of-line)))
 
 ;; Advise the function that `C-RET` calls, typically `org-insert-heading`
@@ -197,6 +214,13 @@
 ;; Ensure org-agenda-files is set (adjust the path as needed)
 ;; (setq org-agenda-files
 ;;       (directory-files-recursively "~/org/" "\\.org$"))
+
+
+(defun my-is-overdue-task ()
+  "Return non-nil if the current task is overdue."
+  (let ((scheduled-time (org-get-scheduled-time nil)))
+    (and scheduled-time
+	 (< (time-to-days scheduled-time) (time-to-days (current-time))))))
 
 (defun my-is-outstanding-task ()
   "Return non-nil if the current task is overdue or due today."
@@ -231,7 +255,7 @@
 
 (defun my-get-priority-value ()
   "Get the numerical priority value of the current task.
-  If PRIORITY is not set, return a random value between `org-priority-default` and `org-priority-lowest`."
+			    If PRIORITY is not set, return a random value between `org-priority-default` and `org-priority-lowest`."
   (let ((priority-str (org-entry-get nil "PRIORITY")))
     (if priority-str
 	;; If PRIORITY is set, return its value as a number
@@ -265,6 +289,41 @@
   (setq my-outstanding-tasks-list (mapcar #'cdr my-outstanding-tasks-list))
   (setq my-outstanding-tasks-index 0))
 
+(defun my-auto-postpone-overdue-tasks ()
+  "Auto-postpone all overdue tasks using linear interpolation for priorities.
+	 If a task's priority is not set, use `org-priority-default` to `org-priority-lowest`
+	 as the basis for linear interpolation. The calculated `months` is passed to
+	 `my-random-schedule` for randomness. Save all modified files before and after processing."
+  (interactive)
+  ;; Save all modified buffers before processing
+  (save-some-buffers t) ;; Save all modified buffers without prompting
+  (let* ((highest-priority org-priority-highest)  ; Highest priority value (e.g., 1)
+	 (lowest-priority org-priority-lowest)    ; Lowest priority value (e.g., 64)
+	 (default-priority org-priority-default)  ; Default priority value (e.g., 32)
+	 (max-months my-random-schedule-default-months)) ; Max months for scheduling
+    ;; Iterate over all headings in the agenda files
+    (org-map-entries
+     (lambda ()
+       (when (my-is-overdue-task)
+	 ;; Ensure priority is set
+	 (my-ensure-priority-set)
+	 ;; Get the priority value or fallback to the default range
+	 (let* ((priority-string (org-entry-get nil "PRIORITY"))
+		(priority (if priority-string
+			      (string-to-number priority-string)
+			    ;; Fallback: Use default to lowest priority range
+			    (random (+ 1 (- lowest-priority default-priority)))))
+		;; Linearly interpolate months based on priority
+		(months (* max-months
+			   (/ (float (- priority highest-priority))
+			      (float (- lowest-priority highest-priority))))))
+	   ;; Use `my-random-schedule` to schedule the task
+	   (my-random-schedule months)
+	   (message "Task postponed with priority %d (months: %.2f)." priority months))))
+     nil 'agenda))
+  ;; Save all modified buffers after processing
+  (save-some-buffers t)) ;; Save all modified buffers without prompting
+
 (require 'pulse)
 
 (defun my-launch-anki ()
@@ -279,7 +338,7 @@
 
 (defcustom my-anki-task-ratio 1
   "Ratio of Anki launches to tasks displayed. Default is 1:1 (Anki launched every task).
-     Should be a positive integer."
+			       Should be a positive integer."
   :type 'integer
   :group 'org-queue)
 
@@ -290,7 +349,7 @@
 (defun my-set-anki-task-ratio (ratio)
   "Set the ratio of Anki launches to tasks displayed.
 
-     For example, if RATIO is 3, Anki will be launched once every 3 tasks. RATIO should be a positive integer."
+			       For example, if RATIO is 3, Anki will be launched once every 3 tasks. RATIO should be a positive integer."
   (interactive "nSet Anki:Task ratio (positive integer): ")
   (setq my-anki-task-ratio (max 1 ratio))
   ;; Reset the counter whenever the ratio is changed
@@ -306,7 +365,7 @@
 
 (defun my-show-next-outstanding-task ()
   "Show the next outstanding task in priority order.
-  If the list is exhausted, it refreshes the list."
+			    If the list is exhausted, it refreshes the list."
   (interactive)
   ;; Launch Anki according to the user-defined ratio
   (my-maybe-launch-anki)
@@ -378,6 +437,21 @@
   (my-get-outstanding-tasks)
   (setq my-outstanding-tasks-index 0)
   (message "Outstanding tasks index reset."))
+
+;; Hooks to run automatic task management functions at startup
+(defun my-auto-task-setup ()
+  "Set up automatic task management processes at startup."
+  ;; First, ensure priorities and schedules are set for all headings
+  (my-ensure-priorities-and-schedules-for-all-headings)
+  ;; Perform initial automation (postponing overdue tasks)
+  (my-auto-postpone-overdue-tasks)
+  ;; Show the next outstanding task
+  (my-show-next-outstanding-task)
+  ;; Show the current outstanding task at the very end
+  (run-at-time "1 sec" nil 'my-show-current-outstanding-task))
+
+;; Add our master function to emacs-startup-hook at a certain depth.
+(add-hook 'emacs-startup-hook #'my-auto-task-setup 100)
 
 ;; Define a prefix command for your tasks
 (define-prefix-command 'my-tasks-map)
