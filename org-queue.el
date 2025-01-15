@@ -22,8 +22,8 @@
     (8 . (45 . 58))
     (9 . (58 . 64)))
   "Global priority ranges for setting random priorities.
-						  Each entry is a cons cell where the car is the range identifier
-						  and the cdr is a cons cell representing the minimum and maximum priority values."
+									Each entry is a cons cell where the car is the range identifier
+									and the cdr is a cons cell representing the minimum and maximum priority values."
   :type '(alist :key-type integer :value-type (cons integer integer))
   :group 'org-queue)
 
@@ -41,7 +41,7 @@
 
 (defun my-get-current-priority-range ()
   "Determine the priority range of the current heading.
-						  Returns the range identifier if priority is set; otherwise, nil."
+									Returns the range identifier if priority is set; otherwise, nil."
   (let ((current-priority (org-entry-get nil "PRIORITY")))
     (when (and current-priority (not (string= current-priority " ")))
       (let ((priority-value (string-to-number current-priority)))
@@ -91,7 +91,7 @@
 
 (defun my-increase-priority-range ()
   "Increase the priority range by moving to a lower number (0 is highest priority).
-	  Returns nil if already at the highest priority range (0)."
+				Returns nil if already at the highest priority range (0)."
   (interactive)
   (let ((current-range (or (my-get-current-priority-range) 9)))
     (if (= current-range 0)
@@ -102,7 +102,7 @@
 
 (defun my-decrease-priority-range ()
   "Decrease the priority range by moving to a higher number (9 is lowest priority).
-	  Returns nil if already at the lowest priority range (9)."
+				Returns nil if already at the lowest priority range (9)."
   (interactive)
   (let ((current-range (or (my-get-current-priority-range) 9)))
     (if (= current-range 9)
@@ -113,9 +113,9 @@
 
 (defun my-ensure-priority-set (&optional max-attempts)
   "Ensure the current heading has a priority set.
-		If PRIORITY is not set, assign one within the appropriate range.
-		If PRIORITY is set, reassign a priority within the same range.
-		MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 30)."
+				      If PRIORITY is not set, assign one within the appropriate range.
+				      If PRIORITY is set, reassign a priority within the same range.
+				      MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 30)."
   (let ((max-attempts (or max-attempts 30))
 	(attempt 0)
 	(success nil))
@@ -180,10 +180,10 @@
 
 (defun my-find-schedule-weight ()
   "Calculate schedule weight based on SCHEDULED date in org header.
-  Returns:
-  - 0 for past dates and today
-  - Number of months ahead (days/30.0) for future dates
-  - `my-random-schedule-default-months` if no SCHEDULED date exists."
+			Returns:
+			- 0 for past dates and today
+			- Number of months ahead (days/30.0) for future dates
+			- `my-random-schedule-default-months` if no SCHEDULED date exists."
   (let* ((scheduled-time (org-get-scheduled-time (point)))  ; Get the SCHEDULED time
 	 (current-time (current-time))                      ; Get the current time
 	 (days-difference
@@ -205,15 +205,15 @@
 
 (defcustom my-random-schedule-exponent 1
   "Exponent n controlling the bias of the scheduling distribution.
-						  - n = 0: Uniform distribution (no bias).
-						  - n = 1: Quadratic distribution (default).
-						  - n = 2: Cubic distribution (stronger bias towards later dates)."
+									- n = 0: Uniform distribution (no bias).
+									- n = 1: Quadratic distribution (default).
+									- n = 2: Cubic distribution (stronger bias towards later dates)."
   :type 'integer
   :group 'org-queue)
 
 (defun my-random-schedule (months &optional n)
   "Schedules an Org heading MONTHS months in the future using a mathematically elegant distribution.
-						  If N is provided, use that as the exponent. If it's not provided, fallback to `my-random-schedule-exponent'."
+									If N is provided, use that as the exponent. If it's not provided, fallback to `my-random-schedule-exponent'."
   (when (and (not noninteractive)
 	     (eq major-mode 'org-mode))
     (let* ((today (current-time))
@@ -229,7 +229,7 @@
 
 (defun my-random-schedule-command (&optional months)
   "Interactive command to schedule MONTHS months in the future.
-      If MONTHS is not provided, uses the result of my-find-schedule-weight."
+			    If MONTHS is not provided, uses the result of my-find-schedule-weight."
   (interactive
    (list (read-number
 	  "Enter the upper month limit: "
@@ -252,8 +252,8 @@
 
 (defun my-ensure-priorities-and-schedules-for-all-headings (&optional max-attempts)
   "Ensure priorities and schedules are set for all headings across Org agenda files.
-		     Repeatedly processes headings until all have priorities and schedules, or max-attempts is reached.
-		     MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 10)."
+					   Repeatedly processes headings until all have priorities and schedules, or max-attempts is reached.
+					   MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 10)."
   (interactive)
   (let ((max-attempts (or max-attempts 10))
 	(attempt 0)
@@ -365,16 +365,24 @@
 	(tags priority-down)
 	(search category-keep)))
 
-(defun my-get-priority-value ()
-  "Get the numerical priority value of the current task.
-						  If PRIORITY is not set, return a random value between `org-priority-default` and `org-priority-lowest`."
+(defun my-get-raw-priority-value ()
+  "Get the priority value of the current point without using task list."
   (let ((priority-str (org-entry-get nil "PRIORITY")))
     (if priority-str
-	;; If PRIORITY is set, return its value as a number
 	(string-to-number priority-str)
-      ;; If PRIORITY is not set, return a random value within the range
       (+ org-priority-default
-	 (random (1+ (- org-priority-lowest org-priority-default)))))))
+	 (random (+ 1 (- org-priority-lowest org-priority-default)))))))
+
+(defun my-get-priority-value ()
+  "Get the priority value of the current task from the task list."
+  (let* ((marker (nth my-outstanding-tasks-index my-outstanding-tasks-list))
+	 (priority-str (when marker
+			 (org-with-point-at marker
+			   (org-entry-get nil "PRIORITY")))))
+    (if priority-str
+	(string-to-number priority-str)
+      (+ org-priority-default
+	 (random (+ 1 (- org-priority-lowest org-priority-default)))))))
 
 ;; Define variables for outstanding tasks list and index
 (defvar my-outstanding-tasks-list nil
@@ -389,23 +397,21 @@
   (org-map-entries
    (lambda ()
      (when (my-is-outstanding-task)
-       (let* ((priority (my-get-priority-value))
+       (let* ((priority (my-get-raw-priority-value))
 	      (marker (point-marker)))
 	 (push (cons priority marker) my-outstanding-tasks-list))))
    nil
    'agenda)
-  ;; Sort the list based on priority (lower numbers indicate higher priority)
   (setq my-outstanding-tasks-list
 	(sort my-outstanding-tasks-list (lambda (a b) (< (car a) (car b)))))
-  ;; Extract markers only
   (setq my-outstanding-tasks-list (mapcar #'cdr my-outstanding-tasks-list))
   (setq my-outstanding-tasks-index 0))
 
 (defun my-auto-postpone-overdue-tasks ()
   "Auto-postpone all overdue tasks using linear interpolation for priorities.
-			       If a task's priority is not set, use `org-priority-default` to `org-priority-lowest`
-			       as the basis for linear interpolation. The calculated `months` is passed to
-			       `my-random-schedule` for randomness. Save all modified files before and after processing."
+						     If a task's priority is not set, use `org-priority-default` to `org-priority-lowest`
+						     as the basis for linear interpolation. The calculated `months` is passed to
+						     `my-random-schedule` for randomness. Save all modified files before and after processing."
   (interactive)
   ;; Save all modified buffers before processing
   (save-some-buffers t) ;; Save all modified buffers without prompting
@@ -450,7 +456,7 @@
 
 (defcustom my-anki-task-ratio 1
   "Ratio of Anki launches to tasks displayed. Default is 1:1 (Anki launched every task).
-						     Should be a positive integer."
+									   Should be a positive integer."
   :type 'integer
   :group 'org-queue)
 
@@ -461,26 +467,48 @@
 (defun my-set-anki-task-ratio (ratio)
   "Set the ratio of Anki launches to tasks displayed.
 
-						     For example, if RATIO is 3, Anki will be launched once every 3 tasks. RATIO should be a positive integer."
+									   For example, if RATIO is 3, Anki will be launched once every 3 tasks. RATIO should be a positive integer."
   (interactive "nSet Anki:Task ratio (positive integer): ")
   (setq my-anki-task-ratio (max 1 ratio))
+  (setq my-anki-ratio-interpolation nil)
   ;; Reset the counter whenever the ratio is changed
   (setq my-anki-task-counter 0)
   (message "Anki will be launched once every %d task(s)." my-anki-task-ratio))
 
-;; Helper function to launch Anki according to the ratio
+(defcustom my-anki-ratio-interpolation t
+  "Whether to use priority-based linear interpolation for Anki task ratio.
+		    If nil, uses fixed ratio specified by my-anki-task-ratio."
+  :type 'boolean
+  :group 'org-queue)
+
+(defun my-calculate-interpolated-anki-ratio (priority)
+  "Calculate interpolated Anki ratio based on priority."
+  (if (not my-anki-ratio-interpolation)
+      my-anki-task-ratio
+    (let* ((highest-priority org-priority-highest)    ; e.g., 1
+	   (lowest-priority org-priority-lowest)      ; e.g., 64
+	   (max-ratio my-anki-task-ratio)            ; e.g., 8
+	   (min-ratio 1)
+	   ;; Linear interpolation
+	   (ratio (* (+ min-ratio
+			(* (- max-ratio min-ratio)
+			   (/ (float (- lowest-priority priority))
+			      (- lowest-priority highest-priority))))
+		     1.0)))
+      (max 1 (round ratio)))))
+
 (defun my-maybe-launch-anki ()
-  "Launch Anki according to the set ratio."
-  (setq my-anki-task-counter (1+ my-anki-task-counter))
-  (when (= (mod my-anki-task-counter my-anki-task-ratio) 0)
-    (my-launch-anki)))
+  "Launch Anki according to priority-based interpolated ratio."
+  (let* ((current-priority (my-get-priority-value))
+	 (interpolated-ratio (my-calculate-interpolated-anki-ratio current-priority)))
+    (when (>= my-anki-task-counter interpolated-ratio)
+      (setq my-anki-task-counter 0)
+      (my-launch-anki))))
 
 (defun my-show-next-outstanding-task ()
   "Show the next outstanding task in priority order.
-						  If the list is exhausted, it refreshes the list."
+									If the list is exhausted, it refreshes the list."
   (interactive)
-  ;; Launch Anki according to the user-defined ratio
-  (my-maybe-launch-anki)
   (unless (and my-outstanding-tasks-list
 	       (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
     (my-get-outstanding-tasks))
@@ -499,7 +527,10 @@
 	;; Center the entry in the window
 	(recenter)
 	;; Increment the index after showing the task
-	(setq my-outstanding-tasks-index (1+ my-outstanding-tasks-index)))
+	(setq my-outstanding-tasks-index (1+ my-outstanding-tasks-index))
+	(setq my-anki-task-counter (1+ my-anki-task-counter))
+	;; Launch Anki according to the user-defined ratio
+	(my-maybe-launch-anki))
     (message "No more outstanding tasks.")))
 
 (defun my-show-current-outstanding-task ()
@@ -530,6 +561,7 @@
       (let ((marker (nth (- my-outstanding-tasks-index 2) my-outstanding-tasks-list)))
 	;; Decrement the index before displaying the task
 	(setq my-outstanding-tasks-index (1- my-outstanding-tasks-index))
+	(setq my-anki-task-counter (1- my-anki-task-counter))
 	(switch-to-buffer (marker-buffer marker))
 	(goto-char (marker-position marker))
 	;; Ensure the entire entry is visible
@@ -548,6 +580,7 @@
   (interactive)
   (my-get-outstanding-tasks)
   (setq my-outstanding-tasks-index 0)
+  (setq my-anki-task-counter 0)
   (message "Outstanding tasks index reset."))
 
 ;; Hooks to run automatic task management functions at startup
