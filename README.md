@@ -73,13 +73,15 @@ Smart rescheduling of overdue tasks on Emacs startup using priority-based linear
 
 ### Key Commands and Shortcuts
 
-#### 1. **Automatic Priority Assignment**
+#### 1. **Scheduling and Priority Assignment**
    - **Shortcut**: `C-RET`
-   - **Description**: Automatically assigns a random priority and schedules a new heading within the default range of three months.
+   - **Description**: Assigns both a schedule and a priority to a new heading within the default range of three months.
 
-     #### Task Prioritization
-     When you create a new task using `C-RET`, `org-queue` identifies the priority ranges that include both `org-priority-default` and `org-priority-lowest`. It then combines these ranges, including any intermediate ranges, to form a continuous set of eligible ranges. From this combined set, `org-queue` randomly selects one range and assigns a random priority within that selected range. Subsequently, the task is scheduled to occur randomly within the next three months. This approach ensures that each new task receives a priority that aligns with your predefined heuristic ranges, promoting a balanced and adaptable workload distribution.
-     
+     #### Task Scheduling and Prioritization
+     When you create a new task using `C-RET`, the task is both scheduled to occur randomly within the next three months and assigned a priority. Upon invocation, the command prompts the user to select a priority group (0–9). Each group corresponds to a specific numerical range for priorities, allowing the user to define the range for the task's priority.
+
+     Once the user selects the priority group, `org-queue` randomly assigns a numeric priority within that group. Simultaneously, the task is scheduled to occur randomly within the next three months.
+
 ---
 
 #### 2. **Interactive Task Scheduling with Mathematical Distribution**  
