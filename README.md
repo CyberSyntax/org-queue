@@ -117,11 +117,11 @@ Add the following lines to your Emacs configuration file (\`.emacs\` or \`init.e
 
 **Note**: Replace \`"*path/to/org-queue*"\` with the full directory path where you cloned the repository. Examples for different operating systems:
 
--   **Linux**: \`/home/<your-username>/<repository-folder>/org-queue/\`
--   **macOS**: \`/Users/<your-username>/<repository-folder>/org-queue/\`
--   **Windows**: \`C:/Users/<your-username>/<repository-folder>/org-queue/\`
+-   **Linux**: \`/home/your-username/repository-folder/org-queue/\`
+-   **macOS**: \`/Users/your-username/repository-folder/org-queue/\`
+-   **Windows**: \`C:/Users/your-username/repository-folder/org-queue/\`
 
-Replace \`<your-username>\` with your actual system username and \`<repository-folder>\` with the name of the folder where you saved the \`org-queue\` repository. Use the correct path format for your operating system.
+Replace \`your-username\` with your actual system username and \`repository-folder\` with the name of the folder where you saved the \`org-queue\` repository. Use the correct path format for your operating system.
 
 
 <a id="org84b5864"></a>
