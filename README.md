@@ -1,93 +1,93 @@
 
 # Table of Contents
 
-1.  [Org-queue](#orgab232ba)
-    1.  [Key Features](#org6ed3bfd)
-        1.  [**Granular Task Prioritization**:](#org4565f3e)
-        2.  [**Dynamic and Randomized Scheduling**:](#org7cd1d6b)
-        3.  [**Outstanding Task Tracking**:](#orgf3b477f)
-        4.  [**Queue-Based Navigation with Adjustable Anki Integration**:](#orgf11efaa)
-        5.  [**Automatic Overdue Task Management**:](#org5268d9f)
-    2.  [Why Choose org-queue?](#org31bbd2c)
-    3.  [Installation](#org1cb7a68)
-        1.  [1. **Clone the Repository**:](#orged3e1cc)
-        2.  [2. **Configure org-queue in Emacs**:](#orgf34a4e8)
-        3.  [3. **Restart Emacs**:](#org84b5864)
-    4.  [Usage](#orgf3fa4a0)
-        1.  [Key Commands and Shortcuts](#org49d73b9)
-    5.  [Configuration](#orga96c269)
-        1.  [Customize the Default Scheduling Range](#org45acb63)
-        2.  [Adjust the Scheduling Bias](#orgdb287b9)
-        3.  [Setting the Default Anki Launch Ratio](#orgfbb869d)
-        4.  [Customize Priority Ranges](#orgb61ed3a)
-        5.  [Important Notes](#orgfade6b6)
-        6.  [Sample Configuration](#orgaa0cd75)
-        7.  [Customizing via Emacs Interface vs. Configuration File](#org3d3f313)
-    6.  [License](#org18dfcc5)
+1.  [Org-queue](#org603541a)
+    1.  [Key Features](#orgb3454fe)
+        1.  [**Granular Task Prioritization**:](#orgc1e6db7)
+        2.  [**Dynamic and Randomized Scheduling**:](#org11aa33a)
+        3.  [**Outstanding Task Tracking**:](#org6694c5d)
+        4.  [**Queue-Based Navigation with Adjustable Anki Integration**:](#org1afffe2)
+        5.  [**Automatic Overdue Task Management**:](#orge859be5)
+    2.  [Why Choose org-queue?](#org702feff)
+    3.  [Installation](#orgaccf879)
+        1.  [**Clone the Repository**:](#orgfce2df7)
+        2.  [**Configure org-queue in Emacs**:](#orgccd658b)
+        3.  [**Restart Emacs**:](#org620857f)
+    4.  [Usage](#org76c3385)
+        1.  [Key Commands and Shortcuts](#orgac8b2b7)
+    5.  [Configuration](#org4490433)
+        1.  [Customize the Default Scheduling Range](#orgc7c8ede)
+        2.  [Adjust the Scheduling Bias](#orgdc89ca4)
+        3.  [Setting the Default Anki Launch Ratio](#orgf492064)
+        4.  [Customize Priority Ranges](#org4ad37c4)
+        5.  [Important Notes](#org24ad904)
+        6.  [Sample Configuration](#org01ed1d7)
+        7.  [Customizing via Emacs Interface vs. Configuration File](#org76d0e25)
+    6.  [License](#org3ef0d00)
 
 
-<a id="orgab232ba"></a>
+<a id="org603541a"></a>
 
 # Org-queue
 
 **org-queue** is an Emacs package designed to enhance **org-mode** with advanced incremental task management capabilities. By introducing features such as priority-based task handling, dynamic scheduling, and queue navigation, org-queue helps you stay focused and organized. Drawing inspiration from incremental learning techniques, it allows you to prioritize, defer, and manage tasks effectively.
 
 
-<a id="org6ed3bfd"></a>
+<a id="orgb3454fe"></a>
 
 ## Key Features
 
 
-<a id="org4565f3e"></a>
+<a id="orgc1e6db7"></a>
 
 ### **Granular Task Prioritization**:
 
 Assign priorities on a scale of **1 (highest)** to **64 (lowest)** for precise task ranking.
 
 
-<a id="org7cd1d6b"></a>
+<a id="org11aa33a"></a>
 
 ### **Dynamic and Randomized Scheduling**:
 
 Automatically distribute tasks across a specified time frame, ensuring even workload distribution. Randomized prioritization minimizes bias when assigning task importance.
 
 
-<a id="orgf3b477f"></a>
+<a id="org6694c5d"></a>
 
 ### **Outstanding Task Tracking**:
 
 Effortlessly monitor overdue tasks and navigate through tasks due today or in the near future.
 
 
-<a id="orgf11efaa"></a>
+<a id="org1afffe2"></a>
 
 ### **Queue-Based Navigation with Adjustable Anki Integration**:
 
 Work sequentially through a prioritized task queue, maintaining focus on one task at a time. Adjust the frequency of Anki launches relative to tasks displayed, integrating spaced repetition into your workflow at your preferred pace.
 
 
-<a id="org5268d9f"></a>
+<a id="orge859be5"></a>
 
 ### **Automatic Overdue Task Management**:
 
 Smart rescheduling of overdue tasks on Emacs startup using priority-based linear interpolation. Higher priority tasks are rescheduled more urgently while lower priority tasks are given more flexible future dates, ensuring optimal workload distribution.
 
 
-<a id="org31bbd2c"></a>
+<a id="org702feff"></a>
 
 ## Why Choose org-queue?
 
 \`org-queue\` builds upon the powerful foundation of **org-mode** to provide a robust and flexible task management system. By combining features like structured queues, randomization, and progressive scheduling, it enables users to manage tasks efficiently while maintaining flexibility and control.
 
 
-<a id="org1cb7a68"></a>
+<a id="orgaccf879"></a>
 
 ## Installation
 
 
-<a id="orged3e1cc"></a>
+<a id="orgfce2df7"></a>
 
-### 1. **Clone the Repository**:
+### **Clone the Repository**:
 
 Open your terminal and run:  
 \`\`\`sh
@@ -95,9 +95,9 @@ git clone <https://github.com/CyberSyntax/org-queue.git>
 \`\`\`
 
 
-<a id="orgf34a4e8"></a>
+<a id="orgccd658b"></a>
 
-### 2. **Configure org-queue in Emacs**:
+### **Configure org-queue in Emacs**:
 
 Add the following lines to your Emacs configuration file (\`.emacs\` or \`init.el\`):
 
@@ -124,38 +124,36 @@ Add the following lines to your Emacs configuration file (\`.emacs\` or \`init.e
 Replace \`your-username\` with your actual system username and \`repository-folder\` with the name of the folder where you saved the \`org-queue\` repository. Use the correct path format for your operating system.
 
 
-<a id="org84b5864"></a>
+<a id="org620857f"></a>
 
-### 3. **Restart Emacs**:
+### **Restart Emacs**:
 
 Once configured, restart Emacs, and \`org-queue\` will be ready to use!
 
 
-<a id="orgf3fa4a0"></a>
+<a id="org76c3385"></a>
 
 ## Usage
 
 \`org-queue\` integrates seamlessly with **org-mode**, adding incremental learning and dynamic task management capabilities. Below are the key commands and their corresponding shortcuts:
 
 
-<a id="org49d73b9"></a>
+<a id="orgac8b2b7"></a>
 
 ### Key Commands and Shortcuts
 
-1.  [#62] 1. **Scheduling and Priority Assignment**
+1.  **Scheduling and Priority Assignment**
 
     -   **Shortcut**: \`C-RET\`
     -   **Description**: Assigns both a schedule and a priority to a new heading within the default range of three months.
     
-    1.  [#61] Task Scheduling and Prioritization
+    1.  Task Scheduling and Prioritization
     
         When you create a new task using \`C-RET\`, the task is both scheduled to occur randomly within the next three months and assigned a priority. Upon invocation, the command prompts the user to select a priority group (0–9). Each group corresponds to a specific numerical range for priorities, allowing the user to define the range for the task's priority.
         
         Once the user selects the priority group, \`org-queue\` randomly assigns a numeric priority within that group. Simultaneously, the task is scheduled to occur randomly within the next three months.
-        
-        &#x2014;
 
-2.  [#62] 2. **Interactive Task Scheduling with Mathematical Distribution**
+2.  **Interactive Task Scheduling with Mathematical Distribution**
 
     -   **Shortcut**: \`C-c q s\`
     -   **Description**: Prompts you to specify an upper limit in months for scheduling the current task. The task is then scheduled within the range of **1 day** to the specified upper limit, using a mathematical model that biases the scheduling towards later dates in the range.
@@ -165,7 +163,7 @@ Once configured, restart Emacs, and \`org-queue\` will be ready to use!
         -   **Prompts for Scheduling**: Asks for the maximum number of months you consider acceptable for postponing the task. It then schedules the task within **1 day** to the specified time frame, following a mathematically elegant distribution that naturally favors later scheduling dates within the range.
         -   **Prompts for Priority**: Immediately after scheduling, it prompts you to select a priority range (0–9), allowing you to assign a priority to the task interactively.
     
-    1.  [#43] How It Works:
+    1.  How It Works:
     
         -   This command combines **user input** for flexibility with a **mathematical scheduling model** to distribute your workload dynamically and appropriately.
         -   For example:
@@ -179,7 +177,7 @@ Once configured, restart Emacs, and \`org-queue\` will be ready to use!
         
         If no input is provided for the upper month limit, the default value (\`my-random-schedule-default-months\`, which is \`3\` months) will be used.
     
-    2.  [#45] Mathematical Model:
+    2.  Mathematical Model:
     
         The scheduling mechanism relies on a **mathematically sound probability distribution** to ensure tasks are more likely to be scheduled towards the end of the specified range, without introducing arbitrary parameters.
         
@@ -251,10 +249,8 @@ Once configured, restart Emacs, and \`org-queue\` will be ready to use!
         
         -   **Priority Setting**:
             -   After scheduling, you are prompted to select a priority group (0–9), and the priority is assigned accordingly as described in the **Set Priority with Heuristics** section.
-        
-        &#x2014;
 
-3.  [#45] 3. **Set Priority with Heuristics**
+3.  **Set Priority with Heuristics**
 
     -   **Shortcut**: \`C-c q ,\`
     -   **Additional Shortcuts**:
@@ -262,7 +258,7 @@ Once configured, restart Emacs, and \`org-queue\` will be ready to use!
         -   \`C-c q d\`: Decrease priority range (move to lower priority group)
     -   **Description**: Inspired by a **community proposal discussed in the YouTube video [Priority heuristics in SuperMemo](<https://www.youtube.com/watch?v=OwV5HPKMrbg>)**, this feature builds on the concept of **priorities** already present in SuperMemo. However, it introduces a heuristic-based approach for assigning priorities dynamically, making the process more flexible and adaptable.
     
-    1.  [#52] How it works:
+    1.  How it works:
     
         -   The command prompts the user to choose a priority group (0–9).
         -   Each group corresponds to a specific numerical range for priorities:  
@@ -279,23 +275,21 @@ Once configured, restart Emacs, and \`org-queue\` will be ready to use!
         
         -   After selecting a group, the command randomly picks a priority within the specified range and assigns it to the current heading.
     
-    2.  [#61] Default Behavior:
+    2.  Default Behavior:
     
         -   **If no input is provided when invoking the command (\`C-c q ,\`):**
             -   **If the current heading has a priority set**, the command defaults to that priority's group and assigns a random priority within the same range.
             -   **If the current heading does not have a priority set**, it defaults to **Group 9 (58–64)**, assigning the task a lower priority for less urgent attention.
     
-    3.  [#63] Origin and Philosophy:
+    3.  Origin and Philosophy:
     
         This feature is inspired by a **community proposal for SuperMemo**, as detailed in the YouTube video ["Priority heuristics in SuperMemo"](<https://www.youtube.com/watch?v=OwV5HPKMrbg>). While SuperMemo already features a priority system for incremental learning, this proposal introduced a heuristic-based method to dynamically assign and adjust priorities. 
         
         The heuristic approach simplifies the decision-making process for assigning priorities, making it easier to balance competing tasks and manage workload efficiently. \`org-queue\` adopts this concept to enhance task management in Emacs, allowing users to flexibly and systematically assign priorities to tasks in line with **incremental learning principles**.
         
         A special thanks to the **SuperMemo community** for sharing this innovative idea and inspiring this feature in \`org-queue\`.
-        
-        &#x2014;
 
-4.  [#46] 4. **Navigate Outstanding Tasks**
+4.  **Navigate Outstanding Tasks**
 
     -   **Shortcut**:  
         -   \`C-c q f\`: Move to the next outstanding task in the queue.
@@ -305,7 +299,7 @@ Once configured, restart Emacs, and \`org-queue\` will be ready to use!
     
     -   **Description**: Provides efficient navigation through the queue of overdue or due-today tasks.
     
-    1.  [#37] Adjustable Anki Launch Frequency
+    1.  Adjustable Anki Launch Frequency
     
         While navigating tasks, \`org-queue\` offers two methods to control how frequently the Anki application is launched: fixed ratio and priority-based interpolation.
         
@@ -332,10 +326,8 @@ Once configured, restart Emacs, and \`org-queue\` will be ready to use!
                     -   Enter \`1\`: Launch Anki every task
                     -   Enter \`3\`: Launch Anki every third task
                     -   Enter \`5\`: Launch Anki every fifth task
-        
-        &#x2014;
 
-5.  [#64] 5. **Automatic Postponement of Overdue Tasks**
+5.  **Automatic Postponement of Overdue Tasks**
 
     -   **Activation**: Automatically runs at Emacs startup
     -   **Manual Override**: \`M-x my-auto-postpone-overdue-tasks\` (rarely needed)
@@ -347,7 +339,7 @@ Once configured, restart Emacs, and \`org-queue\` will be ready to use!
         -   **Priority-Based Rescheduling**: Uses each task's priority to determine appropriate future dates.
         -   **Auto-Saving**: Handles file saving automatically before and after processing.
     
-    1.  [#44] When to Use Manual Override:
+    1.  When to Use Manual Override:
     
         -   For users who keep Emacs running for extended periods
         -   When you want to force a complete task review outside the normal startup cycle
@@ -355,7 +347,7 @@ Once configured, restart Emacs, and \`org-queue\` will be ready to use!
         
         The mathematical model and functionality remain the same as described earlier, but the key distinction is that this feature is primarily designed as an automatic startup process rather than a regularly used command.
     
-    2.  [#42] Mathematical Model:
+    2.  Mathematical Model:
     
         The postponement mechanism uses **linear interpolation** to calculate scheduling months based on priority values.
         
@@ -383,30 +375,26 @@ Once configured, restart Emacs, and \`org-queue\` will be ready to use!
             -   Missing Priority: Automatically assigned within default-to-lowest range
         
         The calculated months value is then passed to \`my-random-schedule\` for final scheduling with added randomness to prevent task clustering.
-        
-        &#x2014;
 
-6.  [#33] 6. **Advance Task Schedule with Mathematical Adjustment**
+6.  **Advance Task Schedule with Mathematical Adjustment**
 
     -   **Shortcut**: \`C-c q a\`
     -   **Description**: Advances the schedule of the current Org heading by a calculated number of months. The adjustment decreases with the increasing current schedule weight, meaning tasks scheduled further in the future will be advanced by a smaller amount.
     
-    1.  [#36] How It Works:
+    1.  How It Works:
     
         -   The command calculates a new scheduled date by reducing the current schedule weight with a mathematically derived formula.
         -   Uses formula: \`f(x) = x - 1 / ln(x + e)\` to ensure a decreasing adjustment.
         -   Converts the adjusted months into days and schedules the task without pushing it before the current date.
         
         This function allows users to prioritize tasks that are scheduled too far into the future by bringing them closer to the present where they might need earlier attention.
-        
-        &#x2014;
 
-7.  [#34] 7. **Postpone Task Schedule with Mathematical Adjustment**
+7.  **Postpone Task Schedule with Mathematical Adjustment**
 
     -   **Shortcut**: \`C-c q p\`
     -   **Description**: Postpones the schedule of the current Org heading by a calculated number of months. The postponement uses an increasing function that makes sure tasks of greater schedule weight are postponed by relatively smaller amounts in comparison to lighter ones.
     
-    1.  [#47] How It Works:
+    1.  How It Works:
     
         -   The command calculates a later scheduled date using the function: \`f(x) = x + 1 / ln(x + e)\`.
         -   This ensures that tasks with initially larger schedule weights are postponed less, relative to when they would occur.
@@ -415,26 +403,26 @@ Once configured, restart Emacs, and \`org-queue\` will be ready to use!
         This feature helps in balancing workload by ensuring tasks aren't excessively postponed and allows users to manage their timeline efficiently through a mathematical approach.
 
 
-<a id="orga96c269"></a>
+<a id="org4490433"></a>
 
 ## Configuration
 
 To optimize your experience, you can customize \`org-queue\` settings in your Emacs configuration file or through the Emacs customization interface.
 
 
-<a id="org45acb63"></a>
+<a id="orgc7c8ede"></a>
 
 ### Customize the Default Scheduling Range
 
 Set the default number of months for random scheduling by customizing \`my-random-schedule-default-months\`. This variable controls how far into the future tasks are scheduled when no specific value is provided.
 
-1.  [#42] Option 1: Using Emacs Customization Interface
+1.  Option 1: Using Emacs Customization Interface
 
     1.  Run \`M-x customize-variable RET my-random-schedule-default-months RET\`.
     2.  Set the desired number of months (e.g., \`6\` for six months).
     3.  Save your changes to persist them across sessions.
 
-2.  [#59] Option 2: Setting in Emacs Configuration File
+2.  Option 2: Setting in Emacs Configuration File
 
     Add the following line to your Emacs configuration file (\`init.el\` or \`.emacs\`):
     
@@ -450,7 +438,7 @@ Set the default number of months for random scheduling by customizing \`my-rando
             \`\`\`
 
 
-<a id="orgdb287b9"></a>
+<a id="orgdc89ca4"></a>
 
 ### Adjust the Scheduling Bias
 
@@ -461,13 +449,13 @@ You can control the bias of the scheduling distribution towards later dates by c
     -   \`1\`: Quadratic distribution (default; moderate bias towards later dates).
     -   \`2\`: Cubic distribution (stronger bias towards later dates).
 
-1.  [#56] Option 1: Using Emacs Customization Interface
+1.  Option 1: Using Emacs Customization Interface
 
     1.  Run \`M-x customize-variable RET my-random-schedule-exponent RET\`.
     2.  Set the desired exponent value (e.g., \`2\` for a stronger bias).
     3.  Save your changes.
 
-2.  [#37] Option 2: Setting in Emacs Configuration File
+2.  Option 2: Setting in Emacs Configuration File
 
     Add the following line to your configuration file:
     
@@ -483,19 +471,19 @@ You can control the bias of the scheduling distribution towards later dates by c
             \`\`\`
 
 
-<a id="orgfbb869d"></a>
+<a id="orgf492064"></a>
 
 ### Setting the Default Anki Launch Ratio
 
 By default, \`org-queue\` launches Anki every time you display a new task. To change the frequency, customize \`my-anki-task-ratio\`.
 
-1.  [#59] Option 1: Using Emacs Customization Interface
+1.  Option 1: Using Emacs Customization Interface
 
     1.  Run \`M-x customize-variable RET my-anki-task-ratio RET\`.
     2.  Set the desired ratio.
     3.  Save your changes.
 
-2.  [#56] Option 2: Setting in Emacs Configuration File
+2.  Option 2: Setting in Emacs Configuration File
 
     Add the following line to your configuration file:
     
@@ -511,13 +499,13 @@ By default, \`org-queue\` launches Anki every time you display a new task. To ch
             \`\`\`
 
 
-<a id="orgb61ed3a"></a>
+<a id="org4ad37c4"></a>
 
 ### Customize Priority Ranges
 
 If you wish to adjust how priorities are assigned within \`org-queue\`, you can customize \`my-priority-ranges\`. This variable contains the mapping of priority ranges.
 
-1.  [#43] Using Emacs Customization Interface
+1.  Using Emacs Customization Interface
 
     1.  Run \`M-x customize-variable RET my-priority-ranges RET\`.
     2.  Edit the priority ranges as desired.
@@ -526,7 +514,7 @@ If you wish to adjust how priorities are assigned within \`org-queue\`, you can 
     **Note**: Editing \`my-priority-ranges\` requires understanding of how priorities are mapped. Each entry is a cons cell where the key is the range identifier, and the value is a cons cell of minimum and maximum priority values.
 
 
-<a id="orgfade6b6"></a>
+<a id="org24ad904"></a>
 
 ### Important Notes
 
@@ -555,7 +543,7 @@ If you wish to adjust how priorities are assigned within \`org-queue\`, you can 
     -   Access the Emacs customization interface by running \`M-x customize-group RET org-queue RET\`. This interface allows you to view and modify all customizable variables related to \`org-queue\`.
 
 
-<a id="orgaa0cd75"></a>
+<a id="org01ed1d7"></a>
 
 ### Sample Configuration
 
@@ -583,7 +571,7 @@ Here is how you might set up your Emacs configuration file with \`org-queue\`:
 **Note**: Replace \`"*path/to/org-queue*"\` with the actual path to where \`org-queue\` is located on your system.
 
 
-<a id="org3d3f313"></a>
+<a id="org76d0e25"></a>
 
 ### Customizing via Emacs Interface vs. Configuration File
 
@@ -603,10 +591,8 @@ Here is how you might set up your Emacs configuration file with \`org-queue\`:
 
 Choose the method that best fits your workflow.
 
-&#x2014;
 
-
-<a id="org18dfcc5"></a>
+<a id="org3ef0d00"></a>
 
 ## License
 
