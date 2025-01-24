@@ -304,6 +304,32 @@ Smart rescheduling of overdue tasks on Emacs startup using priority-based linear
        - Missing Priority: Automatically assigned within default-to-lowest range
 
      The calculated months value is then passed to `my-random-schedule` for final scheduling with added randomness to prevent task clustering.
+     
+---
+
+#### 6. **Advance Task Schedule with Mathematical Adjustment**  
+   - **Shortcut**: `C-c q a`  
+   - **Description**: Advances the schedule of the current Org heading by a calculated number of months. The adjustment decreases with the increasing current schedule weight, meaning tasks scheduled further in the future will be advanced by a smaller amount.
+
+     #### How It Works:
+     - The command calculates a new scheduled date by reducing the current schedule weight with a mathematically derived formula.
+     - Uses formula: `f(x) = x - 1 / ln(x + e)` to ensure a decreasing adjustment.
+     - Converts the adjusted months into days and schedules the task without pushing it before the current date.
+
+     This function allows users to prioritize tasks that are scheduled too far into the future by bringing them closer to the present where they might need earlier attention.
+
+---
+
+#### 7. **Postpone Task Schedule with Mathematical Adjustment**  
+   - **Shortcut**: `C-c q p`  
+   - **Description**: Postpones the schedule of the current Org heading by a calculated number of months. The postponement uses an increasing function that makes sure tasks of greater schedule weight are postponed by relatively smaller amounts in comparison to lighter ones.
+
+     #### How It Works:
+     - The command calculates a later scheduled date using the function: `f(x) = x + 1 / ln(x + e)`.
+     - This ensures that tasks with initially larger schedule weights are postponed less, relative to when they would occur.
+     - Converts the adjusted months into days and directly reschedules the task.
+
+     This feature helps in balancing workload by ensuring tasks aren't excessively postponed and allows users to manage their timeline efficiently through a mathematical approach.
 
 ---
 
