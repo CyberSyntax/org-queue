@@ -1,11 +1,8 @@
-;; Ensure Org Agenda and cl-lib are loaded
 (require 'org-agenda)
 (require 'cl-lib)  ;; Required for cl-find-if and cl-remove-if-not
 
-;; Ensure the random number generator is seeded once
 (random t)
 
-;; Set extended numerical priority range
 (setq org-priority-highest 1)
 (setq org-priority-default 32)
 (setq org-priority-lowest 64)
@@ -238,6 +235,46 @@
     ;; Schedule the current heading
     (my-random-schedule (or months (my-find-schedule-weight)))))
 
+(defun my-advance-schedule ()
+  "Advance the current Org heading by a mathematically adjusted number of months.
+Uses a function that decreases with increasing current schedule weight,
+ensuring that tasks scheduled further in the future are advanced less.
+Does not schedule tasks to dates before today."
+  (interactive)
+  (when (and (not noninteractive)
+	     (eq major-mode 'org-mode))
+    (let* ((e (exp 1))  ; e ≈ 2.71828
+	   ;; Get the current scheduled months ahead
+	   (current-weight (max 0 (my-find-schedule-weight)))  ; Ensure non-negative value
+	   ;; Calculate the adjustment using f(x) = x - 1 / ln(x + e)
+	   (adjusted-months (max 0 (- current-weight
+				      (/ 1 (log (+ current-weight e))))))
+	   ;; Convert adjusted-months to days
+	   (adjusted-days (* adjusted-months 30)))
+      ;; Schedule the task to the adjusted date, ensuring it is not before today
+      (org-schedule nil (format-time-string "%Y-%m-%d"
+					    (time-add (current-time)
+						      (days-to-time adjusted-days)))))))
+
+(defun my-postpone-schedule ()
+  "Postpone the current Org heading by a mathematically adjusted number of months.
+Calculates the postponement using a function that increases while its derivative decreases,
+to ensure that tasks with larger weights are postponed by relatively smaller amounts."
+  (interactive)
+  (when (and (not noninteractive)
+	     (eq major-mode 'org-mode))
+    (let* ((e (exp 1))  ; e ≈ 2.71828
+	   (current-weight (max 0 (my-find-schedule-weight)))  ; Ensure non-negative value
+	   ;; Adjusted months using f(x) = x + 1 / ln(x + e)
+	   (adjusted-months (+ current-weight
+			       (/ 1 (log (+ current-weight e)))))
+	   ;; Convert adjusted-months to days
+	   (adjusted-days (* adjusted-months 30)))
+      ;; Directly schedule the task without randomness
+      (org-schedule nil (format-time-string "%Y-%m-%d"
+					    (time-add (current-time)
+						      (days-to-time adjusted-days)))))))
+
 (defun my-schedule-and-set-priority-command (&optional months)
   "Interactive command that schedules MONTHS months in the future and prompts for priority."
   (interactive
@@ -327,7 +364,6 @@
 ;; (setq org-agenda-files
 ;;       (directory-files-recursively "~/org/" "\\.org$"))
 
-
 (defun my-is-overdue-task ()
   "Return non-nil if the current task is overdue."
   (let ((scheduled-time (org-get-scheduled-time nil)))
@@ -358,7 +394,6 @@
     (if scheduled-time
 	(org-end-of-subtree t))))
 
-;; Set the default agenda sorting strategy
 (setq org-agenda-sorting-strategy
       '((agenda priority-down time-up category-keep)
 	(todo priority-down category-keep)
@@ -384,7 +419,6 @@
       (+ org-priority-default
 	 (random (+ 1 (- org-priority-lowest org-priority-default)))))))
 
-;; Define variables for outstanding tasks list and index
 (defvar my-outstanding-tasks-list nil
   "List of outstanding tasks, sorted by priority.")
 
@@ -463,10 +497,8 @@
 (defvar my-anki-task-counter 0
   "Counter of tasks displayed since last Anki launch.")
 
-;; Function to set the Anki:Task ratio
 (defun my-set-anki-task-ratio (ratio)
   "Set the ratio of Anki launches to tasks displayed.
-
 									     For example, if RATIO is 3, Anki will be launched once every 3 tasks. RATIO should be a positive integer."
   (interactive "nSet Anki:Task ratio (positive integer): ")
   (setq my-anki-task-ratio (max 1 ratio))
@@ -583,7 +615,6 @@
   (setq my-anki-task-counter 0)
   (message "Outstanding tasks index reset."))
 
-;; Hooks to run automatic task management functions at startup
 (defun my-auto-task-setup ()
   "Set up automatic task management processes at startup."
   ;; First, ensure priorities and schedules are set for all headings
@@ -597,14 +628,11 @@
   ;; Show the current outstanding task at the very end
   (run-at-time "1 sec" nil 'my-show-current-outstanding-task))
 
-;; Add our master function to emacs-startup-hook at a certain depth.
 (add-hook 'emacs-startup-hook #'my-auto-task-setup 100)
 
-;; Define a prefix command for your tasks
 (define-prefix-command 'my-tasks-map)
 (global-set-key (kbd "C-c q") 'my-tasks-map)
 
-;; Bind your functions to keys under the prefix
 (define-key my-tasks-map (kbd ",") 'my-set-priority-with-heuristics)
 (define-key my-tasks-map (kbd "s") 'my-schedule-and-set-priority-command)
 (define-key my-tasks-map (kbd "n") 'my-show-next-outstanding-task)
@@ -613,5 +641,7 @@
 (define-key my-tasks-map (kbd "r") 'my-reset-outstanding-tasks-index)
 (define-key my-tasks-map (kbd "i") 'my-increase-priority-range)
 (define-key my-tasks-map (kbd "d") 'my-decrease-priority-range)
+(define-key my-tasks-map (kbd "a") 'my-advance-schedule)
+(define-key my-tasks-map (kbd "p") 'my-postpone-schedule)
 
-(provide 'org-queue) ;; Provide the 'org-queue' feature to make it available for require statements
+(provide 'org-queue)
