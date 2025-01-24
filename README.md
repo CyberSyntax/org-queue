@@ -115,7 +115,7 @@ Add the following lines to your Emacs configuration file (\`.emacs\` or \`init.e
 (setq my-anki-task-ratio 1)  ;; Default is 1:1 (Anki launched every task)
 ```
 
-**Note**: Replace \`"path/to/org-queue"\` with the full directory path where you cloned the repository. Examples for different operating systems:
+**Note**: Replace \`path/to/org-queue\` with the full directory path where you cloned the repository. Examples for different operating systems:
 
 -   **Linux**: \`/home/your-username/repository-folder/org-queue/\`
 -   **macOS**: \`/Users/your-username/repository-folder/org-queue/\`
