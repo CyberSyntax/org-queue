@@ -3,6 +3,10 @@
 
 (random t)
 
+(defun random-float (min max)
+  "Return a random float between MIN and MAX."
+  (+ min (* (- max min) (/ (float (random 1000000)) 1000000))))
+
 (setq org-priority-highest 1)
 (setq org-priority-default 32)
 (setq org-priority-lowest 64)
@@ -249,8 +253,12 @@ Does not schedule tasks to dates before today."
 	   ;; Calculate the adjustment using f(x) = x - 1 / ln(x + e)
 	   (adjusted-months (max 0 (- current-weight
 				      (/ 1 (log (+ current-weight e))))))
-	   ;; Convert adjusted-months to days
-	   (adjusted-days (* adjusted-months 30)))
+	   ;; Generate a random value between current-weight and adjusted-months
+	   (min-months (min current-weight adjusted-months))
+	   (max-months (max current-weight adjusted-months))
+	   (random-months (random-float min-months max-months))
+	   ;; Convert random-months to days
+	   (adjusted-days (* random-months 30)))
       ;; Schedule the task to the adjusted date, ensuring it is not before today
       (org-schedule nil (format-time-string "%Y-%m-%d"
 					    (time-add (current-time)
@@ -268,9 +276,13 @@ to ensure that tasks with larger weights are postponed by relatively smaller amo
 	   ;; Adjusted months using f(x) = x + 1 / ln(x + e)
 	   (adjusted-months (+ current-weight
 			       (/ 1 (log (+ current-weight e)))))
-	   ;; Convert adjusted-months to days
-	   (adjusted-days (* adjusted-months 30)))
-      ;; Directly schedule the task without randomness
+	   ;; Generate a random value between current-weight and adjusted-months
+	   (min-months (min current-weight adjusted-months))
+	   (max-months (max current-weight adjusted-months))
+	   (random-months (random-float min-months max-months))
+	   ;; Convert random-months to days
+	   (adjusted-days (* random-months 30)))
+      ;; Schedule the task to the adjusted date
       (org-schedule nil (format-time-string "%Y-%m-%d"
 					    (time-add (current-time)
 						      (days-to-time adjusted-days)))))))
@@ -635,8 +647,8 @@ to ensure that tasks with larger weights are postponed by relatively smaller amo
 
 (define-key my-tasks-map (kbd ",") 'my-set-priority-with-heuristics)
 (define-key my-tasks-map (kbd "s") 'my-schedule-and-set-priority-command)
-(define-key my-tasks-map (kbd "n") 'my-show-next-outstanding-task)
-(define-key my-tasks-map (kbd "p") 'my-show-previous-outstanding-task)
+(define-key my-tasks-map (kbd "f") 'my-show-next-outstanding-task)
+(define-key my-tasks-map (kbd "b") 'my-show-previous-outstanding-task)
 (define-key my-tasks-map (kbd "c") 'my-show-current-outstanding-task)
 (define-key my-tasks-map (kbd "r") 'my-reset-outstanding-tasks-index)
 (define-key my-tasks-map (kbd "i") 'my-increase-priority-range)
