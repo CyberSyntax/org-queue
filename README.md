@@ -90,9 +90,9 @@ Smart rescheduling of overdue tasks on Emacs startup using priority-based linear
 ### **Clone the Repository**:
 
 Open your terminal and run:  
-\`\`\`sh
+```sh
 git clone <https://github.com/CyberSyntax/org-queue.git>
-\`\`\`
+```
 
 
 <a id="orgccd658b"></a>
@@ -101,7 +101,7 @@ git clone <https://github.com/CyberSyntax/org-queue.git>
 
 Add the following lines to your Emacs configuration file (\`.emacs\` or \`init.el\`):
 
-\`\`\`emacs-lisp
+```emacs-lisp
 ;; Add the path to the org-queue directory
 (add-to-list 'load-path "*path/to/org-queue*")
 
@@ -113,7 +113,7 @@ Add the following lines to your Emacs configuration file (\`.emacs\` or \`init.e
 
 ;; Optional: Set the default Anki launch ratio
 (setq my-anki-task-ratio 1)  ;; Default is 1:1 (Anki launched every task)
-\`\`\`
+```
 
 **Note**: Replace \`"*path/to/org-queue*"\` with the full directory path where you cloned the repository. Examples for different operating systems:
 
@@ -185,17 +185,17 @@ Once configured, restart Emacs, and \`org-queue\` will be ready to use!
         
         Convert the specified number of months into total days:
         
-        \`\`\`
+        ```
         total<sub>days</sub> = months \* 30
-        \`\`\`
+        ```
         
         **2. Probability Density Function (PDF):**
         
         A polynomial distribution over the interval \`[0, 1]\` is used:
         
-        \`\`\`
+        ```
         f(x) = (n + 1) \* x<sup>n</sup>
-        \`\`\`
+        ```
         
         -   **Normalization:** The coefficient \`(n + 1)\` ensures that the total probability integrates to 1 over the interval \`[0, 1]\`.
         
@@ -211,29 +211,29 @@ Once configured, restart Emacs, and \`org-queue\` will be ready to use!
         
         The CDF is obtained by integrating the PDF:
         
-        \`\`\`
+        ```
         F(x) = x<sup>(n + 1)</sup>
-        \`\`\`
+        ```
         
         For \`n = 1\`:
         
-        \`\`\`
+        ```
         F(x) = x<sup>2</sup>
-        \`\`\`
+        ```
         
         **4. Inverting the CDF:**
         
         A uniform random variable \`u\` in \`[0, 1]\` is used to generate \`x\`:
         
-        \`\`\`
+        ```
         x = u<sup>(1 / (n + 1))</sup>
-        \`\`\`
+        ```
         
         For \`n = 1\`:
         
-        \`\`\`
+        ```
         x = sqrt(u)
-        \`\`\`
+        ```
         
         This inversion biases \`x\` towards values closer to 1, favoring later dates.
         
@@ -241,9 +241,9 @@ Once configured, restart Emacs, and \`org-queue\` will be ready to use!
         
         The number of days ahead is computed as:
         
-        \`\`\`
+        ```
         days<sub>ahead</sub> = total<sub>days</sub> \* x
-        \`\`\`
+        ```
         
         This ensures that the task is scheduled within the specified range, with a natural bias towards dates further in the future.
         
@@ -355,18 +355,18 @@ Once configured, restart Emacs, and \`org-queue\` will be ready to use!
         
         The function maps priorities to months using linear interpolation:
         
-        \`\`\`
+        ```
         months = max<sub>months</sub> \* (priority - highest<sub>priority</sub>) / (lowest<sub>priority</sub> - highest<sub>priority</sub>)
-        \`\`\`
+        ```
         
         **2. Linear Interpolation Formula:**
         
         For a priority p in the range [highest<sub>priority</sub>, lowest<sub>priority</sub>]:
         
-        \`\`\`
+        ```
         interpolation<sub>factor</sub> = (p - highest<sub>priority</sub>) / (lowest<sub>priority</sub> - highest<sub>priority</sub>)
         months = max<sub>months</sub> \* interpolation<sub>factor</sub>
-        \`\`\`
+        ```
         
         -   **Priority Handling:**
             -   Highest Priority (e.g., 1): Results in minimal postponement
@@ -426,16 +426,16 @@ Set the default number of months for random scheduling by customizing \`my-rando
 
     Add the following line to your Emacs configuration file (\`init.el\` or \`.emacs\`):
     
-    \`\`\`emacs-lisp
+    ```emacs-lisp
     (setq my-random-schedule-default-months 3)
-    \`\`\`
+    ```
     
     -   **Example**:
         -   To set the default scheduling range to **6 months**, add:
             
-            \`\`\`emacs-lisp
+            ```emacs-lisp
             (setq my-random-schedule-default-months 6)
-            \`\`\`
+            ```
 
 
 <a id="orgdc89ca4"></a>
@@ -459,16 +459,16 @@ You can control the bias of the scheduling distribution towards later dates by c
 
     Add the following line to your configuration file:
     
-    \`\`\`emacs-lisp
+    ```emacs-lisp
     (setq my-random-schedule-exponent 1)  ;; Default value
-    \`\`\`
+    ```
     
     -   **Example**:
         -   To use a cubic distribution for stronger bias towards later dates, add:
             
-            \`\`\`emacs-lisp
+            ```emacs-lisp
             (setq my-random-schedule-exponent 2)
-            \`\`\`
+            ```
 
 
 <a id="orgf492064"></a>
@@ -487,16 +487,16 @@ By default, \`org-queue\` launches Anki every time you display a new task. To ch
 
     Add the following line to your configuration file:
     
-    \`\`\`emacs-lisp
+    ```emacs-lisp
     (setq my-anki-task-ratio 1)  ;; Default is 1:1 (Anki launched every task)
-    \`\`\`
+    ```
     
     -   **Example**:
         -   To set Anki to launch every third task, add:
             
-            \`\`\`emacs-lisp
+            ```emacs-lisp
             (setq my-anki-task-ratio 3)
-            \`\`\`
+            ```
 
 
 <a id="org4ad37c4"></a>
@@ -521,7 +521,7 @@ If you wish to adjust how priorities are assigned within \`org-queue\`, you can 
 -   **Loading Order Matters**:
     -   Ensure that you have loaded \`org-queue\` before setting these variables. Place \`(require 'org-queue)\` before the configuration settings in your Emacs configuration file.
         
-        \`\`\`emacs-lisp
+        ```emacs-lisp
         ;; Add the path to the org-queue directory
         (add-to-list 'load-path "*path/to/org-queue*")
         
@@ -531,7 +531,7 @@ If you wish to adjust how priorities are assigned within \`org-queue\`, you can 
         ;; Now set your configurations
         (setq org-priority-highest 1)
         ;; &#x2026; and so on
-        \`\`\`
+        ```
 
 -   **Customizable Variables**:
     -   Variables like \`my-random-schedule-default-months\`, \`my-random-schedule-exponent\`, \`my-anki-task-ratio\`, and \`my-priority-ranges\` are defined using \`defcustom\`. You can customize them via the Emacs customization interface or set them using \`setq\` in your configuration file.
@@ -549,7 +549,7 @@ If you wish to adjust how priorities are assigned within \`org-queue\`, you can 
 
 Here is how you might set up your Emacs configuration file with \`org-queue\`:
 
-\`\`\`emacs-lisp
+```emacs-lisp
 ;; Add the path to the org-queue directory
 (add-to-list 'load-path "*path/to/org-queue*")
 
@@ -566,7 +566,7 @@ Here is how you might set up your Emacs configuration file with \`org-queue\`:
 ;;       '((0 . (1 . 2))
 ;;         ;; &#x2026; your custom ranges &#x2026;
 ;;         (9 . (58 . 64))))
-\`\`\`
+```
 
 **Note**: Replace \`"*path/to/org-queue*"\` with the actual path to where \`org-queue\` is located on your system.
 
@@ -598,3 +598,4 @@ Choose the method that best fits your workflow.
 
 \`org-queue\` is licensed under the **GNU General Public License v3.0 (GPL-3.0)**.  
 Refer to the [LICENSE](./LICENSE) file for detailed terms and conditions.
+
