@@ -59,13 +59,13 @@
 	   (specific-range
 	    (cdr (assoc specific-range priority-ranges)))
 	   ((called-interactively-p 'any)
-	    (let* ((default-range (or (my-get-current-priority-range) 9))
+	    (let* ((default-range (or (my-get-current-priority-range) (random 10)))
 		   (user-choice (read-number
 				 "Select a priority range (0-9): "
 				 default-range)))
 	      (cdr (assoc user-choice priority-ranges))))
 	   (t
-	    (cdr (assoc (or (my-get-current-priority-range) 9) priority-ranges))))))
+	    (cdr (assoc (or (my-get-current-priority-range) (random 10)) priority-ranges))))))
     (if range
 	(let* ((min-priority (car range))
 	       (max-priority (cdr range))
@@ -488,6 +488,42 @@ to ensure that tasks with larger weights are postponed by relatively smaller amo
   ;; Save all modified buffers after processing
   (save-some-buffers t)) ;; Save all modified buffers without prompting
 
+(defun my-postpone-duplicate-priority-tasks ()
+  "Postpone duplicate outstanding tasks within the same file that share the same priority.
+For each file, only one task per priority level remains as outstanding. 
+All other tasks with the same priority in the same file are postponed.
+Tasks across different files or with different priorities within the same file are unaffected."
+  (interactive)
+  ;; Ensure we are operating on agenda files
+  (let ((agenda-files (org-agenda-files)))
+    (unless agenda-files
+      (user-error "No agenda files found. Please set `org-agenda-files` accordingly."))
+    (let ((seen-tasks (make-hash-table :test 'equal))) ; Hash table to track seen (file, priority) pairs
+      ;; Iterate over each agenda file
+      (dolist (file agenda-files)
+	(with-current-buffer (find-file-noselect file)
+	  (save-excursion
+	    (goto-char (point-min))
+	    ;; Iterate over all headings in the current file
+	    (org-map-entries
+	     (lambda ()
+	       (when (my-is-outstanding-task)
+		 (let* ((priority-string (org-entry-get nil "PRIORITY"))
+			(priority (if priority-string
+				      (string-to-number priority-string)
+				    ;; If priority not set, use default
+				    org-priority-default))
+			(key (cons (file-truename file) priority)))
+		   (if (gethash key seen-tasks)
+		       ;; Duplicate found, postpone it
+		       (progn
+			 (my-postpone-schedule)
+			 (message "Postponed duplicate task with priority %d in file %s." priority file))
+		     ;; First occurrence, mark as seen
+		     (puthash key t seen-tasks))))))
+	     nil 'file))))
+      (message "Duplicate outstanding tasks have been processed.")))
+
 (require 'pulse)
 
 (defun my-launch-anki ()
@@ -628,17 +664,29 @@ to ensure that tasks with larger weights are postponed by relatively smaller amo
   (message "Outstanding tasks index reset."))
 
 (defun my-auto-task-setup ()
-  "Set up automatic task management processes at startup."
-  ;; First, ensure priorities and schedules are set for all headings
-  (my-ensure-priorities-and-schedules-for-all-headings)
-  ;; Perform initial automation (postponing overdue tasks)
-  (my-auto-postpone-overdue-tasks)
-  ;; Again, ensure priorities and schedules are set for all headings
-  (my-ensure-priorities-and-schedules-for-all-headings)
-  ;; Show the next outstanding task
-  (my-show-next-outstanding-task)
-  ;; Show the current outstanding task at the very end
-  (run-at-time "1 sec" nil 'my-show-current-outstanding-task))
+  "Initialize and set up automatic task management processes upon Emacs startup."
+  (condition-case err
+      (progn
+	;; Ensure that all Org headings have set priorities and schedules.
+	(my-ensure-priorities-and-schedules-for-all-headings)
+
+	;; Automatically postpone tasks that are overdue.
+	(my-auto-postpone-overdue-tasks)
+
+	;; Postpone duplicate outstanding tasks that share the same priority within the same file.
+	(my-postpone-duplicate-priority-tasks)
+
+	;; Re-ensure that all Org headings still have correct priorities and schedules after modifications.
+	(my-ensure-priorities-and-schedules-for-all-headings)
+
+	;; Display the next outstanding task to the user for immediate visibility.
+	(my-show-next-outstanding-task)
+
+	;; Schedule the display of the current outstanding task to occur shortly after startup.
+	;; This slight delay ensures that all startup processes have completed before displaying the task.
+	(run-at-time "1 sec" nil 'my-show-current-outstanding-task))
+    (error
+     (message "Error during automatic task setup: %s" (error-message-string err)))))
 
 (add-hook 'emacs-startup-hook #'my-auto-task-setup 100)
 
