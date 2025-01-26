@@ -522,7 +522,89 @@ Tasks across different files or with different priorities within the same file a
 		     ;; First occurrence, mark as seen
 		     (puthash key t seen-tasks))))))
 	     nil 'file))))
-      (message "Duplicate outstanding tasks have been processed.")))
+    (message "Duplicate outstanding tasks have been processed.")))
+
+(defun my-enforce-priority-constraints ()
+  "Enforce hierarchical task constraints where higher priorities dictate lower priority limits.
+Processes priorities in descending order (priority 1 → 64) using FIFO task postponement."
+  (interactive)
+  (let* ((agenda-files (org-agenda-files))
+	(priority-counts (make-hash-table :test 'equal))
+	(tasks-by-priority (make-hash-table :test 'equal)))
+
+    ;; ==== PHASE 1: Data Collection ====
+    (dolist (file agenda-files)
+    (with-current-buffer (find-file-noselect file)
+      (save-excursion
+	(goto-char (point-min))
+	;; Process tasks from top to bottom (earlier positions first)
+	(org-map-entries
+	  (lambda ()
+	    (when (my-is-outstanding-task)
+	      (let* ((priority-str (org-entry-get nil "PRIORITY"))
+		    (priority (if priority-str 
+				(string-to-number priority-str)
+				org-priority-default))
+		    (task-entry (cons (buffer-file-name) (point))))
+		;; Store tasks in reverse order to facilitate O(1) pop-front
+		(puthash priority 
+			(nconc (gethash priority tasks-by-priority) (list task-entry))
+			tasks-by-priority)
+		(puthash priority 
+			(1+ (gethash priority priority-counts 0))
+			priority-counts))))
+	  nil 'file))))
+
+    ;; ==== PHASE 2: Priority Order Setup ====
+    ;; 1. Get sorted priorities 1 (highest) to 64 (lowest)
+    (let* ((sorted-priorities (sort (hash-table-keys priority-counts) #'<))
+	  (current-max nil)
+	  highest-processed)
+
+      ;; ==== PHASE 3: Constraint Processing ====
+      ;; Process highest (1 → 64) priorities first
+      (dolist (prio sorted-priorities)
+	;; No reverse needed since (sort '<) returns 1,2,...,64
+	(let ((count (gethash prio priority-counts 0))
+	      (tasks (gethash prio tasks-by-priority '())))
+	  (cond
+	    ((zerop count) ; Skip empty priorities
+	    nil)
+
+	    ;; Set initial constraint from highest priority with tasks
+	    ((null current-max)
+	    (setq current-max count
+		  highest-processed prio)
+	    (message "[CONSTRAINT] Priority %d = new global max: %d" 
+		    prio current-max))
+
+	    ;; Enforce constraints for lower priorities
+	    ((> count current-max)
+	    (let ((excess (- count current-max)))
+	      (message "[ENFORCE] Priority %d overflow (%d > max %d). Postponing %d tasks..."
+		      prio count current-max excess)
+	      ;; Process oldest tasks first (FIFO through list order)
+	      (dotimes (_ excess)
+		(when-let ((task (pop tasks))) 
+		  (let ((file (car task))
+			(pos (cdr task)))
+		    ;; Postpone logic
+		    (with-current-buffer (find-file-noselect file)
+		      (goto-char pos)
+		      (my-postpone-schedule)
+		      (message "Postponed priority %d task: %s" prio 
+			      (file-name-nondirectory file))))))
+	      (puthash prio tasks tasks-by-priority)))
+
+	    ;; Update current-max for subsequent priorities
+	    (t
+	    (setq current-max (min current-max count))))))
+
+      ;; ==== PHASE 4: Cleanup ====
+      (save-some-buffers t)
+      (message "[COMPLETE] Constrained %d priorities. Final max: %d"
+	      (hash-table-count priority-counts)
+	      current-max))))
 
 (require 'pulse)
 
@@ -675,6 +757,9 @@ Tasks across different files or with different priorities within the same file a
 
 	;; Postpone duplicate outstanding tasks that share the same priority within the same file.
 	(my-postpone-duplicate-priority-tasks)
+
+	;; Enforce priority constraints to ensure lower priority tasks do not exceed higher ones.
+	(my-enforce-priority-constraints)
 
 	;; Re-ensure that all Org headings still have correct priorities and schedules after modifications.
 	(my-ensure-priorities-and-schedules-for-all-headings)
