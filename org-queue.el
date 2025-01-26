@@ -281,11 +281,74 @@ to ensure that tasks with larger weights are postponed by relatively smaller amo
 	   (max-months (max current-weight adjusted-months))
 	   (random-months (random-float min-months max-months))
 	   ;; Convert random-months to days
-	   (adjusted-days (* random-months 30)))
+	   (adjusted-days (* random-months 30))
+	   (now (current-time))
+	   (proposed-new-time (time-add now (days-to-time adjusted-days)))
+	   ;; Calculate tomorrow's midnight
+	   (now-decoded (decode-time now))
+	   (year (nth 5 now-decoded))
+	   (month (nth 4 now-decoded))
+	   (day (nth 3 now-decoded))
+	   (tomorrow-midnight (encode-time 0 0 0 (1+ day) month year))
+	   ;; Ensure new-time is at least tomorrow-midnight
+	   (new-time (if (time-less-p proposed-new-time tomorrow-midnight)
+			 tomorrow-midnight
+		       proposed-new-time)))
       ;; Schedule the task to the adjusted date
-      (org-schedule nil (format-time-string "%Y-%m-%d"
-					    (time-add (current-time)
-						      (days-to-time adjusted-days)))))))
+      (org-schedule nil (format-time-string "%Y-%m-%d" new-time)))))
+
+(defun my-custom-shuffle (list)
+  "Fisher-Yates shuffle implementation for Emacs Lisp."
+  (let ((vec (vconcat list)) (i (length list)))
+    (while (> i 1)
+      (let* ((j (random i))
+	     (temp (aref vec (setq i (1- i)))))
+	(aset vec i (aref vec j))
+	(aset vec j temp)))
+    (append vec nil)))
+
+(defun my-auto-advance-schedules (&optional power)
+  "Advance 2^POWER random tasks (default:64) with proper loop control."
+  (interactive "P")
+  (let* ((n (or power 6))
+	 (limit (expt 2 n))
+	 (candidates (org-map-entries #'point-marker nil 'agenda))
+	 (shuffled (my-custom-shuffle candidates))
+	 (total (length shuffled))
+	 (processed 0)
+	 (count 0))
+    (save-some-buffers t)
+    (catch 'break
+      (dolist (m shuffled)
+	(when (>= count limit) (throw 'break nil))
+	(setq count (1+ count))
+	(org-with-point-at m
+	  (when (my-advance-schedule)
+	    (setq processed (1+ processed))))))
+    (save-some-buffers t)
+    (message "Advanced %d/%d (2^%d=%d)" processed total n limit)))
+
+(defun my-auto-postpone-schedules (&optional power)
+  "Postpone 2^POWER random tasks (default:64) with safe iteration."
+  (interactive "P")
+  (let* ((n (or power 6))
+	 (limit (expt 2 n))
+	 (candidates (org-map-entries #'point-marker nil 'agenda))
+	 (shuffled (my-custom-shuffle candidates))
+	 (total (length shuffled))
+	 (processed 0)
+	 (count 0))
+    (save-excursion
+      (save-some-buffers t)
+      (catch 'break
+	(dolist (m shuffled)
+	  (when (>= count limit) (throw 'break nil))
+	  (setq count (1+ count))
+	  (org-with-point-at m
+	    (when (my-postpone-schedule)
+	      (setq processed (1+ processed))))))
+      (save-some-buffers t)
+      (message "Postponed %d/%d (2^%d=%d)" processed total n limit))))
 
 (defun my-schedule-and-set-priority-command (&optional months)
   "Interactive command that schedules MONTHS months in the future and prompts for priority."
@@ -606,6 +669,41 @@ Processes priorities in descending order (priority 1 → 64) using FIFO task pos
 	      (hash-table-count priority-counts)
 	      current-max))))
 
+(defun my-postpone-consecutive-same-file-tasks ()
+  "Postpone consecutive tasks from the same file, keeping only the first.
+Saves buffers and regenerates the task list for consistency."
+  (interactive)
+  (my-reset-outstanding-tasks-index)
+  (when my-outstanding-tasks-list
+    (let ((prev-file nil)
+	  (modified-buffers nil)
+	  (original-count (length my-outstanding-tasks-list)))
+      ;; Iterate through tasks in order
+      (dolist (marker my-outstanding-tasks-list)
+	(let* ((buffer (marker-buffer marker))
+	       (file (when (buffer-live-p buffer)
+		       (expand-file-name (buffer-file-name buffer)))))
+	  (if (and file (equal file prev-file))
+	      (progn
+		(org-with-point-at marker
+		  (my-postpone-schedule)
+		  (add-to-list 'modified-buffers buffer))
+		(message "Postponed: %s (File: %s)" 
+			 (org-get-heading t t)
+			 (file-name-nondirectory file)))
+	    (setq prev-file file))))
+      ;; Save modified buffers to disk
+      (dolist (buf modified-buffers)
+	(when (buffer-live-p buf)
+	  (with-current-buffer buf
+	    (save-buffer))))
+      ;; Regenerate task list if changes occurred
+      (when modified-buffers
+	(my-get-outstanding-tasks)
+	(message "%d consecutive task(s) postponed. List regenerated." 
+		 (- original-count (length my-outstanding-tasks-list))))))
+  (my-reset-outstanding-tasks-index))
+
 (require 'pulse)
 
 (defun my-launch-anki ()
@@ -763,6 +861,9 @@ Processes priorities in descending order (priority 1 → 64) using FIFO task pos
 
 	;; Re-ensure that all Org headings still have correct priorities and schedules after modifications.
 	(my-ensure-priorities-and-schedules-for-all-headings)
+
+	;; Break up consecutive tasks from the same file to avoid clustering in the review queue
+	(my-postpone-consecutive-same-file-tasks)
 
 	;; Display the next outstanding task to the user for immediate visibility.
 	(my-show-next-outstanding-task)
