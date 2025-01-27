@@ -67,31 +67,29 @@
 	   (t
 	    (cdr (assoc (or (my-get-current-priority-range) (random 10)) priority-ranges)))))
 	 (success nil)
-	 (attempt 0))
+	 (attempt 0)
+	 random-priority) ; Added to retain the value for message after loop
     (if range
 	(let* ((min-priority (car range))
 	       (max-priority (cdr range))
-	       (random-priority (+ min-priority
-				   (random (1+ (- max-priority min-priority))))))
+	       (desired-priority (+ min-priority
+				    (random (1+ (- max-priority min-priority))))))
+	  (setq random-priority desired-priority) ; Store for later message
 	  (while (and (not success) (< attempt max-retries))
 	    (condition-case err
 		(progn
 		  (let* ((current-priority (string-to-number
 					    (or (org-entry-get nil "PRIORITY")
 						(number-to-string org-priority-default))))
-			 (desired-priority random-priority)
 			 (delta (- desired-priority current-priority)))
 		    (cond
 		     ((< delta 0)
-		      ;; Desired priority is higher; use org-priority-up
 		      (dotimes (_ (abs delta))
 			(org-priority-up)))
 		     ((> delta 0)
-		      ;; Desired priority is lower; use org-priority-down
 		      (dotimes (_ delta)
 			(org-priority-down)))
 		     (t
-		      ;; Delta is zero; perform stabilization sequence
 		      (if (= current-priority org-priority-highest)
 			  (progn
 			    (org-priority-down)
@@ -103,45 +101,42 @@
 			  (progn
 			    (org-priority-up)
 			    (org-priority-down))))))
-		    ;; Verify final priority
 		    (let ((final-priority (string-to-number
-					   (or (org-entry-get nil "PRIORITY")
-					       (number-to-string org-priority-default)))))
+					  (or (org-entry-get nil "PRIORITY")
+					      (number-to-string org-priority-default)))))
 		      (if (/= final-priority desired-priority)
-			  (error "Failed to set the desired priority. Current: %d, Desired: %d"
+			  (error "Failed to set priority. Current: %d, Desired: %d"
 				 final-priority desired-priority))))
-		  (setq success t)
-		  (message "Priority set to: %d" desired-priority))
+		  (setq success t))
 	      (error
 	       (setq attempt (1+ attempt))
 	       (if (< attempt max-retries)
 		   (progn
-		     (message "Retrying priority setting (%d/%d)..." attempt max-retries)
+		     (message "Retrying (%d/%d)..." attempt max-retries)
 		     (sleep-for retry-delay))
-		 (message "Failed to set priority after %d attempts: %s" max-retries err))))))
+		 (message "Failed after %d attempts: %s" max-retries (error-message-string err))))))
+	  ;; Success message here
+	  (when success
+	    (message "Priority set to: %d" random-priority)))
       (message "Invalid range."))))
 
 (defun my-increase-priority-range ()
-  "Increase the priority range by moving to a lower number (0 is highest priority).
-				  Returns nil if already at the highest priority range (0)."
+  "Increase the priority range by moving to a lower number (0 is the highest priority).
+Adjusts the priority within the new range, even if already at the highest."
   (interactive)
   (let ((current-range (or (my-get-current-priority-range) 9)))
-    (if (= current-range 0)
-	(message "Already at highest priority range")
-      (let ((new-range (max 0 (1- current-range))))
-	(my-set-priority-with-heuristics new-range)
-	(message "Priority range increased to %d" new-range)))))
+    (let ((new-range (max 0 (1- current-range))))
+      (my-set-priority-with-heuristics new-range)
+      (message "Priority range increased to %d" new-range))))
 
 (defun my-decrease-priority-range ()
-  "Decrease the priority range by moving to a higher number (9 is lowest priority).
-				  Returns nil if already at the lowest priority range (9)."
+  "Decrease the priority range by moving to a higher number (9 is the lowest priority).
+Adjusts the priority within the new range, even if already at the lowest."
   (interactive)
   (let ((current-range (or (my-get-current-priority-range) 9)))
-    (if (= current-range 9)
-	(message "Already at lowest priority range")
-      (let ((new-range (min 9 (1+ current-range))))
-	(my-set-priority-with-heuristics new-range)
-	(message "Priority range decreased to %d" new-range)))))
+    (let ((new-range (min 9 (1+ current-range))))
+      (my-set-priority-with-heuristics new-range)
+      (message "Priority range decreased to %d" new-range))))
 
 (defun my-ensure-priority-set (&optional max-attempts)
   "Ensure the current heading has a priority set.
@@ -396,9 +391,9 @@ to ensure that tasks with larger weights are postponed by relatively smaller amo
 (defun my-ensure-priorities-and-schedules-for-all-headings (&optional max-attempts)
   "Ensure priorities and schedules are set for all headings across Org agenda files.
 					     Repeatedly processes headings until all have priorities and schedules, or max-attempts is reached.
-					     MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 10)."
+					     MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 30)."
   (interactive)
-  (let ((max-attempts (or max-attempts 10))
+  (let ((max-attempts (or max-attempts 30))
 	(attempt 0)
 	(all-complete nil))
 
