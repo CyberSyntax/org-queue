@@ -530,7 +530,7 @@ If you wish to adjust how priorities are assigned within `org-queue`, you can cu
         
         ;; Now set your configurations
         (setq org-priority-highest 1)
-        ;; &#x2026; and so on
+        ;; … and so on
         ```
 
 -   **Customizable Variables**:
@@ -564,7 +564,7 @@ Here is how you might set up your Emacs configuration file with `org-queue`:
 ;; Optionally, customize priority ranges (only if you need to adjust defaults)
 ;; (setq my-priority-ranges
 ;;       '((0 . (1 . 2))
-;;         ;; &#x2026; your custom ranges &#x2026;
+;;         ;; … your custom ranges …
 ;;         (9 . (58 . 64))))
 ```
 
