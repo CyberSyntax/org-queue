@@ -52,7 +52,7 @@
   "Set a random priority within a user-defined heuristic range with retry mechanism."
   (interactive)
   (let* ((priority-ranges my-priority-ranges)
-	 (max-retries 30)
+	 (max-retries 15)
 	 (retry-delay 0.3)
 	 (range
 	  (cond
@@ -68,16 +68,24 @@
 	    (cdr (assoc (or (my-get-current-priority-range) (random 10)) priority-ranges)))))
 	 (success nil)
 	 (attempt 0)
-	 random-priority) ; Added to retain the value for message after loop
+	 random-priority)
     (if range
 	(let* ((min-priority (car range))
 	       (max-priority (cdr range))
 	       (desired-priority (+ min-priority
-				    (random (1+ (- max-priority min-priority))))))
-	  (setq random-priority desired-priority) ; Store for later message
+				    (random (1+ (- max-priority min-priority)))))
+	       final-priority)
+	  (setq random-priority desired-priority)
 	  (while (and (not success) (< attempt max-retries))
 	    (condition-case err
 		(progn
+		  ;; == Critical Fix 1: Ensure heading state consistency ==
+		  (when (org-at-heading-p) 
+		    (org-back-to-heading t)
+		    (org-show-entry)
+		    (redisplay))
+
+		  ;; == Original Logic Preserved Below ==
 		  (let* ((current-priority (string-to-number
 					    (or (org-entry-get nil "PRIORITY")
 						(number-to-string org-priority-default))))
@@ -101,22 +109,28 @@
 			  (progn
 			    (org-priority-up)
 			    (org-priority-down))))))
-		    (let ((final-priority (string-to-number
-					  (or (org-entry-get nil "PRIORITY")
-					      (number-to-string org-priority-default)))))
-		      (if (/= final-priority desired-priority)
-			  (error "Failed to set priority. Current: %d, Desired: %d"
-				 final-priority desired-priority))))
+		    (setq final-priority (string-to-number
+					 (or (org-entry-get nil "PRIORITY")
+					     (number-to-string org-priority-default))))
+		    ;; == Critical Fix 2: Validation guard ==
+		    (unless (and final-priority 
+				 (integerp final-priority)
+				 (= final-priority desired-priority))
+		      (error "Priority validation failed")))
 		  (setq success t))
-	      (error
+	      (error 
 	       (setq attempt (1+ attempt))
+	       (when (and (< attempt max-retries) 
+			  ;; Reset if priority was removed
+			  (not (org-entry-get nil "PRIORITY")))
+		 (org-entry-put nil "PRIORITY" 
+			       (number-to-string org-priority-default)))
 	       (if (< attempt max-retries)
-		   (progn
-		     (message "Retrying (%d/%d)..." attempt max-retries)
-		     (sleep-for retry-delay))
-		 (message "Failed after %d attempts: %s" max-retries (error-message-string err))))))
-	  ;; Success message here
-	  (when success
+		   (progn (message "Retrying (%d/%d)..." attempt max-retries)
+			  (sleep-for retry-delay))
+		 (message "Failed after %d attempts: %s" 
+			  max-retries (error-message-string err))))))
+	  (when success 
 	    (message "Priority set to: %d" random-priority)))
       (message "Invalid range."))))
 
@@ -142,8 +156,8 @@ Adjusts the priority within the new range, even if already at the lowest."
   "Ensure the current heading has a priority set.
 					If PRIORITY is not set, assign one within the appropriate range.
 					If PRIORITY is set, reassign a priority within the same range.
-					MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 30)."
-  (let ((max-attempts (or max-attempts 30))
+					MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
+  (let ((max-attempts (or max-attempts 15))
 	(attempt 0)
 	(success nil))
 
@@ -391,9 +405,9 @@ to ensure that tasks with larger weights are postponed by relatively smaller amo
 (defun my-ensure-priorities-and-schedules-for-all-headings (&optional max-attempts)
   "Ensure priorities and schedules are set for all headings across Org agenda files.
 					     Repeatedly processes headings until all have priorities and schedules, or max-attempts is reached.
-					     MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 30)."
+					     MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
   (interactive)
-  (let ((max-attempts (or max-attempts 30))
+  (let ((max-attempts (or max-attempts 15))
 	(attempt 0)
 	(all-complete nil))
 
@@ -460,10 +474,6 @@ to ensure that tasks with larger weights are postponed by relatively smaller amo
 
 ;; Advise the function that `C-RET` calls, typically `org-insert-heading`
 (advice-add 'org-insert-heading :after #'my-post-org-insert-heading)
-
-;; Ensure org-agenda-files is set (adjust the path as needed)
-;; (setq org-agenda-files
-;;       (directory-files-recursively "~/org/" "\\.org$"))
 
 (defun my-is-overdue-task ()
   "Return non-nil if the current task is overdue."
