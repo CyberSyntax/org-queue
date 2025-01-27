@@ -506,8 +506,8 @@ to ensure that tasks with larger weights are postponed by relatively smaller amo
 	(org-end-of-subtree t))))
 
 (setq org-agenda-sorting-strategy
-      '((agenda priority-down time-up category-keep)
-	(todo priority-down category-keep)
+      '((agenda priority-down category-down)
+	(todo priority-down)
 	(tags priority-down)
 	(search category-keep)))
 
@@ -850,26 +850,27 @@ Saves buffers and regenerates the task list for consistency."
     (message "No current outstanding task to show.")))
 
 (defun my-show-previous-outstanding-task ()
-  "Show the previous outstanding task."
+  "Show the previous outstanding task in priority order, cycling if needed."
   (interactive)
-  (if (and my-outstanding-tasks-list
-	   (> my-outstanding-tasks-index 1))
-      (let ((marker (nth (- my-outstanding-tasks-index 2) my-outstanding-tasks-list)))
-	;; Decrement the index before displaying the task
-	(setq my-outstanding-tasks-index (1- my-outstanding-tasks-index))
-	(setq my-anki-task-counter (1- my-anki-task-counter))
-	(switch-to-buffer (marker-buffer marker))
-	(goto-char (marker-position marker))
-	;; Ensure the entire entry is visible
-	(org-show-entry)
-	(org-show-subtree)
-	;; Highlight the entry temporarily
-	(let ((pulse-iterations 3)
-	      (pulse-delay 0.2))
-	  (pulse-momentary-highlight-one-line (point)))
-	;; Center the entry in the window
-	(recenter))
-    (message "No previous outstanding task.")))
+  ;; Ensure the list exists, refresh if empty.
+  (unless my-outstanding-tasks-list (my-get-outstanding-tasks))
+  (if my-outstanding-tasks-list
+      (let* ((total (length my-outstanding-tasks-list))
+	     ;; Wrap index using modulo (supports negative numbers)
+	     (new-index (mod (- my-outstanding-tasks-index 2) total))
+	     (adjusted-index (if (>= new-index 0) new-index (+ new-index total))))
+	;; Update index and counter
+	(setq my-outstanding-tasks-index (1+ adjusted-index)
+	      my-anki-task-counter (max (1- my-anki-task-counter) 0))  ; Prevent negative
+	;; Display
+	(let ((marker (nth adjusted-index my-outstanding-tasks-list)))
+	  (switch-to-buffer (marker-buffer marker))
+	  (goto-char (marker-position marker))
+	  (org-show-entry)  ; Show entry and subtree
+	  (org-show-subtree)
+	  (pulse-momentary-highlight-one-line (point) 'next-error)
+	  (recenter)))
+    (message "No outstanding tasks to navigate.")))
 
 (defun my-reset-outstanding-tasks-index ()
   "Reset the outstanding tasks index to start from the first task."
@@ -885,6 +886,9 @@ Saves buffers and regenerates the task list for consistency."
       (progn
 	;; Ensure that all Org headings have set priorities and schedules.
 	(my-ensure-priorities-and-schedules-for-all-headings)
+
+	;; Advance 2^POWER random tasks with proper loop control.
+	(my-auto-advance-schedules 9)
 
 	;; Automatically postpone tasks that are overdue.
 	(my-auto-postpone-overdue-tasks)
