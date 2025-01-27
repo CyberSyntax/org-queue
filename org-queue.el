@@ -52,8 +52,8 @@
   "Set a random priority within a user-defined heuristic range with retry mechanism."
   (interactive)
   (let* ((priority-ranges my-priority-ranges)
-	 (max-retries 3)  ; Maximum number of retry attempts
-	 (retry-delay 0.3)  ; Delay between retries in seconds
+	 (max-retries 30)
+	 (retry-delay 0.3)
 	 (range
 	  (cond
 	   (specific-range
@@ -65,29 +65,60 @@
 				 default-range)))
 	      (cdr (assoc user-choice priority-ranges))))
 	   (t
-	    (cdr (assoc (or (my-get-current-priority-range) (random 10)) priority-ranges))))))
+	    (cdr (assoc (or (my-get-current-priority-range) (random 10)) priority-ranges)))))
+	 (success nil)
+	 (attempt 0))
     (if range
 	(let* ((min-priority (car range))
 	       (max-priority (cdr range))
 	       (random-priority (+ min-priority
-				   (random (1+ (- max-priority min-priority)))))
-	       (success nil)
-	       (attempt 0))
-	  ;; Retry logic
+				   (random (1+ (- max-priority min-priority))))))
 	  (while (and (not success) (< attempt max-retries))
 	    (condition-case err
 		(progn
-		  (org-priority random-priority)
+		  (let* ((current-priority (string-to-number
+					    (or (org-entry-get nil "PRIORITY")
+						(number-to-string org-priority-default))))
+			 (desired-priority random-priority)
+			 (delta (- desired-priority current-priority)))
+		    (cond
+		     ((< delta 0)
+		      ;; Desired priority is higher; use org-priority-up
+		      (dotimes (_ (abs delta))
+			(org-priority-up)))
+		     ((> delta 0)
+		      ;; Desired priority is lower; use org-priority-down
+		      (dotimes (_ delta)
+			(org-priority-down)))
+		     (t
+		      ;; Delta is zero; perform stabilization sequence
+		      (if (= current-priority org-priority-highest)
+			  (progn
+			    (org-priority-down)
+			    (org-priority-up))
+			(if (= current-priority org-priority-lowest)
+			    (progn
+			      (org-priority-up)
+			      (org-priority-down))
+			  (progn
+			    (org-priority-up)
+			    (org-priority-down))))))
+		    ;; Verify final priority
+		    (let ((final-priority (string-to-number
+					   (or (org-entry-get nil "PRIORITY")
+					       (number-to-string org-priority-default)))))
+		      (if (/= final-priority desired-priority)
+			  (error "Failed to set the desired priority. Current: %d, Desired: %d"
+				 final-priority desired-priority))))
 		  (setq success t)
-		  (message "Priority set to: %d" random-priority))
+		  (message "Priority set to: %d" desired-priority))
 	      (error
 	       (setq attempt (1+ attempt))
 	       (if (< attempt max-retries)
 		   (progn
 		     (message "Retrying priority setting (%d/%d)..." attempt max-retries)
 		     (sleep-for retry-delay))
-		 (message "Failed to set priority after %d attempts: %s" max-retries err)))))
-	  success)
+		 (message "Failed to set priority after %d attempts: %s" max-retries err))))))
       (message "Invalid range."))))
 
 (defun my-increase-priority-range ()
