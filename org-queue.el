@@ -52,7 +52,7 @@
   "Set a random priority within a user-defined heuristic range with retry mechanism."
   (interactive)
   (let* ((priority-ranges my-priority-ranges)
-	 (max-retries 15)
+	 (max-retries 5)
 	 (retry-delay 0.3)
 	 (range
 	  (cond
