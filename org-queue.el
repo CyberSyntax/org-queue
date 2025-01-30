@@ -48,8 +48,9 @@
       (let ((priority-value (string-to-number current-priority)))
 	(my-find-priority-range priority-value)))))
 
-(defun my-set-priority-with-heuristics (&optional specific-range)
-  "Set a random priority within a user-defined heuristic range with retry mechanism."
+(defun my-set-priority-with-heuristics (&optional specific-range retried)
+  "Set a random priority within a user-defined heuristic range with retry mechanism.
+Optional RETRIED is used internally to prevent infinite recursion."
   (interactive)
   (let* ((priority-ranges my-priority-ranges)
 	 (max-retries 5)
@@ -79,16 +80,15 @@
 	  (while (and (not success) (< attempt max-retries))
 	    (condition-case err
 		(progn
-		  ;; == Critical Fix 1: Ensure heading state consistency ==
+		  ;; Ensure heading state consistency
 		  (when (org-at-heading-p) 
 		    (org-back-to-heading t)
 		    (org-show-entry)
 		    (redisplay))
-
-		  ;; == Original Logic Preserved Below ==
+		  ;; Original priority adjustment logic
 		  (let* ((current-priority (string-to-number
-					    (or (org-entry-get nil "PRIORITY")
-						(number-to-string org-priority-default))))
+					   (or (org-entry-get nil "PRIORITY")
+					       (number-to-string org-priority-default))))
 			 (delta (- desired-priority current-priority)))
 		    (cond
 		     ((< delta 0)
@@ -109,27 +109,31 @@
 			  (progn
 			    (org-priority-up)
 			    (org-priority-down))))))
+		    ;; Priority validation
 		    (setq final-priority (string-to-number
 					 (or (org-entry-get nil "PRIORITY")
 					     (number-to-string org-priority-default))))
-		    ;; == Critical Fix 2: Validation guard ==
 		    (unless (and final-priority 
 				 (integerp final-priority)
 				 (= final-priority desired-priority))
 		      (error "Priority validation failed")))
 		  (setq success t))
+	      ;; Error handling with automatic retry
 	      (error 
 	       (setq attempt (1+ attempt))
 	       (when (and (< attempt max-retries) 
-			  ;; Reset if priority was removed
 			  (not (org-entry-get nil "PRIORITY")))
 		 (org-entry-put nil "PRIORITY" 
 			       (number-to-string org-priority-default)))
 	       (if (< attempt max-retries)
 		   (progn (message "Retrying (%d/%d)..." attempt max-retries)
 			  (sleep-for retry-delay))
+		 ;; Trigger auto-retry if not already retried
 		 (message "Failed after %d attempts: %s" 
-			  max-retries (error-message-string err))))))
+			  max-retries (error-message-string err))
+		 (unless retried
+		   (message "Auto-retrying...")
+		   (my-set-priority-with-heuristics specific-range t))))))
 	  (when success 
 	    (message "Priority set to: %d" random-priority)))
       (message "Invalid range."))))
