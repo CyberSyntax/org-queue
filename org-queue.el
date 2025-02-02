@@ -60,13 +60,13 @@ Optional RETRIED is used internally to prevent infinite recursion."
 	   (specific-range
 	    (cdr (assoc specific-range priority-ranges)))
 	   ((called-interactively-p 'any)
-	    (let* ((default-range (or (my-get-current-priority-range) (+ 5 (random 5))))
+	    (let* ((default-range (or (my-get-current-priority-range) (+ 6 (random 4))))
 		   (user-choice (read-number
 				 "Select a priority range (0-9): "
 				 default-range)))
 	      (cdr (assoc user-choice priority-ranges))))
 	   (t
-	    (cdr (assoc (or (my-get-current-priority-range) (+ 5 (random 5))) priority-ranges)))))
+	    (cdr (assoc (or (my-get-current-priority-range) (+ 6 (random 4))) priority-ranges)))))
 	 (success nil)
 	 (attempt 0)
 	 random-priority)
