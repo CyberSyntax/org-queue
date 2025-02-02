@@ -562,6 +562,7 @@ to ensure that tasks with larger weights are postponed by relatively smaller amo
 						       as the basis for linear interpolation. The calculated `months` is passed to
 						       `my-random-schedule` for randomness. Save all modified files before and after processing."
   (interactive)
+  (my-reset-outstanding-tasks-index)
   ;; Save all modified buffers before processing
   (save-some-buffers t) ;; Save all modified buffers without prompting
   (let* ((highest-priority org-priority-highest)  ; Highest priority value (e.g., 1)
