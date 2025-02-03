@@ -53,7 +53,7 @@
 Optional RETRIED is used internally to prevent infinite recursion."
   (interactive)
   (let* ((priority-ranges my-priority-ranges)
-	 (max-retries 5)
+	 (max-retries 3)
 	 (retry-delay 0.3)
 	 (range
 	  (cond
