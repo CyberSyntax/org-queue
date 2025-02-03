@@ -1,4 +1,3 @@
-
 # Table of Contents
 
 1.  [Org-queue](#org603541a)
@@ -262,7 +261,7 @@ Once configured, restart Emacs, and `org-queue` will be ready to use!
     
         -   The command prompts the user to choose a priority group (0–9).
         -   Each group corresponds to a specific numerical range for priorities:  
-            -   **Group 0**: Priority between 1–2
+            -   **Group 0**: Priority 1
             -   **Group 1**: Priority between 2–5
             -   **Group 2**: Priority between 5–12
             -   **Group 3**: Priority between 12–18
