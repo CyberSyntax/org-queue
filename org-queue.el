@@ -12,7 +12,7 @@
 (setq org-priority-lowest 64)
 
 (defcustom my-priority-ranges
-  '((0 . (1 . 2))
+  '((0 . (1 . 1))
     (1 . (2 . 5))
     (2 . (5 . 12))
     (3 . (12 . 18))
