@@ -806,6 +806,15 @@ Saves buffers and regenerates the task list for consistency."
       (setq my-anki-task-counter 0)
       (my-launch-anki))))
 
+(defun my-pulse-highlight-current-line (&optional time)
+  "Temporarily pulse-highlight the current line.
+
+Optional argument TIME specifies the delay between pulse iterations in seconds.
+Defaults to 0.2 seconds."
+  (let ((pulse-iterations 3)
+	(pulse-delay (or time 0.2)))
+    (pulse-momentary-highlight-one-line (point))))
+
 (defun my-show-next-outstanding-task ()
   "Show the next outstanding task in priority order.
 									  If the list is exhausted, it refreshes the list."
@@ -822,9 +831,7 @@ Saves buffers and regenerates the task list for consistency."
 	(org-show-entry)
 	(org-show-subtree)
 	;; Highlight the entry temporarily
-	(let ((pulse-iterations 3)
-	      (pulse-delay 0.2))
-	  (pulse-momentary-highlight-one-line (point)))
+        (my-pulse-highlight-current-line)
 	;; Center the entry in the window
 	(recenter)
 	;; Increment the index after showing the task
@@ -835,24 +842,23 @@ Saves buffers and regenerates the task list for consistency."
     (message "No more outstanding tasks.")))
 
 (defun my-show-current-outstanding-task ()
-  "Show the current outstanding task."
+  "Show the current outstanding task, or call my-show-next-outstanding-task if no valid task exists."
   (interactive)
   (if (and my-outstanding-tasks-list
-	   (> my-outstanding-tasks-index 0)
-	   (<= my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+           (> my-outstanding-tasks-index 0)
+           (<= my-outstanding-tasks-index (length my-outstanding-tasks-list)))
       (let ((marker (nth (1- my-outstanding-tasks-index) my-outstanding-tasks-list)))
-	(switch-to-buffer (marker-buffer marker))
-	(goto-char (marker-position marker))
-	;; Ensure the entire entry is visible
-	(org-show-entry)
-	(org-show-subtree)
-	;; Highlight the entry temporarily
-	(let ((pulse-iterations 3)
-	      (pulse-delay 0.2))
-	  (pulse-momentary-highlight-one-line (point)))
-	;; Center the entry in the window
-	(recenter))
-    (message "No current outstanding task to show.")))
+        (switch-to-buffer (marker-buffer marker))
+        (goto-char (marker-position marker))
+        ;; Ensure the entire entry is visible
+        (org-show-entry)
+        (org-show-subtree)
+        ;; Highlight the entry temporarily
+        (my-pulse-highlight-current-line)
+        ;; Center the entry in the window
+        (recenter))
+    ;; If no current outstanding task, call my-show-next-outstanding-task to move forward.
+    (my-show-next-outstanding-task)))
 
 (defun my-show-previous-outstanding-task ()
   "Show the previous outstanding task in priority order, cycling if needed."
@@ -873,7 +879,8 @@ Saves buffers and regenerates the task list for consistency."
 	  (goto-char (marker-position marker))
 	  (org-show-entry)  ; Show entry and subtree
 	  (org-show-subtree)
-	  (pulse-momentary-highlight-one-line (point) 'next-error)
+	  ;; Highlight the entry temporarily
+	  (my-pulse-highlight-current-line)
 	  (recenter)))
     (message "No outstanding tasks to navigate.")))
 
@@ -884,6 +891,12 @@ Saves buffers and regenerates the task list for consistency."
   (setq my-outstanding-tasks-index 0)
   (setq my-anki-task-counter 0)
   (message "Outstanding tasks index reset."))
+
+(defun my-reset-and-show-current-outstanding-task ()
+  "Reset the outstanding tasks index and then show the current outstanding task."
+  (interactive)  ;; Allows the function to be executed via M-x in Emacs
+  (my-reset-outstanding-tasks-index)  ;; Call function to reset tasks index
+  (my-show-current-outstanding-task))  ;; Call function to show the first/current task
 
 (defun my-auto-task-setup ()
   "Initialize and set up automatic task management processes upon Emacs startup."
@@ -910,12 +923,15 @@ Saves buffers and regenerates the task list for consistency."
 	;; Break up consecutive tasks from the same file to avoid clustering in the review queue
 	(my-postpone-consecutive-same-file-tasks)
 
-	;; Display the next outstanding task to the user for immediate visibility.
-	(my-show-next-outstanding-task)
-
 	;; Schedule the display of the current outstanding task to occur shortly after startup.
 	;; This slight delay ensures that all startup processes have completed before displaying the task.
-	(run-at-time "1 sec" nil 'my-show-current-outstanding-task))
+	(run-at-time "1 sec" nil 'my-show-current-outstanding-task)
+
+	;; Confirmation message indicating successful setup completion
+	(message "Automatic task setup completed successfully."))
+
+      	;; Highlight the entry temporarily
+	(my-pulse-highlight-current-line 10)
     (error
      (message "Error during automatic task setup: %s" (error-message-string err)))))
 
@@ -929,7 +945,7 @@ Saves buffers and regenerates the task list for consistency."
 (define-key my-tasks-map (kbd "f") 'my-show-next-outstanding-task)
 (define-key my-tasks-map (kbd "b") 'my-show-previous-outstanding-task)
 (define-key my-tasks-map (kbd "c") 'my-show-current-outstanding-task)
-(define-key my-tasks-map (kbd "r") 'my-reset-outstanding-tasks-index)
+(define-key my-tasks-map (kbd "r") 'my-reset-and-show-current-outstanding-task)
 (define-key my-tasks-map (kbd "i") 'my-increase-priority-range)
 (define-key my-tasks-map (kbd "d") 'my-decrease-priority-range)
 (define-key my-tasks-map (kbd "a") 'my-advance-schedule)
