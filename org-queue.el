@@ -941,10 +941,10 @@ Defaults to 0.2 seconds."
   "Keymap for org-queue-mode.")
 
 (cl-flet ((make-auto-exit (cmd)
-	   (eval `(lambda ()
-		    (interactive)
-		    (call-interactively ',cmd)
-		    (org-queue-mode -1)))))
+	    (eval `(lambda ()
+		     (interactive)
+		     (call-interactively ',cmd)
+		     (org-queue-mode -1)))))
   ;; Auto-exit commands
   (define-key org-queue-mode-map (kbd ",") (make-auto-exit 'my-set-priority-with-heuristics))
   (define-key org-queue-mode-map (kbd "s") (make-auto-exit 'my-schedule-and-set-priority-command))
@@ -960,6 +960,10 @@ Defaults to 0.2 seconds."
   (define-key org-queue-mode-map (kbd "p") (make-auto-exit 'my-postpone-schedule))
 
   ;; Persistent commands
+  (define-key org-queue-mode-map (kbd "<") #'my-set-priority-with-heuristics)
+  (define-key org-queue-mode-map (kbd "S") #'my-schedule-and-set-priority-command)
+  (define-key org-queue-mode-map (kbd "S-SPC") #'my-show-next-outstanding-task)
+  (define-key org-queue-mode-map (kbd "S-<return>") #'my-show-next-outstanding-task)
   (define-key org-queue-mode-map (kbd "F") #'my-show-next-outstanding-task)
   (define-key org-queue-mode-map (kbd "B") #'my-show-previous-outstanding-task)
   (define-key org-queue-mode-map (kbd "C") #'my-show-current-outstanding-task)
