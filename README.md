@@ -401,6 +401,9 @@ Once configured, restart Emacs, and `org-queue` will be ready to use!
         
         This feature helps in balancing workload by ensuring tasks aren't excessively postponed and allows users to manage their timeline efficiently through a mathematical approach.
 
+8.  **Note**
+   - **Lowercase commands ([Auto-exit])** trigger mode deactivation after execution.  
+   - **Uppercase commands ([Persistent])** retain active mode for continuous operations.
 
 <a id="org4490433"></a>
 
