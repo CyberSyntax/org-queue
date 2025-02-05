@@ -898,6 +898,59 @@ Defaults to 0.2 seconds."
   (my-reset-outstanding-tasks-index)  ;; Call function to reset tasks index
   (my-show-current-outstanding-task))  ;; Call function to show the first/current task
 
+(defvar org-queue-mode-map (make-sparse-keymap)
+  "Keymap for org-queue-mode.")
+
+(cl-flet ((make-auto-exit (cmd)
+	    (eval `(lambda ()
+		     (interactive)
+		     (call-interactively ',cmd)
+		     (org-queue-mode -1)))))
+  ;; Persistent commands
+  (define-key org-queue-mode-map (kbd ",") #'my-set-priority-with-heuristics)
+  (define-key org-queue-mode-map (kbd "s") #'my-schedule-and-set-priority-command)
+  (define-key org-queue-mode-map (kbd "SPC") #'my-show-next-outstanding-task)
+  (define-key org-queue-mode-map (kbd "<return>") #'my-show-next-outstanding-task)
+  (define-key org-queue-mode-map (kbd "f") #'my-show-next-outstanding-task)
+  (define-key org-queue-mode-map (kbd "b") #'my-show-previous-outstanding-task)
+  (define-key org-queue-mode-map (kbd "c") #'my-show-current-outstanding-task)
+  (define-key org-queue-mode-map (kbd "r") #'my-reset-and-show-current-outstanding-task)
+  (define-key org-queue-mode-map (kbd "i") #'my-increase-priority-range)
+  (define-key org-queue-mode-map (kbd "d") #'my-decrease-priority-range)
+  (define-key org-queue-mode-map (kbd "a") #'my-advance-schedule)
+  (define-key org-queue-mode-map (kbd "p") #'my-postpone-schedule)
+
+  ;; Auto-exit commands
+  (define-key org-queue-mode-map (kbd "<") (make-auto-exit 'my-set-priority-with-heuristics))
+  (define-key org-queue-mode-map (kbd "S") (make-auto-exit 'my-schedule-and-set-priority-command))
+  (define-key org-queue-mode-map (kbd "S-SPC") (make-auto-exit 'my-show-next-outstanding-task))
+  (define-key org-queue-mode-map (kbd "S-<return>") (make-auto-exit 'my-show-next-outstanding-task))
+  (define-key org-queue-mode-map (kbd "F") (make-auto-exit 'my-show-next-outstanding-task))
+  (define-key org-queue-mode-map (kbd "B") (make-auto-exit 'my-show-previous-outstanding-task))
+  (define-key org-queue-mode-map (kbd "C") (make-auto-exit 'my-show-current-outstanding-task))
+  (define-key org-queue-mode-map (kbd "R") (make-auto-exit 'my-reset-and-show-current-outstanding-task))
+  (define-key org-queue-mode-map (kbd "I") (make-auto-exit 'my-increase-priority-range))
+  (define-key org-queue-mode-map (kbd "D") (make-auto-exit 'my-decrease-priority-range))
+  (define-key org-queue-mode-map (kbd "A") (make-auto-exit 'my-advance-schedule))
+  (define-key org-queue-mode-map (kbd "P") (make-auto-exit 'my-postpone-schedule))
+
+  ;; Exit key
+  (define-key org-queue-mode-map (kbd "e") 
+	      (lambda () (interactive) (org-queue-mode -1))))
+
+(define-minor-mode org-queue-mode
+  "Global minor mode for task queue management."
+  :init-value nil
+  :lighter " OrgQ"
+  :global t
+  :keymap org-queue-mode-map)
+
+(global-set-key (kbd "<escape>") 
+		(lambda ()
+		  (interactive)
+		  (unless org-queue-mode
+		    (org-queue-mode 1))))
+
 (defun my-auto-task-setup ()
   "Initialize and set up automatic task management processes upon Emacs startup."
   (condition-case err
@@ -931,63 +984,12 @@ Defaults to 0.2 seconds."
 	(message "Automatic task setup completed successfully.")
 
 	;; Highlight the entry temporarily
-	(my-pulse-highlight-current-line 10))
+	(my-pulse-highlight-current-line 10)
+
+	(org-queue-mode 1))
     (error
      (message "Error during automatic task setup: %s" (error-message-string err)))))
 
 (add-hook 'emacs-startup-hook #'my-auto-task-setup 100)
-
-(defvar org-queue-mode-map (make-sparse-keymap)
-  "Keymap for org-queue-mode.")
-
-(cl-flet ((make-auto-exit (cmd)
-	    (eval `(lambda ()
-		     (interactive)
-		     (call-interactively ',cmd)
-		     (org-queue-mode -1)))))
-  ;; Auto-exit commands
-  (define-key org-queue-mode-map (kbd ",") (make-auto-exit 'my-set-priority-with-heuristics))
-  (define-key org-queue-mode-map (kbd "s") (make-auto-exit 'my-schedule-and-set-priority-command))
-  (define-key org-queue-mode-map (kbd "SPC") (make-auto-exit 'my-show-next-outstanding-task))
-  (define-key org-queue-mode-map (kbd "<return>") (make-auto-exit 'my-show-next-outstanding-task))
-  (define-key org-queue-mode-map (kbd "f") (make-auto-exit 'my-show-next-outstanding-task))
-  (define-key org-queue-mode-map (kbd "b") (make-auto-exit 'my-show-previous-outstanding-task))
-  (define-key org-queue-mode-map (kbd "c") (make-auto-exit 'my-show-current-outstanding-task))
-  (define-key org-queue-mode-map (kbd "r") (make-auto-exit 'my-reset-and-show-current-outstanding-task))
-  (define-key org-queue-mode-map (kbd "i") (make-auto-exit 'my-increase-priority-range))
-  (define-key org-queue-mode-map (kbd "d") (make-auto-exit 'my-decrease-priority-range))
-  (define-key org-queue-mode-map (kbd "a") (make-auto-exit 'my-advance-schedule))
-  (define-key org-queue-mode-map (kbd "p") (make-auto-exit 'my-postpone-schedule))
-
-  ;; Persistent commands
-  (define-key org-queue-mode-map (kbd "<") #'my-set-priority-with-heuristics)
-  (define-key org-queue-mode-map (kbd "S") #'my-schedule-and-set-priority-command)
-  (define-key org-queue-mode-map (kbd "S-SPC") #'my-show-next-outstanding-task)
-  (define-key org-queue-mode-map (kbd "S-<return>") #'my-show-next-outstanding-task)
-  (define-key org-queue-mode-map (kbd "F") #'my-show-next-outstanding-task)
-  (define-key org-queue-mode-map (kbd "B") #'my-show-previous-outstanding-task)
-  (define-key org-queue-mode-map (kbd "C") #'my-show-current-outstanding-task)
-  (define-key org-queue-mode-map (kbd "R") #'my-reset-and-show-current-outstanding-task)
-  (define-key org-queue-mode-map (kbd "I") #'my-increase-priority-range)
-  (define-key org-queue-mode-map (kbd "D") #'my-decrease-priority-range)
-  (define-key org-queue-mode-map (kbd "A") #'my-advance-schedule)
-  (define-key org-queue-mode-map (kbd "P") #'my-postpone-schedule)
-
-  ;; Exit key
-  (define-key org-queue-mode-map (kbd "q") 
-	      (lambda () (interactive) (org-queue-mode -1))))
-
-(define-minor-mode org-queue-mode
-  "Global minor mode for task queue management."
-  :init-value nil
-  :lighter " OrgQ"
-  :global t
-  :keymap org-queue-mode-map)
-
-(global-set-key (kbd "<escape>") 
-		(lambda ()
-		  (interactive)
-		  (unless org-queue-mode
-		    (org-queue-mode 1))))
 
 (provide 'org-queue)
