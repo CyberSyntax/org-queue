@@ -930,9 +930,6 @@ Defaults to 0.2 seconds."
 	;; Confirmation message indicating successful setup completion
 	(message "Automatic task setup completed successfully.")
 
-	;; Close all other windows except the current one.
-	(delete-other-windows)
-
 	;; Highlight the entry temporarily
 	(my-pulse-highlight-current-line 10))
     (error
@@ -940,18 +937,53 @@ Defaults to 0.2 seconds."
 
 (add-hook 'emacs-startup-hook #'my-auto-task-setup 100)
 
-(define-prefix-command 'my-tasks-map)
-(global-set-key (kbd "C-c q") 'my-tasks-map)
+(defvar org-queue-mode-map (make-sparse-keymap)
+  "Keymap for org-queue-mode.")
 
-(define-key my-tasks-map (kbd ",") 'my-set-priority-with-heuristics)
-(define-key my-tasks-map (kbd "s") 'my-schedule-and-set-priority-command)
-(define-key my-tasks-map (kbd "f") 'my-show-next-outstanding-task)
-(define-key my-tasks-map (kbd "b") 'my-show-previous-outstanding-task)
-(define-key my-tasks-map (kbd "c") 'my-show-current-outstanding-task)
-(define-key my-tasks-map (kbd "r") 'my-reset-and-show-current-outstanding-task)
-(define-key my-tasks-map (kbd "i") 'my-increase-priority-range)
-(define-key my-tasks-map (kbd "d") 'my-decrease-priority-range)
-(define-key my-tasks-map (kbd "a") 'my-advance-schedule)
-(define-key my-tasks-map (kbd "p") 'my-postpone-schedule)
+(cl-flet ((make-auto-exit (cmd)
+	   (eval `(lambda ()
+		    (interactive)
+		    (call-interactively ',cmd)
+		    (org-queue-mode -1)))))
+  ;; Auto-exit commands
+  (define-key org-queue-mode-map (kbd ",") (make-auto-exit 'my-set-priority-with-heuristics))
+  (define-key org-queue-mode-map (kbd "s") (make-auto-exit 'my-schedule-and-set-priority-command))
+  (define-key org-queue-mode-map (kbd "SPC") (make-auto-exit 'my-show-next-outstanding-task))
+  (define-key org-queue-mode-map (kbd "<return>") (make-auto-exit 'my-show-next-outstanding-task))
+  (define-key org-queue-mode-map (kbd "f") (make-auto-exit 'my-show-next-outstanding-task))
+  (define-key org-queue-mode-map (kbd "b") (make-auto-exit 'my-show-previous-outstanding-task))
+  (define-key org-queue-mode-map (kbd "c") (make-auto-exit 'my-show-current-outstanding-task))
+  (define-key org-queue-mode-map (kbd "r") (make-auto-exit 'my-reset-and-show-current-outstanding-task))
+  (define-key org-queue-mode-map (kbd "i") (make-auto-exit 'my-increase-priority-range))
+  (define-key org-queue-mode-map (kbd "d") (make-auto-exit 'my-decrease-priority-range))
+  (define-key org-queue-mode-map (kbd "a") (make-auto-exit 'my-advance-schedule))
+  (define-key org-queue-mode-map (kbd "p") (make-auto-exit 'my-postpone-schedule))
+
+  ;; Persistent commands
+  (define-key org-queue-mode-map (kbd "F") #'my-show-next-outstanding-task)
+  (define-key org-queue-mode-map (kbd "B") #'my-show-previous-outstanding-task)
+  (define-key org-queue-mode-map (kbd "C") #'my-show-current-outstanding-task)
+  (define-key org-queue-mode-map (kbd "R") #'my-reset-and-show-current-outstanding-task)
+  (define-key org-queue-mode-map (kbd "I") #'my-increase-priority-range)
+  (define-key org-queue-mode-map (kbd "D") #'my-decrease-priority-range)
+  (define-key org-queue-mode-map (kbd "A") #'my-advance-schedule)
+  (define-key org-queue-mode-map (kbd "P") #'my-postpone-schedule)
+
+  ;; Exit key
+  (define-key org-queue-mode-map (kbd "q") 
+	      (lambda () (interactive) (org-queue-mode -1))))
+
+(define-minor-mode org-queue-mode
+  "Global minor mode for task queue management."
+  :init-value nil
+  :lighter " OrgQ"
+  :global t
+  :keymap org-queue-mode-map)
+
+(global-set-key (kbd "<escape>") 
+		(lambda ()
+		  (interactive)
+		  (unless org-queue-mode
+		    (org-queue-mode 1))))
 
 (provide 'org-queue)
