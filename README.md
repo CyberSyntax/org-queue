@@ -154,10 +154,10 @@ Once configured, restart Emacs, and `org-queue` will be ready to use!
 
 2.  **Interactive Task Scheduling with Mathematical Distribution**
 
-    -   **Shortcut**: `C-c q s`
+    -   **Shortcut**: `<escape> s`
     -   **Description**: Prompts you to specify an upper limit in months for scheduling the current task. The task is then scheduled within the range of **1 day** to the specified upper limit, using a mathematical model that biases the scheduling towards later dates in the range.
         
-        When you use this command (`C-c q s`), `org-queue`:
+        When you use this command (`<escape> s`), `org-queue`:
         
         -   **Prompts for Scheduling**: Asks for the maximum number of months you consider acceptable for postponing the task. It then schedules the task within **1 day** to the specified time frame, following a mathematically elegant distribution that naturally favors later scheduling dates within the range.
         -   **Prompts for Priority**: Immediately after scheduling, it prompts you to select a priority range (0–9), allowing you to assign a priority to the task interactively.
@@ -251,10 +251,10 @@ Once configured, restart Emacs, and `org-queue` will be ready to use!
 
 3.  **Set Priority with Heuristics**
 
-    -   **Shortcut**: `C-c q ,`
+    -   **Shortcut**: `<escape> ,`
     -   **Additional Shortcuts**:
-        -   `C-c q i`: Increase priority range (move to higher priority group)
-        -   `C-c q d`: Decrease priority range (move to lower priority group)
+        -   `<escape> i`: Increase priority range (move to higher priority group)
+        -   `<escape> d`: Decrease priority range (move to lower priority group)
     -   **Description**: Inspired by a **community proposal discussed in the YouTube video [Priority heuristics in SuperMemo](<https://www.youtube.com/watch?v=OwV5HPKMrbg>)**, this feature builds on the concept of **priorities** already present in SuperMemo. However, it introduces a heuristic-based approach for assigning priorities dynamically, making the process more flexible and adaptable.
     
     1.  How it works:
@@ -276,7 +276,7 @@ Once configured, restart Emacs, and `org-queue` will be ready to use!
     
     2.  Default Behavior:
     
-        -   **If no input is provided when invoking the command (`C-c q ,`):**
+        -   **If no input is provided when invoking the command (`<escape> ,`):**
             -   **If the current heading has a priority set**, the command defaults to that priority's group and assigns a random priority within the same range.
             -   **If the current heading does not have a priority set**, it defaults to **Group 9 (58–64)**, assigning the task a lower priority for less urgent attention.
     
@@ -291,10 +291,10 @@ Once configured, restart Emacs, and `org-queue` will be ready to use!
 4.  **Navigate Outstanding Tasks**
 
     -   **Shortcut**:  
-        -   `C-c q f`: Move to the next outstanding task in the queue.
-        -   `C-c q b`: Move to the previous outstanding task in the queue.
-        -   `C-c q c`: Show the current outstanding task.
-        -   `C-c q r`: Reset the task queue to start from the first task.
+        -   `<escape> f`: Move to the next outstanding task in the queue.
+        -   `<escape> b`: Move to the previous outstanding task in the queue.
+        -   `<escape> c`: Show the current outstanding task.
+        -   `<escape> r`: Reset the task queue to start from the first task.
     
     -   **Description**: Provides efficient navigation through the queue of overdue or due-today tasks.
     
@@ -377,7 +377,7 @@ Once configured, restart Emacs, and `org-queue` will be ready to use!
 
 6.  **Advance Task Schedule with Mathematical Adjustment**
 
-    -   **Shortcut**: `C-c q a`
+    -   **Shortcut**: `<escape> a`
     -   **Description**: Advances the schedule of the current Org heading by a calculated number of months. The adjustment decreases with the increasing current schedule weight, meaning tasks scheduled further in the future will be advanced by a smaller amount.
     
     1.  How It Works:
@@ -390,7 +390,7 @@ Once configured, restart Emacs, and `org-queue` will be ready to use!
 
 7.  **Postpone Task Schedule with Mathematical Adjustment**
 
-    -   **Shortcut**: `C-c q p`
+    -   **Shortcut**: `<escape> p`
     -   **Description**: Postpones the schedule of the current Org heading by a calculated number of months. The postponement uses an increasing function that makes sure tasks of greater schedule weight are postponed by relatively smaller amounts in comparison to lighter ones.
     
     1.  How It Works:
