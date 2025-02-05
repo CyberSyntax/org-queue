@@ -928,10 +928,13 @@ Defaults to 0.2 seconds."
 	(run-at-time "1 sec" nil 'my-show-current-outstanding-task)
 
 	;; Confirmation message indicating successful setup completion
-	(message "Automatic task setup completed successfully."))
+	(message "Automatic task setup completed successfully.")
 
-      	;; Highlight the entry temporarily
-	(my-pulse-highlight-current-line 10)
+	;; Close all other windows except the current one.
+	(delete-other-windows)
+
+	;; Highlight the entry temporarily
+	(my-pulse-highlight-current-line 10))
     (error
      (message "Error during automatic task setup: %s" (error-message-string err)))))
 
