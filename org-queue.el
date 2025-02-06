@@ -936,12 +936,79 @@ Defaults to 0.2 seconds."
   (define-key org-queue-mode-map (kbd "e") 
 	      (lambda () (interactive) (org-queue-mode -1))))
 
+(dolist (char (number-sequence 32 126))  ; From space (32) to ~ (126)
+  (let ((str (char-to-string char)))
+    (unless (or (and (>= char ?0) (<= char ?9))  ; Exclude digits
+		(lookup-key org-queue-mode-map (kbd str)))
+      (define-key org-queue-mode-map (kbd str) #'ignore))))
+
+;; State Containers
+(defvar org-queue--status-active nil
+  "Global activation tracking")
+(defvar org-queue--original-cursor nil
+  "Persistent cursor state storage")
+
+;; Mode Line Presentation Layer
+(defface org-queue-global-lighter
+  '((t :inherit font-lock-builtin-face
+       :height 0.85
+       :weight medium
+       :foreground "#B71C1C"
+       :background "#FFCDD2"))
+  "Cross-theme compatible status indicator")
+
+(defvar org-queue--lighter-display nil)
+(setq-default global-mode-string 
+  '(:eval (when org-queue-mode
+	    (propertize "  ◼ WORK" 'face 'org-queue-global-lighter))))
+
+;; Temporal Constants
+(defconst org-queue--idle-delay 1.5
+  "Seconds before showing status reminder")
+(defconst org-queue--blink-interval 0.7
+  "Cursor blink rate in seconds")
+
 (define-minor-mode org-queue-mode
   "Global minor mode for task queue management."
   :init-value nil
-  :lighter " OrgQ"
   :global t
-  :keymap org-queue-mode-map)
+  :keymap org-queue-mode-map
+  :lighter " OrgQ"  ;; Retained original simpler indicator
+  (if org-queue-mode
+      (progn
+	(setq org-queue--status-active t
+	      org-queue--original-cursor cursor-type
+	      cursor-type '(box . 3)  ; Thicker box cursor
+	      blink-cursor-blinks 0
+	      blink-cursor-interval org-queue--blink-interval)
+	(add-hook 'post-command-hook #'org-queue--notify-presence)
+	(run-with-idle-timer org-queue--idle-delay nil
+	  (lambda ()
+	    (unless (active-minibuffer-window)
+	      (message "%s" (propertize "[Active] Task context engaged (e to exit)"
+				       'face 'font-lock-comment-face))))))
+    ;; Clean State Transition
+    (setq org-queue--status-active nil
+	  cursor-type org-queue--original-cursor
+	  blink-cursor-blinks 40
+	  blink-cursor-interval 0.5)
+    (remove-hook 'post-command-hook #'org-queue--notify-presence)
+    (message "%s" (propertize "[Idle] Context released" 
+			    'face 'font-lock-comment-face))))
+
+(defun org-queue--notify-presence ()
+  "Managed presence indication system"
+  (when (and org-queue-mode 
+	     (not (active-minibuffer-window))
+	     (not (minibufferp)))
+    (force-mode-line-update)
+    (unless cursor-in-non-selected-windows
+      (setq cursor-in-non-selected-windows t))
+    (run-with-idle-timer org-queue--idle-delay nil
+      (lambda ()
+	(when org-queue-mode
+	  (message "%s" (propertize "[Active] Maintained focus (press e to exit)"
+				   'face 'font-lock-doc-face)))))))
 
 (global-set-key (kbd "<escape>") 
 		(lambda ()
