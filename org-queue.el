@@ -962,7 +962,7 @@ Defaults to 0.2 seconds."
 	    (propertize "  ◼ WORK" 'face 'org-queue-global-lighter))))
 
 ;; Temporal Constants
-(defconst org-queue--idle-delay 1.5
+(defconst org-queue--idle-delay 0.1
   "Seconds before showing status reminder")
 (defconst org-queue--blink-interval 0.7
   "Cursor blink rate in seconds")
