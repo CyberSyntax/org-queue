@@ -467,16 +467,15 @@ to ensure that tasks with larger weights are postponed by relatively smaller amo
 	       max-attempts))))
 
 (defun my-post-org-insert-heading (&rest _args)
-  "Run after `org-insert-heading` to assign priority and schedule."
-  (when (and (not noninteractive)  ;; Avoid running in batch mode
-	     (eq major-mode 'org-mode)) ;; Ensure it's only in Org mode
-    ;; Call the lower-level function directly to schedule default months out with no interactive prompt.
-    (my-random-schedule (my-find-schedule-weight) 0)
-    ;; Ensure priority is set (handled inside `my-ensure-priority-set`)
-    (call-interactively #'my-set-priority-with-heuristics)
-    (end-of-line)))
+    "Run after `org-insert-heading` to assign priority and schedule."
 
-;; Advise the function that `C-RET` calls, typically `org-insert-heading`
+    (when (and (not noninteractive)
+	       (eq major-mode 'org-mode)
+	       (bound-and-true-p org-queue-mode))  ;; 🙌 Only trigger in org-queue-mode
+      (my-random-schedule (my-find-schedule-weight) 0)
+      (call-interactively #'my-set-priority-with-heuristics)
+      (end-of-line)))
+
 (advice-add 'org-insert-heading :after #'my-post-org-insert-heading)
 
 (defun my-is-overdue-task ()
@@ -1010,10 +1009,11 @@ Defaults to 0.2 seconds."
 	  (message "%s" (propertize "[Active] Maintained focus (press e to exit)"
 				   'face 'font-lock-doc-face)))))))
 
-(global-set-key (kbd "<escape>") 
+(global-set-key (kbd "<escape>")
 		(lambda ()
 		  (interactive)
-		  (unless org-queue-mode
+		  (if org-queue-mode
+		      (org-queue-mode -1)
 		    (org-queue-mode 1))))
 
 (defun my-auto-task-setup ()
