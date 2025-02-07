@@ -894,6 +894,7 @@ Defaults to 0.2 seconds."
 (defun my-reset-and-show-current-outstanding-task ()
   "Reset the outstanding tasks index and then show the current outstanding task."
   (interactive)  ;; Allows the function to be executed via M-x in Emacs
+  (my-launch-anki)
   (my-reset-outstanding-tasks-index)  ;; Call function to reset tasks index
   (my-show-current-outstanding-task))  ;; Call function to show the first/current task
 
@@ -917,6 +918,8 @@ Defaults to 0.2 seconds."
   (define-key org-queue-mode-map (kbd "d") #'my-decrease-priority-range)
   (define-key org-queue-mode-map (kbd "a") #'my-advance-schedule)
   (define-key org-queue-mode-map (kbd "p") #'my-postpone-schedule)
+  (when (require 'gptel nil t)
+    (define-key org-queue-mode-map (kbd "g") #'gptel))
 
   ;; Auto-exit commands
   (define-key org-queue-mode-map (kbd "<") (make-auto-exit 'my-set-priority-with-heuristics))
@@ -930,6 +933,8 @@ Defaults to 0.2 seconds."
   (define-key org-queue-mode-map (kbd "D") (make-auto-exit 'my-decrease-priority-range))
   (define-key org-queue-mode-map (kbd "A") (make-auto-exit 'my-advance-schedule))
   (define-key org-queue-mode-map (kbd "P") (make-auto-exit 'my-postpone-schedule))
+  (when (require 'gptel nil t)
+    (define-key org-queue-mode-map (kbd "G") (make-auto-exit 'gptel)))
 
   ;; Exit key
   (define-key org-queue-mode-map (kbd "e") 
