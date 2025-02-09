@@ -814,6 +814,25 @@ Defaults to 0.2 seconds."
 	(pulse-delay (or time 0.2)))
     (pulse-momentary-highlight-one-line (point))))
 
+(defun org-show-current-heading-cleanly ()
+  "Reveal the current Org heading and its immediate children while keeping other content folded.
+If the end of the line is invisible (i.e. the heading is collapsed), simply show the entry and its children.
+Otherwise, move back to the heading, check boundaries, collapse the overall view, and then reveal the heading and its children."
+  (interactive)
+  (if (save-excursion (end-of-line) (outline-invisible-p))
+      (progn
+	(org-show-entry)
+	(show-children))
+    (outline-back-to-heading)
+    (unless (and (bolp) (org-on-heading-p))
+      (org-up-heading-safe)
+      (hide-subtree)
+      (error "Boundary reached"))
+    (org-overview)
+    (org-reveal t)
+    (org-show-entry)
+    (show-children)))
+
 (defun my-show-next-outstanding-task ()
   "Show the next outstanding task in priority order.
 									  If the list is exhausted, it refreshes the list."
@@ -824,15 +843,14 @@ Defaults to 0.2 seconds."
   (if (and my-outstanding-tasks-list
 	   (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
       (let ((marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
+	(widen)
 	(switch-to-buffer (marker-buffer marker))
 	(goto-char (marker-position marker))
 	;; Ensure the entire entry is visible
 	(org-show-entry)
-	(org-show-subtree)
-	;; Highlight the entry temporarily
-        (my-pulse-highlight-current-line)
-	;; Center the entry in the window
+	(org-show-current-heading-cleanly)
 	(recenter)
+	(org-narrow-to-subtree)
 	;; Increment the index after showing the task
 	(setq my-outstanding-tasks-index (1+ my-outstanding-tasks-index))
 	(setq my-anki-task-counter (1+ my-anki-task-counter))
@@ -847,15 +865,16 @@ Defaults to 0.2 seconds."
            (> my-outstanding-tasks-index 0)
            (<= my-outstanding-tasks-index (length my-outstanding-tasks-list)))
       (let ((marker (nth (1- my-outstanding-tasks-index) my-outstanding-tasks-list)))
+        (widen)
         (switch-to-buffer (marker-buffer marker))
         (goto-char (marker-position marker))
         ;; Ensure the entire entry is visible
         (org-show-entry)
-        (org-show-subtree)
+	(org-show-current-heading-cleanly)
+	(recenter)
+	(org-narrow-to-subtree)
         ;; Highlight the entry temporarily
-        (my-pulse-highlight-current-line)
-        ;; Center the entry in the window
-        (recenter))
+        (my-pulse-highlight-current-line))
     ;; If no current outstanding task, call my-show-next-outstanding-task to move forward.
     (my-show-next-outstanding-task)))
 
@@ -874,13 +893,13 @@ Defaults to 0.2 seconds."
 	      my-anki-task-counter (max (1- my-anki-task-counter) 0))  ; Prevent negative
 	;; Display
 	(let ((marker (nth adjusted-index my-outstanding-tasks-list)))
+	  (widen)
 	  (switch-to-buffer (marker-buffer marker))
 	  (goto-char (marker-position marker))
 	  (org-show-entry)  ; Show entry and subtree
-	  (org-show-subtree)
-	  ;; Highlight the entry temporarily
-	  (my-pulse-highlight-current-line)
-	  (recenter)))
+	  (org-show-current-heading-cleanly)
+	  (recenter)
+	  (org-narrow-to-subtree)))
     (message "No outstanding tasks to navigate.")))
 
 (defun my-reset-outstanding-tasks-index ()
@@ -918,6 +937,8 @@ Defaults to 0.2 seconds."
   (define-key org-queue-mode-map (kbd "d") #'my-decrease-priority-range)
   (define-key org-queue-mode-map (kbd "a") #'my-advance-schedule)
   (define-key org-queue-mode-map (kbd "p") #'my-postpone-schedule)
+  (define-key org-queue-mode-map (kbd "n") #'org-narrow-to-subtree)
+  (define-key org-queue-mode-map (kbd "w") #'widen)
   (when (require 'gptel nil t)
     (define-key org-queue-mode-map (kbd "g") #'gptel))
 
@@ -933,6 +954,8 @@ Defaults to 0.2 seconds."
   (define-key org-queue-mode-map (kbd "D") (make-auto-exit 'my-decrease-priority-range))
   (define-key org-queue-mode-map (kbd "A") (make-auto-exit 'my-advance-schedule))
   (define-key org-queue-mode-map (kbd "P") (make-auto-exit 'my-postpone-schedule))
+  (define-key org-queue-mode-map (kbd "N") (make-auto-exit 'org-narrow-to-subtree))
+  (define-key org-queue-mode-map (kbd "W") (make-auto-exit 'widen))
   (when (require 'gptel nil t)
     (define-key org-queue-mode-map (kbd "G") (make-auto-exit 'gptel)))
 
@@ -964,10 +987,10 @@ Defaults to 0.2 seconds."
 (defvar org-queue--lighter-display nil)
 (setq-default global-mode-string 
   '(:eval (when org-queue-mode
-	    (propertize "  ◼ WORK" 'face 'org-queue-global-lighter))))
+	    (propertize "  ■ WORK" 'face 'org-queue-global-lighter))))
 
 ;; Temporal Constants
-(defconst org-queue--idle-delay 0.1
+(defconst org-queue--idle-delay 0.5
   "Seconds before showing status reminder")
 (defconst org-queue--blink-interval 0.7
   "Cursor blink rate in seconds")
@@ -1013,6 +1036,16 @@ Defaults to 0.2 seconds."
 	(when org-queue-mode
 	  (message "%s" (propertize "[Active] Maintained focus (press e to exit)"
 				   'face 'font-lock-doc-face)))))))
+
+;; The second argument, t, makes the timer repeat.
+(run-with-idle-timer 3 t
+  (lambda ()
+    ;; Check if org-queue-mode is not currently enabled.
+    (unless org-queue-mode
+      ;; If it's disabled, enable org-queue-mode.
+      (org-queue-mode 1)
+      ;; Display a message to notify that org-queue-mode was activated.
+      (message "org-queue-mode enabled due to inactivity."))))
 
 (global-set-key (kbd "<escape>")
 		(lambda ()
