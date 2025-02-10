@@ -1038,7 +1038,7 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
 				   'face 'font-lock-doc-face)))))))
 
 ;; The second argument, t, makes the timer repeat.
-(run-with-idle-timer 3 t
+(run-with-idle-timer 7 t
   (lambda ()
     ;; Check if org-queue-mode is not currently enabled.
     (unless org-queue-mode
@@ -1048,11 +1048,9 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
       (message "org-queue-mode enabled due to inactivity."))))
 
 (global-set-key (kbd "<escape>")
-		(lambda ()
-		  (interactive)
-		  (if org-queue-mode
-		      (org-queue-mode -1)
-		    (org-queue-mode 1))))
+  (lambda ()
+    (interactive)
+    (org-queue-mode -1)))
 
 (defun my-auto-task-setup ()
   "Initialize and set up automatic task management processes upon Emacs startup."
