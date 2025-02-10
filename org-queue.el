@@ -831,7 +831,9 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
     (org-overview)
     (org-reveal t)
     (org-show-entry)
-    (show-children)))
+    (show-children)
+    (recenter)
+    (org-narrow-to-subtree)))
 
 (defun my-show-next-outstanding-task ()
   "Show the next outstanding task in priority order.
@@ -849,14 +851,19 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
 	;; Ensure the entire entry is visible
 	(org-show-entry)
 	(org-show-current-heading-cleanly)
-	(recenter)
-	(org-narrow-to-subtree)
 	;; Increment the index after showing the task
 	(setq my-outstanding-tasks-index (1+ my-outstanding-tasks-index))
 	(setq my-anki-task-counter (1+ my-anki-task-counter))
 	;; Launch Anki according to the user-defined ratio
 	(my-maybe-launch-anki))
     (message "No more outstanding tasks.")))
+
+(defun org-show-parent-heading-cleanly ()
+  "Move up to the parent heading, widen the buffer, and then reveal the parent heading along with its children."
+  (interactive)
+  (outline-up-heading)
+  (widen)
+  (org-show-current-heading-cleanly))
 
 (defun my-show-current-outstanding-task ()
   "Show the current outstanding task, or call my-show-next-outstanding-task if no valid task exists."
@@ -871,8 +878,6 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
         ;; Ensure the entire entry is visible
         (org-show-entry)
 	(org-show-current-heading-cleanly)
-	(recenter)
-	(org-narrow-to-subtree)
         ;; Highlight the entry temporarily
         (my-pulse-highlight-current-line))
     ;; If no current outstanding task, call my-show-next-outstanding-task to move forward.
@@ -897,9 +902,7 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
 	  (switch-to-buffer (marker-buffer marker))
 	  (goto-char (marker-position marker))
 	  (org-show-entry)  ; Show entry and subtree
-	  (org-show-current-heading-cleanly)
-	  (recenter)
-	  (org-narrow-to-subtree)))
+	  (org-show-current-heading-cleanly)))
     (message "No outstanding tasks to navigate.")))
 
 (defun my-reset-outstanding-tasks-index ()
@@ -939,6 +942,7 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
   (define-key org-queue-mode-map (kbd "p") #'my-postpone-schedule)
   (define-key org-queue-mode-map (kbd "n") #'org-narrow-to-subtree)
   (define-key org-queue-mode-map (kbd "w") #'widen)
+  (define-key org-queue-mode-map (kbd "u") #'org-show-parent-heading-cleanly)
   (when (require 'gptel nil t)
     (define-key org-queue-mode-map (kbd "g") #'gptel))
 
@@ -956,6 +960,7 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
   (define-key org-queue-mode-map (kbd "P") (make-auto-exit 'my-postpone-schedule))
   (define-key org-queue-mode-map (kbd "N") (make-auto-exit 'org-narrow-to-subtree))
   (define-key org-queue-mode-map (kbd "W") (make-auto-exit 'widen))
+  (define-key org-queue-mode-map (kbd "U") (make-auto-exit 'org-show-parent-heading-cleanly))
   (when (require 'gptel nil t)
     (define-key org-queue-mode-map (kbd "G") (make-auto-exit 'gptel)))
 
