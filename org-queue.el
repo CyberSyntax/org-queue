@@ -1050,7 +1050,7 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
 (global-set-key (kbd "<escape>")
   (lambda ()
     (interactive)
-    (org-queue-mode -1)))
+    (org-queue-mode 1)))
 
 (defun my-auto-task-setup ()
   "Initialize and set up automatic task management processes upon Emacs startup."
