@@ -861,8 +861,8 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
 (defun org-show-parent-heading-cleanly ()
   "Move up to the parent heading, widen the buffer, and then reveal the parent heading along with its children."
   (interactive)
-  (outline-up-heading)
   (widen)
+  (outline-up-heading)
   (org-show-current-heading-cleanly))
 
 (defun my-show-current-outstanding-task ()
