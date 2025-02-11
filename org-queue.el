@@ -831,9 +831,14 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
     (org-overview)
     (org-reveal t)
     (org-show-entry)
-    (show-children)
-    (recenter)
-    (org-narrow-to-subtree)))
+    (show-children)))
+
+(defun org-show-parent-heading-cleanly ()
+  "Move up to the parent heading, widen the buffer, and then reveal the parent heading along with its children."
+  (interactive)
+  (widen)
+  (outline-up-heading 1)
+  (org-show-current-heading-cleanly))
 
 (defun my-show-next-outstanding-task ()
   "Show the next outstanding task in priority order.
@@ -851,6 +856,8 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
 	;; Ensure the entire entry is visible
 	(org-show-entry)
 	(org-show-current-heading-cleanly)
+	(recenter)
+	(org-narrow-to-subtree)
 	;; Increment the index after showing the task
 	(setq my-outstanding-tasks-index (1+ my-outstanding-tasks-index))
 	(setq my-anki-task-counter (1+ my-anki-task-counter))
@@ -858,28 +865,23 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
 	(my-maybe-launch-anki))
     (message "No more outstanding tasks.")))
 
-(defun org-show-parent-heading-cleanly ()
-  "Move up to the parent heading, widen the buffer, and then reveal the parent heading along with its children."
-  (interactive)
-  (widen)
-  (outline-up-heading 1)
-  (org-show-current-heading-cleanly))
-
 (defun my-show-current-outstanding-task ()
   "Show the current outstanding task, or call my-show-next-outstanding-task if no valid task exists."
   (interactive)
   (if (and my-outstanding-tasks-list
-           (> my-outstanding-tasks-index 0)
-           (<= my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+	   (> my-outstanding-tasks-index 0)
+	   (<= my-outstanding-tasks-index (length my-outstanding-tasks-list)))
       (let ((marker (nth (1- my-outstanding-tasks-index) my-outstanding-tasks-list)))
-        (widen)
-        (switch-to-buffer (marker-buffer marker))
-        (goto-char (marker-position marker))
-        ;; Ensure the entire entry is visible
-        (org-show-entry)
+	(widen)
+	(switch-to-buffer (marker-buffer marker))
+	(goto-char (marker-position marker))
+	;; Ensure the entire entry is visible
+	(org-show-entry)
 	(org-show-current-heading-cleanly)
-        ;; Highlight the entry temporarily
-        (my-pulse-highlight-current-line))
+	(recenter)
+	(org-narrow-to-subtree)
+	;; Highlight the entry temporarily
+	(my-pulse-highlight-current-line))
     ;; If no current outstanding task, call my-show-next-outstanding-task to move forward.
     (my-show-next-outstanding-task)))
 
@@ -902,7 +904,9 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
 	  (switch-to-buffer (marker-buffer marker))
 	  (goto-char (marker-position marker))
 	  (org-show-entry)  ; Show entry and subtree
-	  (org-show-current-heading-cleanly)))
+	  (org-show-current-heading-cleanly)
+	  (recenter)
+	  (org-narrow-to-subtree)))
     (message "No outstanding tasks to navigate.")))
 
 (defun my-reset-outstanding-tasks-index ()
