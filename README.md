@@ -1,3 +1,5 @@
+> **Note**: Please be advised that this README file is updated after the code itself, and I have made a deliberate choice to focus on the code. It serves merely as a reference and should not be regarded as an entirely dependable source.
+
 # Table of Contents
 
 1.  [Org-queue](#org603541a)
