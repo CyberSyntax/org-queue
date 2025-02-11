@@ -814,6 +814,12 @@ Defaults to 0.2 seconds."
 	(pulse-delay (or time 0.2)))
     (pulse-momentary-highlight-one-line (point))))
 
+(defun widen-and-recenter ()
+  "Widen the buffer and then recenter the window."
+  (interactive)
+  (widen)
+  (recenter))
+
 (defun org-show-current-heading-cleanly ()
   "Reveal the current Org heading and its immediate children while keeping other content folded.
 If the end of the line is invisible (i.e. the heading is collapsed), simply show the entry and its children.
@@ -838,7 +844,9 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
   (interactive)
   (widen)
   (outline-up-heading 1)
-  (org-show-current-heading-cleanly))
+  (org-show-current-heading-cleanly)
+  (recenter)
+  (org-narrow-to-subtree))
 
 (defun my-show-next-outstanding-task ()
   "Show the next outstanding task in priority order.
@@ -852,6 +860,7 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
       (let ((marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
 	(widen)
 	(switch-to-buffer (marker-buffer marker))
+	(widen)
 	(goto-char (marker-position marker))
 	;; Ensure the entire entry is visible
 	(org-show-entry)
@@ -874,6 +883,7 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
       (let ((marker (nth (1- my-outstanding-tasks-index) my-outstanding-tasks-list)))
 	(widen)
 	(switch-to-buffer (marker-buffer marker))
+	(widen)
 	(goto-char (marker-position marker))
 	;; Ensure the entire entry is visible
 	(org-show-entry)
@@ -902,6 +912,7 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
 	(let ((marker (nth adjusted-index my-outstanding-tasks-list)))
 	  (widen)
 	  (switch-to-buffer (marker-buffer marker))
+	  (widen)
 	  (goto-char (marker-position marker))
 	  (org-show-entry)  ; Show entry and subtree
 	  (org-show-current-heading-cleanly)
@@ -945,7 +956,7 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
   (define-key org-queue-mode-map (kbd "a") #'my-advance-schedule)
   (define-key org-queue-mode-map (kbd "p") #'my-postpone-schedule)
   (define-key org-queue-mode-map (kbd "n") #'org-narrow-to-subtree)
-  (define-key org-queue-mode-map (kbd "w") #'widen)
+  (define-key org-queue-mode-map (kbd "w") #'widen-and-recenter)
   (define-key org-queue-mode-map (kbd "u") #'org-show-parent-heading-cleanly)
   (when (require 'gptel nil t)
     (define-key org-queue-mode-map (kbd "g") #'gptel))
@@ -963,7 +974,7 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
   (define-key org-queue-mode-map (kbd "A") (make-auto-exit 'my-advance-schedule))
   (define-key org-queue-mode-map (kbd "P") (make-auto-exit 'my-postpone-schedule))
   (define-key org-queue-mode-map (kbd "N") (make-auto-exit 'org-narrow-to-subtree))
-  (define-key org-queue-mode-map (kbd "W") (make-auto-exit 'widen))
+  (define-key org-queue-mode-map (kbd "W") (make-auto-exit 'widen-and-recenter))
   (define-key org-queue-mode-map (kbd "U") (make-auto-exit 'org-show-parent-heading-cleanly))
   (when (require 'gptel nil t)
     (define-key org-queue-mode-map (kbd "G") (make-auto-exit 'gptel)))
