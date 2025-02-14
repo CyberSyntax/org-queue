@@ -944,11 +944,10 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
   ;; Persistent commands
   (define-key org-queue-mode-map (kbd ",") #'my-set-priority-with-heuristics)
   (define-key org-queue-mode-map (kbd "s") #'my-schedule-and-set-priority-command)
-  (define-key org-queue-mode-map (kbd "SPC") #'my-show-next-outstanding-task)
   (define-key org-queue-mode-map (kbd "f") #'my-show-next-outstanding-task)
   (define-key org-queue-mode-map (kbd "b") #'my-show-previous-outstanding-task)
   (define-key org-queue-mode-map (kbd "c") #'my-show-current-outstanding-task)
-  (define-key org-queue-mode-map (kbd "r") #'my-reset-and-show-current-outstanding-task)
+  ;; (define-key org-queue-mode-map (kbd "r") #'my-reset-and-show-current-outstanding-task)
   (define-key org-queue-mode-map (kbd "i") #'my-increase-priority-range)
   (define-key org-queue-mode-map (kbd "d") #'my-decrease-priority-range)
   (define-key org-queue-mode-map (kbd "a") #'my-advance-schedule)
@@ -962,7 +961,6 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
   ;; Auto-exit commands
   (define-key org-queue-mode-map (kbd "<") (make-auto-exit 'my-set-priority-with-heuristics))
   (define-key org-queue-mode-map (kbd "S") (make-auto-exit 'my-schedule-and-set-priority-command))
-  (define-key org-queue-mode-map (kbd "S-SPC") (make-auto-exit 'my-show-next-outstanding-task))
   (define-key org-queue-mode-map (kbd "F") (make-auto-exit 'my-show-next-outstanding-task))
   (define-key org-queue-mode-map (kbd "B") (make-auto-exit 'my-show-previous-outstanding-task))
   (define-key org-queue-mode-map (kbd "C") (make-auto-exit 'my-show-current-outstanding-task))
@@ -981,11 +979,13 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
   (define-key org-queue-mode-map (kbd "e") 
 	      (lambda () (interactive) (org-queue-mode -1))))
 
-(dolist (char (number-sequence 32 126))  ; From space (32) to ~ (126)
-  (let ((str (char-to-string char)))
-    (unless (or (and (>= char ?0) (<= char ?9))  ; Exclude digits
-		(lookup-key org-queue-mode-map (kbd str)))
-      (define-key org-queue-mode-map (kbd str) #'ignore))))
+;; Loop over the printable characters (ASCII 32–126).
+;; These represent the “single click” (unmodified) inputs.
+(dolist (char (number-sequence 32 126))
+  (let ((key (char-to-string char)))
+    ;; If there isn’t already an explicit binding, then block this key.
+    (unless (lookup-key org-queue-mode-map (kbd key))
+      (define-key org-queue-mode-map (kbd key) #'ignore))))
 
 ;; State Containers
 (defvar org-queue--status-active nil
@@ -1008,7 +1008,7 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
 	    (propertize "  ■ WORK" 'face 'org-queue-global-lighter))))
 
 ;; Temporal Constants
-(defconst org-queue--idle-delay 0.5
+(defconst org-queue--idle-delay 0.1
   "Seconds before showing status reminder")
 (defconst org-queue--blink-interval 0.7
   "Cursor blink rate in seconds")
