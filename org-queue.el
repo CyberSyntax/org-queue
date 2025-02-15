@@ -1078,7 +1078,7 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
 	(my-ensure-priorities-and-schedules-for-all-headings)
 
 	;; Advance 2^POWER random tasks with proper loop control.
-	(my-auto-advance-schedules 9)
+	(my-auto-advance-schedules 8)
 
 	;; Automatically postpone tasks that are overdue.
 	(my-auto-postpone-overdue-tasks)
