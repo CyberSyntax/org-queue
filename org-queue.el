@@ -533,8 +533,76 @@ to ensure that tasks with larger weights are postponed by relatively smaller amo
       (+ org-priority-default
 	 (random (+ 1 (- org-priority-lowest org-priority-default)))))))
 
+;; Define a customizable variable for the base directory.
+(defcustom org-queue-directory nil
+  "Base directory for task files for Org Queue.
+If nil, a safe default directory will be used and created automatically."
+  :type 'directory
+  :group 'org-queue)
+
+;; Define a customizable variable for the cache file.
+(defcustom my-outstanding-tasks-cache-file
+  (expand-file-name "org-queue-outstanding-tasks.cache" org-queue-directory)
+  "File path to store the cached outstanding tasks list along with its date stamp.
+By default, this file will be inside `org-queue-directory`."
+  :type 'string
+  :group 'org-queue)
+
+;; Variable to hold the list of outstanding tasks.
 (defvar my-outstanding-tasks-list nil
   "List of outstanding tasks, sorted by priority.")
+
+(defun my-save-outstanding-tasks-to-file ()
+  "Save `my-outstanding-tasks-list` to `my-outstanding-tasks-cache-file` with a date stamp.
+Each task is stored as a cons cell (FILE-PATH . POSITION). When FILE-PATH is inside
+`org-queue-directory`, the path is saved relative to that directory."
+  (with-temp-file my-outstanding-tasks-cache-file
+    (let* ((today (format-time-string "%Y-%m-%d"))
+	   (tasks-saved
+	    (delq nil
+		  (mapcar
+		   (lambda (marker)
+		     (when (and (marker-buffer marker)
+				(buffer-file-name (marker-buffer marker)))
+		       (with-current-buffer (marker-buffer marker)
+			 (let* ((full (file-truename (buffer-file-name)))
+				(path (if (file-in-directory-p full org-queue-directory)
+					  (file-relative-name full org-queue-directory)
+					full)))
+			   (cons path (marker-position marker))))))
+		   my-outstanding-tasks-list))))
+      (insert (prin1-to-string (list :date today :tasks tasks-saved))))))
+
+(defun my-load-outstanding-tasks-from-file ()
+  "Load cached tasks from `my-outstanding-tasks-cache-file`.
+If the saved date matches today, each stored (FILE-PATH . POSITION) pair is converted back
+to a marker and stored in `my-outstanding-tasks-list'. If the stored file path is relative,
+it is expanded using `org-queue-directory'."
+  (if (file-exists-p my-outstanding-tasks-cache-file)
+      (let* ((data (with-temp-buffer
+		     (insert-file-contents my-outstanding-tasks-cache-file)
+		     (read (buffer-string))))
+	     (saved-date (plist-get data :date))
+	     (saved-tasks (plist-get data :tasks))
+	     (today (format-time-string "%Y-%m-%d")))
+	(if (string= saved-date today)
+	    (progn
+	      (setq my-outstanding-tasks-list
+		    (mapcar
+		     (lambda (task)
+		       (let* ((stored-path (car task))
+			      (abs-path (if (or (file-name-absolute-p stored-path)
+						(string-match-p "^[A-Za-z]:[/\\\\]" stored-path))
+					    stored-path
+					  (expand-file-name stored-path org-queue-directory))))
+			 (with-current-buffer (find-file-noselect abs-path)
+			   (save-excursion
+			     (goto-char (cdr task))
+			     (point-marker)))))
+		     saved-tasks))
+	      t)
+	  nil))
+    nil))
 
 (defvar my-outstanding-tasks-index 0
   "Current index in the outstanding tasks list.")
@@ -1008,7 +1076,7 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
 	    (propertize "  ■ WORK" 'face 'org-queue-global-lighter))))
 
 ;; Temporal Constants
-(defconst org-queue--idle-delay 0.1
+(defconst org-queue--idle-delay 3
   "Seconds before showing status reminder")
 (defconst org-queue--blink-interval 0.7
   "Cursor blink rate in seconds")
@@ -1070,42 +1138,33 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
     (interactive)
     (org-queue-mode 1)))
 
+;; block needs to be executed. If a valid cache exists (i.e. saved today),
+;; then skip the following block; otherwise, run it and update the cache.
 (defun my-auto-task-setup ()
-  "Initialize and set up automatic task management processes upon Emacs startup."
+  "Initialize and set up automatic task management processes upon Emacs startup.
+If an outstanding tasks cache exists from today, skip running the full maintenance block.
+Otherwise, run the maintenance operations and then update the cache."
   (condition-case err
       (progn
-	;; Ensure that all Org headings have set priorities and schedules.
-	(my-ensure-priorities-and-schedules-for-all-headings)
-
-	;; Advance 2^POWER random tasks with proper loop control.
-	(my-auto-advance-schedules 8)
-
-	;; Automatically postpone tasks that are overdue.
-	(my-auto-postpone-overdue-tasks)
-
-	;; Postpone duplicate outstanding tasks that share the same priority within the same file.
-	(my-postpone-duplicate-priority-tasks)
-
-	;; Enforce priority constraints to ensure lower priority tasks do not exceed higher ones.
-	(my-enforce-priority-constraints)
-
-	;; Re-ensure that all Org headings still have correct priorities and schedules after modifications.
-	(my-ensure-priorities-and-schedules-for-all-headings)
-
-	;; Break up consecutive tasks from the same file to avoid clustering in the review queue
-	(my-postpone-consecutive-same-file-tasks)
-
-	;; Schedule the display of the current outstanding task to occur shortly after startup.
-	;; This slight delay ensures that all startup processes have completed before displaying the task.
-	(run-at-time "1 sec" nil 'my-show-current-outstanding-task)
-
-	;; Confirmation message indicating successful setup completion
-	(message "Automatic task setup completed successfully.")
-
-	;; Highlight the entry temporarily
-	(my-pulse-highlight-current-line 10)
-
-	(org-queue-mode 1))
+        (if (my-load-outstanding-tasks-from-file)
+            (message "Loaded outstanding tasks cache for today. Skipping auto setup maintenance block.")
+          (progn
+            (message "No valid cache for today found. Running full auto-setup maintenance block.")
+            ;; Maintenance Block: run these only once per day.
+            (my-ensure-priorities-and-schedules-for-all-headings)
+            (my-auto-advance-schedules 8)
+            (my-auto-postpone-overdue-tasks)
+            (my-postpone-duplicate-priority-tasks)
+            (my-enforce-priority-constraints)
+            (my-ensure-priorities-and-schedules-for-all-headings)
+            (my-postpone-consecutive-same-file-tasks)
+            ;; After processing, save the current outstanding tasks list to cache.
+            (my-save-outstanding-tasks-to-file)))
+        ;; Regardless of whether the maintenance block ran, schedule the display of the current outstanding task.
+        (run-at-time "1 sec" nil 'my-show-current-outstanding-task)
+        (message "Automatic task setup completed successfully.")
+        (my-pulse-highlight-current-line 10)
+        (org-queue-mode 1))
     (error
      (message "Error during automatic task setup: %s" (error-message-string err)))))
 
