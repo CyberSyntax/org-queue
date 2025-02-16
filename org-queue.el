@@ -992,6 +992,7 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
   (my-get-outstanding-tasks)
   (setq my-outstanding-tasks-index 0)
   (setq my-anki-task-counter 0)
+  (my-save-outstanding-tasks-to-file)
   (message "Outstanding tasks index reset."))
 
 (defun my-reset-and-show-current-outstanding-task ()
@@ -1163,7 +1164,6 @@ Otherwise, run the maintenance operations and then update the cache."
         ;; Regardless of whether the maintenance block ran, schedule the display of the current outstanding task.
         (run-at-time "1 sec" nil 'my-show-current-outstanding-task)
         (message "Automatic task setup completed successfully.")
-        (my-pulse-highlight-current-line 10)
         (org-queue-mode 1))
     (error
      (message "Error during automatic task setup: %s" (error-message-string err)))))
