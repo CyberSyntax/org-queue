@@ -317,7 +317,8 @@ to ensure that tasks with larger weights are postponed by relatively smaller amo
 	     (eq major-mode 'org-mode))
     (let* ((e (exp 1))  ; e ≈ 2.71828
 	   (current-weight (max 0 (my-find-schedule-weight)))  ; Ensure non-negative value
-	   ;; Adjusted months using f(x) = x + 1 / ln(x + e)
+	   ;; Adjusted
+	   months using f(x) = x + 1 / ln(x + e)
 	   (adjusted-months (+ current-weight
 			       (/ 1 (log (+ current-weight e)))))
 	   ;; Generate a random value between current-weight and adjusted-months
@@ -828,9 +829,6 @@ Saves buffers and regenerates the task list for consistency."
 ;; Display learning instructions in a full-screen info window.
 (defun display-fullscreen-info ()
   "Display optimal topic-to-item ratio learning instructions in a full-screen window."
-  ;; Update index and counter
-  (setq my-outstanding-tasks-index (1+ adjusted-index)
-	my-anki-task-counter (max (1- my-anki-task-counter) 0))  ; Prevent negative
   (let ((buf (get-buffer-create "*Anki Learning Info*"))
 	(content (concat
 "Optimal Topic-to-Item Ratio in Learning\n"
