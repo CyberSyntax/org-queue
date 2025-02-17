@@ -54,7 +54,7 @@ Optional RETRIED is used internally to prevent infinite recursion."
   (interactive)
   (let* ((priority-ranges my-priority-ranges)
 	 (max-retries 3)
-	 (retry-delay 0.3)
+	 (retry-delay 0.01)
 	 (range
 	  (cond
 	   (specific-range
@@ -317,8 +317,7 @@ to ensure that tasks with larger weights are postponed by relatively smaller amo
 	     (eq major-mode 'org-mode))
     (let* ((e (exp 1))  ; e ≈ 2.71828
 	   (current-weight (max 0 (my-find-schedule-weight)))  ; Ensure non-negative value
-	   ;; Adjusted
-	   months using f(x) = x + 1 / ln(x + e)
+	   ;; Adjusted months using f(x) = x + 1 / ln(x + e)
 	   (adjusted-months (+ current-weight
 			       (/ 1 (log (+ current-weight e)))))
 	   ;; Generate a random value between current-weight and adjusted-months
@@ -541,9 +540,9 @@ If nil, a safe default directory will be used and created automatically."
 
 ;; Define a customizable variable for the cache file.
 (defcustom my-outstanding-tasks-cache-file
-  (expand-file-name "cache/org-queue-outstanding-tasks.cache" org-queue-directory)
+  (expand-file-name "org-queue-outstanding-tasks.cache" cache-dir)
   "File path to store the cached outstanding tasks list along with its date stamp.
-By default, this file will be inside `org-queue-directory`."
+  By default, this file will be inside the cache directory (cache-dir)."
   :type 'string
   :group 'org-queue)
 
@@ -1173,7 +1172,7 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
 				   'face 'font-lock-doc-face)))))))
 
 ;; The second argument, t, makes the timer repeat.
-(run-with-idle-timer 3 t
+(run-with-idle-timer 2.08 t
   (lambda ()
     ;; Check if org-queue-mode is not currently enabled.
     (unless org-queue-mode
@@ -1220,7 +1219,7 @@ Otherwise, run the maintenance operations and then update the cache."
 	    ;; After processing, save the current outstanding tasks list to cache.
 	    (my-save-outstanding-tasks-to-file)))
 	;; Regardless of whether the maintenance block ran, schedule the display of the current outstanding task.
-	(run-at-time "0.1 sec" nil 'my-show-current-outstanding-task)
+	(run-at-time "0.01 sec" nil 'my-show-current-outstanding-task)
 	(message "Automatic task setup completed successfully.")
 	(org-queue-mode 1))
     (error
