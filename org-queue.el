@@ -812,15 +812,65 @@ Saves buffers and regenerates the task list for consistency."
 
 (require 'pulse)
 
+;; Display a message in a full-screen error window.
+(defun display-fullscreen-error (message)
+  "Display MESSAGE in a full-screen buffer named *Anki Error*."
+  (let ((buf (get-buffer-create "*Anki Error*")))
+    (with-current-buffer buf
+      (read-only-mode -1)      ; Remove read-only so we can update the buffer.
+      (erase-buffer)
+      (insert message)
+      (read-only-mode 1)
+      (goto-char (point-min)))
+    (delete-other-windows)      ; Make the error buffer full screen.
+    (switch-to-buffer buf)))
+
+;; Display learning instructions in a full-screen info window.
+(defun display-fullscreen-info ()
+  "Display optimal topic-to-item ratio learning instructions in a full-screen window."
+  ;; Update index and counter
+  (setq my-outstanding-tasks-index (1+ adjusted-index)
+	my-anki-task-counter (max (1- my-anki-task-counter) 0))  ; Prevent negative
+  (let ((buf (get-buffer-create "*Anki Learning Info*"))
+	(content (concat
+"Optimal Topic-to-Item Ratio in Learning\n"
+"================================================\n\n"
+"                [ New Topic ]\n"
+"                        |\n"
+"  --------------┼---------------------------------------------\n"
+"                        |\n"
+"  [ Item Review ] - [ Item Review ] - [ Item Review ] - [ Item Review ] - ...\n\n"
+"(1 New Topic balanced with 4 or more Item Reviews)\n\n"
+"** Key Points\n"
+"- Aim for a 1:4 or lower ratio: For each new topic introduced, aim to review at least four items or more.\n"
+"- Maintaining this balance helps prevent overload, supporting effective retention and steady learning progress.\n\n"
+"** Open Anki\n"
+"Click on Anki to launch it directly and start practicing this balanced approach in your reviews.\n")))
+    (with-current-buffer buf
+      (read-only-mode -1)
+      (erase-buffer)
+      (insert content)
+      (read-only-mode 1)
+      (goto-char (point-min)))
+    (delete-other-windows)      ; Make the info buffer take up the whole frame.
+    (switch-to-buffer buf)))
+
+;; Main function: On Windows attempt to launch Anki, otherwise show learning instructions.
 (defun my-launch-anki ()
-  "Launch Anki application if it exists."
-  (let* ((user-profile (getenv "USERPROFILE"))  ; Get the user's home directory on Windows
-	 (anki-path (expand-file-name "AppData/Local/Programs/Anki/anki.exe" user-profile)))
-    (if (file-exists-p anki-path)
-	(condition-case err
-	    (start-process "Anki" nil anki-path)
-	  (error (message "Failed to launch Anki: %s" (error-message-string err))))
-      (message "Anki executable not found at: %s" anki-path))))
+  "Launch the Anki application on Windows if it exists.
+On non-Windows systems, display learning instructions on the optimal topic-to-item ratio."
+  (if (eq system-type 'windows-nt)
+      (let* ((user-profile (getenv "USERPROFILE"))
+	     (anki-path (expand-file-name "AppData/Local/Programs/Anki/anki.exe" user-profile)))
+	(if (file-exists-p anki-path)
+	    (condition-case err
+		(start-process "Anki" nil anki-path)
+	      (error (display-fullscreen-error
+		      (format "Failed to launch Anki: %s" (error-message-string err)))))
+	  (display-fullscreen-error
+	   (format "Anki executable not found at: %s" anki-path))))
+    ;; For non-Windows systems, show learning instructions.
+    (display-fullscreen-info)))
 
 (defcustom my-anki-task-ratio 1
   "Ratio of Anki launches to tasks displayed. Default is 1:1 (Anki launched every task).
@@ -1123,7 +1173,7 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
 				   'face 'font-lock-doc-face)))))))
 
 ;; The second argument, t, makes the timer repeat.
-(run-with-idle-timer 7 t
+(run-with-idle-timer 3 t
   (lambda ()
     ;; Check if org-queue-mode is not currently enabled.
     (unless org-queue-mode
@@ -1132,10 +1182,15 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
       ;; Display a message to notify that org-queue-mode was activated.
       (message "org-queue-mode enabled due to inactivity."))))
 
-(global-set-key (kbd "<escape>")
-  (lambda ()
-    (interactive)
-    (org-queue-mode 1)))
+(defun my-enable-org-queue-mode ()
+  (interactive)
+  (org-queue-mode 1))
+
+;; Bind C-c q to enable org-queue-mode.
+(global-set-key (kbd "C-c q") 'my-enable-org-queue-mode)
+
+;; Bind <escape> to enable org-queue-mode
+(global-set-key (kbd "<escape>") 'my-enable-org-queue-mode)
 
 ;; block needs to be executed. If a valid cache exists (i.e. saved today),
 ;; then skip the following block; otherwise, run it and update the cache.
