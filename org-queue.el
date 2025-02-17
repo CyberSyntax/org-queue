@@ -831,7 +831,7 @@ Saves buffers and regenerates the task list for consistency."
   "Display optimal topic-to-item ratio learning instructions in a full-screen window."
   (let ((buf (get-buffer-create "*Anki Learning Info*"))
 	(content (concat
-"Optimal Topic-to-Item Ratio in Learning\n"
+"* Optimal Topic-to-Item Ratio in Learning\n"
 "================================================\n\n"
 "                [ New Topic ]\n"
 "                        |\n"
@@ -840,14 +840,16 @@ Saves buffers and regenerates the task list for consistency."
 "  [ Item Review ] - [ Item Review ] - [ Item Review ] - [ Item Review ] - ...\n\n"
 "(1 New Topic balanced with 4 or more Item Reviews)\n\n"
 "** Key Points\n"
-"- Aim for a 1:4 or lower ratio: For each new topic introduced, aim to review at least four items or more.\n"
+"- *Aim for a 1:4 or lower ratio*: For each new topic introduced, aim to review at least four items or more.\n"
 "- Maintaining this balance helps prevent overload, supporting effective retention and steady learning progress.\n\n"
-"** Open Anki\n"
-"Click on Anki to launch it directly and start practicing this balanced approach in your reviews.\n")))
+"** Open *Anki*\n"
+"Click on *Anki* to launch it directly and start practicing this balanced approach in your reviews.\n")))
     (with-current-buffer buf
       (read-only-mode -1)
       (erase-buffer)
       (insert content)
+      (org-mode)
+      (org-font-lock-ensure)
       (read-only-mode 1)
       (goto-char (point-min)))
     (delete-other-windows)      ; Make the info buffer take up the whole frame.
