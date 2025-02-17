@@ -476,8 +476,6 @@ to ensure that tasks with larger weights are postponed by relatively smaller amo
       (call-interactively #'my-set-priority-with-heuristics)
       (end-of-line)))
 
-(advice-add 'org-insert-heading :after #'my-post-org-insert-heading)
-
 (defun my-is-overdue-task ()
   "Return non-nil if the current task is overdue."
   (let ((scheduled-time (org-get-scheduled-time nil)))
@@ -542,7 +540,7 @@ If nil, a safe default directory will be used and created automatically."
 
 ;; Define a customizable variable for the cache file.
 (defcustom my-outstanding-tasks-cache-file
-  (expand-file-name "org-queue-outstanding-tasks.cache" org-queue-directory)
+  (expand-file-name "cache/org-queue-outstanding-tasks.cache" org-queue-directory)
   "File path to store the cached outstanding tasks list along with its date stamp.
 By default, this file will be inside `org-queue-directory`."
   :type 'string
@@ -1147,24 +1145,29 @@ If an outstanding tasks cache exists from today, skip running the full maintenan
 Otherwise, run the maintenance operations and then update the cache."
   (condition-case err
       (progn
-        (if (my-load-outstanding-tasks-from-file)
-            (message "Loaded outstanding tasks cache for today. Skipping auto setup maintenance block.")
-          (progn
-            (message "No valid cache for today found. Running full auto-setup maintenance block.")
-            ;; Maintenance Block: run these only once per day.
-            (my-ensure-priorities-and-schedules-for-all-headings)
-            (my-auto-advance-schedules 8)
-            (my-auto-postpone-overdue-tasks)
-            (my-postpone-duplicate-priority-tasks)
-            (my-enforce-priority-constraints)
-            (my-ensure-priorities-and-schedules-for-all-headings)
-            (my-postpone-consecutive-same-file-tasks)
-            ;; After processing, save the current outstanding tasks list to cache.
-            (my-save-outstanding-tasks-to-file)))
-        ;; Regardless of whether the maintenance block ran, schedule the display of the current outstanding task.
-        (run-at-time "1 sec" nil 'my-show-current-outstanding-task)
-        (message "Automatic task setup completed successfully.")
-        (org-queue-mode 1))
+	(if (my-load-outstanding-tasks-from-file)
+	    (message "Loaded outstanding tasks cache for today. Skipping auto setup maintenance block.")
+	  (progn
+	    (message "No valid cache for today found. Running full auto-setup maintenance block.")
+	    (when (require 'org-roam nil t)
+	      ;; Enable org-roam-db-autosync-mode
+	      (org-roam-db-autosync-mode)
+	      ;; Update org-id locations for agenda files
+	      (org-id-update-id-locations (org-agenda-files)))
+	    ;; Maintenance Block: run these only once per day.
+	    (my-ensure-priorities-and-schedules-for-all-headings)
+	    (my-auto-advance-schedules 8)
+	    (my-auto-postpone-overdue-tasks)
+	    (my-postpone-duplicate-priority-tasks)
+	    (my-enforce-priority-constraints)
+	    (my-ensure-priorities-and-schedules-for-all-headings)
+	    (my-postpone-consecutive-same-file-tasks)
+	    ;; After processing, save the current outstanding tasks list to cache.
+	    (my-save-outstanding-tasks-to-file)))
+	;; Regardless of whether the maintenance block ran, schedule the display of the current outstanding task.
+	(run-at-time "0.1 sec" nil 'my-show-current-outstanding-task)
+	(message "Automatic task setup completed successfully.")
+	(org-queue-mode 1))
     (error
      (message "Error during automatic task setup: %s" (error-message-string err)))))
 
