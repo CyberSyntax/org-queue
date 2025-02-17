@@ -849,6 +849,7 @@ Saves buffers and regenerates the task list for consistency."
       (erase-buffer)
       (insert content)
       (org-mode)
+      (org-fold-show-all) 
       (read-only-mode 1)
       (goto-char (point-min)))
     (delete-other-windows)      ; Make the info buffer take up the whole frame.
