@@ -1232,7 +1232,7 @@ Otherwise, run the maintenance operations and then update the cache."
 	    ;; After processing, save the current outstanding tasks list to cache.
 	    (my-save-outstanding-tasks-to-file)))
 	;; Regardless of whether the maintenance block ran, schedule the display of the current outstanding task.
-	(run-at-time "0.1 sec" nil 'my-show-current-outstanding-task)
+	(run-at-time "0.3 sec" nil 'my-show-current-outstanding-task)
 	(message "Automatic task setup completed successfully.")
 	(org-queue-mode 1))
     (error
