@@ -812,64 +812,77 @@ Saves buffers and regenerates the task list for consistency."
 
 (require 'pulse)
 
-;; Display a message in a full-screen error window.
-(defun display-fullscreen-error (message)
-  "Display MESSAGE in a full-screen buffer named *Anki Error*."
-  (let ((buf (get-buffer-create "*Anki Error*")))
-    (with-current-buffer buf
-      (read-only-mode -1)      ; Remove read-only so we can update the buffer.
-      (erase-buffer)
-      (insert message)
-      (read-only-mode 1)
-      (goto-char (point-min)))
-    (delete-other-windows)      ; Make the error buffer full screen.
-    (switch-to-buffer buf)))
+  ;; Display a message in a full-screen error window.
+  (defun display-fullscreen-error (message)
+    "Display MESSAGE in a full-screen buffer named *Anki Error*."
+    (let ((buf (get-buffer-create "*Anki Error*")))
+      (with-current-buffer buf
+	(read-only-mode -1)      ; Remove read-only so we can update the buffer.
+	(erase-buffer)
+	(insert message)
+	(read-only-mode 1)
+	(goto-char (point-min)))
+      (delete-other-windows)      ; Make the error buffer full screen.
+      (switch-to-buffer buf)))
 
-;; Display learning instructions in a full-screen info window.
-(defun display-fullscreen-info ()
-  "Display optimal topic-to-item ratio learning instructions in a full-screen window."
-  (let ((buf (get-buffer-create "*Anki Learning Info*"))
-	(content (concat
-"* Optimal Topic-to-Item Ratio in Learning\n"
-"================================================\n\n"
-"                [ New Topic ]\n"
-"                        |\n"
-"  --------------┼---------------------------------------------\n"
-"                        |\n"
-"  [ Item Review ] - [ Item Review ] - [ Item Review ] - [ Item Review ] - ...\n\n"
-"(1 New Topic balanced with 4 or more Item Reviews)\n\n"
-"** Key Points\n"
-"- *Aim for a 1:4 or lower ratio*: For each new topic introduced, aim to review at least four items or more.\n"
-"- Maintaining this balance helps prevent overload, supporting effective retention and steady learning progress.\n\n"
-"** Open *Anki*\n"
-"Click on *Anki* to launch it directly and start practicing this balanced approach in your reviews.\n")))
-    (with-current-buffer buf
-      (read-only-mode -1)
-      (erase-buffer)
-      (insert content)
-      (org-mode)
-      (org-fold-show-all) 
-      (read-only-mode 1)
-      (goto-char (point-min)))
-    (delete-other-windows)      ; Make the info buffer take up the whole frame.
-    (switch-to-buffer buf)))
+  ;; Display learning instructions in a full-screen info window.
+  (defun display-fullscreen-info ()
+    "Display optimal topic-to-item ratio learning instructions in a full-screen window."
+    (let ((buf (get-buffer-create "*Anki Learning Info*"))
+	  (content (concat
+  "* Optimal Topic-to-Item Ratio in Learning\n"
+  "================================================\n\n"
+  "                [ New Topic ]\n"
+  "                        |\n"
+  "  --------------┼---------------------------------------------\n"
+  "                        |\n"
+  "  [ Item Review ] - [ Item Review ] - [ Item Review ] - [ Item Review ] - ...\n\n"
+  "(1 New Topic balanced with 4 or more Item Reviews)\n\n"
+  "** Key Points\n"
+  "- *Aim for a 1:4 or lower ratio*: For each new topic introduced, aim to review at least four items or more.\n"
+  "- Maintaining this balance helps prevent overload, supporting effective retention and steady learning progress.\n\n"
+  "** Open *Anki*\n"
+  "Click on *Anki* to launch it directly and start practicing this balanced approach in your reviews.\n")))
+      (with-current-buffer buf
+	(read-only-mode -1)
+	(erase-buffer)
+	(insert content)
+	(org-mode)
+	(org-fold-show-all) 
+	(read-only-mode 1)
+	(goto-char (point-min)))
+      (delete-other-windows)      ; Make the info buffer take up the whole frame.
+      (switch-to-buffer buf)))
 
-;; Main function: On Windows attempt to launch Anki, otherwise show learning instructions.
 (defun my-launch-anki ()
   "Launch the Anki application on Windows if it exists.
-On non-Windows systems, display learning instructions on the optimal topic-to-item ratio."
-  (if (eq system-type 'windows-nt)
-      (let* ((user-profile (getenv "USERPROFILE"))
-	     (anki-path (expand-file-name "AppData/Local/Programs/Anki/anki.exe" user-profile)))
-	(if (file-exists-p anki-path)
-	    (condition-case err
-		(start-process "Anki" nil anki-path)
-	      (error (display-fullscreen-error
-		      (format "Failed to launch Anki: %s" (error-message-string err)))))
-	  (display-fullscreen-error
-	   (format "Anki executable not found at: %s" anki-path))))
-    ;; For non-Windows systems, show learning instructions.
-    (display-fullscreen-info)))
+Regardless of whether Anki launches successfully or an error occurs,
+always display the full-screen learning instructions."
+  (when (eq system-type 'windows-nt)
+    (let* ((user-profile (getenv "USERPROFILE"))
+	   (anki-path (expand-file-name "AppData/Local/Programs/Anki/anki.exe" user-profile)))
+      (if (file-exists-p anki-path)
+	  (condition-case err
+	      (start-process "Anki" nil anki-path)
+	    (error (display-fullscreen-error
+		    (format "Failed to launch Anki: %s" (error-message-string err)))))
+	(display-fullscreen-error
+	 (format "Anki executable not found at: %s" anki-path)))))
+  ;; Ensure the list exists, refresh if empty.
+  (unless my-outstanding-tasks-list (my-get-outstanding-tasks))
+  (if my-outstanding-tasks-list
+      (let* ((total (length my-outstanding-tasks-list))
+	     ;; Wrap index using modulo (supports negative numbers)
+	     (new-index (mod (- my-outstanding-tasks-index 2) total))
+	     (adjusted-index (if (>= new-index 0)
+				 new-index
+			       (+ new-index total))))
+	;; Update index and counter
+	(setq my-outstanding-tasks-index (1+ adjusted-index)
+	      my-anki-task-counter (1- my-anki-task-counter))
+	;; Display the full-screen learning instructions
+	(display-fullscreen-info)))
+  )
 
 (defcustom my-anki-task-ratio 1
   "Ratio of Anki launches to tasks displayed. Default is 1:1 (Anki launched every task).
