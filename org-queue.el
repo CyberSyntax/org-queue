@@ -1185,7 +1185,7 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
 				   'face 'font-lock-doc-face)))))))
 
 ;; The second argument, t, makes the timer repeat.
-(run-with-idle-timer 2.08 t
+(run-with-idle-timer 0.847 t
   (lambda ()
     ;; Check if org-queue-mode is not currently enabled.
     (unless org-queue-mode
