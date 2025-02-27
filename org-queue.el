@@ -854,11 +854,18 @@ Saves buffers and regenerates the task list for consistency."
       (delete-other-windows)      ; Make the info buffer take up the whole frame.
       (switch-to-buffer buf)))
 
+;; Define a customizable variable to control whether Anki should actually launch
+(defcustom my-actually-launch-anki t
+  "When non-nil, actually launch the Anki executable.
+When nil, skip Anki execution but still display the learning instructions."
+  :type 'boolean
+  :group 'my-learning-tools)
+
 (defun my-launch-anki ()
-  "Launch the Anki application on Windows if it exists.
-Regardless of whether Anki launches successfully or an error occurs,
+  "Launch the Anki application on Windows if it exists and if enabled.
+Regardless of whether Anki launches successfully, is disabled, or an error occurs,
 always display the full-screen learning instructions."
-  (when (eq system-type 'windows-nt)
+  (when (and (eq system-type 'windows-nt) my-actually-launch-anki)
     (let* ((user-profile (getenv "USERPROFILE"))
 	   (anki-path (expand-file-name "AppData/Local/Programs/Anki/anki.exe" user-profile)))
       (if (file-exists-p anki-path)
@@ -868,6 +875,7 @@ always display the full-screen learning instructions."
 		    (format "Failed to launch Anki: %s" (error-message-string err)))))
 	(display-fullscreen-error
 	 (format "Anki executable not found at: %s" anki-path)))))
+
   ;; Ensure the list exists, refresh if empty.
   (unless my-outstanding-tasks-list (my-get-outstanding-tasks))
   (if my-outstanding-tasks-list
@@ -875,14 +883,13 @@ always display the full-screen learning instructions."
 	     ;; Wrap index using modulo (supports negative numbers)
 	     (new-index (mod (- my-outstanding-tasks-index 2) total))
 	     (adjusted-index (if (>= new-index 0)
-				 new-index
-			       (+ new-index total))))
+				new-index
+			      (+ new-index total))))
 	;; Update index and counter
 	(setq my-outstanding-tasks-index (1+ adjusted-index)
 	      my-anki-task-counter (1- my-anki-task-counter))
 	;; Display the full-screen learning instructions
-	(display-fullscreen-info)))
-  )
+	(display-fullscreen-info))))
 
 (defcustom my-anki-task-ratio 1
   "Ratio of Anki launches to tasks displayed. Default is 1:1 (Anki launched every task).
@@ -987,6 +994,7 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
 	(widen)
 	(switch-to-buffer (marker-buffer marker))
 	(widen)
+	(revert-buffer t t t)
 	(goto-char (marker-position marker))
 	;; Ensure the entire entry is visible
 	(org-show-entry)
@@ -1010,6 +1018,7 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
 	(widen)
 	(switch-to-buffer (marker-buffer marker))
 	(widen)
+	(revert-buffer t t t)
 	(goto-char (marker-position marker))
 	;; Ensure the entire entry is visible
 	(org-show-entry)
@@ -1039,6 +1048,7 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
 	  (widen)
 	  (switch-to-buffer (marker-buffer marker))
 	  (widen)
+	  (revert-buffer t t t)
 	  (goto-char (marker-position marker))
 	  (org-show-entry)  ; Show entry and subtree
 	  (org-show-current-heading-cleanly)
