@@ -394,7 +394,7 @@ to ensure that tasks with larger weights are postponed by relatively smaller amo
       (save-some-buffers t)
       (message "Postponed %d/%d (2^%d=%d)" processed total n limit))))
 
-(defun my-schedule-and-set-priority-command (&optional months)
+(defun my-schedule-command (&optional months)
   "Interactive command that schedules MONTHS months in the future and prompts for priority."
   (interactive
    (list (read-number
@@ -402,9 +402,7 @@ to ensure that tasks with larger weights are postponed by relatively smaller amo
 	  (my-find-schedule-weight))))
   ;; Schedule the current heading
   (my-random-schedule (or months (my-find-schedule-weight)))
-  (my-ensure-priority-set)
-  ;; Call 'my-set-priority-with-heuristics' interactively
-  (call-interactively 'my-set-priority-with-heuristics))
+  (my-ensure-priority-set))
 
 (defun my-ensure-priorities-and-schedules-for-all-headings (&optional max-attempts)
   "Ensure priorities and schedules are set for all headings across Org agenda files.
@@ -1075,44 +1073,27 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
 (defvar org-queue-mode-map (make-sparse-keymap)
   "Keymap for org-queue-mode.")
 
-(cl-flet ((make-auto-exit (cmd)
-	    (eval `(lambda ()
-		     (interactive)
-		     (call-interactively ',cmd)
-		     (org-queue-mode -1)))))
-  ;; Persistent commands
+(progn
+  ;; Commands
   (define-key org-queue-mode-map (kbd ",") #'my-set-priority-with-heuristics)
-  (define-key org-queue-mode-map (kbd "s") #'my-schedule-and-set-priority-command)
+  (define-key org-queue-mode-map (kbd "s") #'my-schedule-command)
   (define-key org-queue-mode-map (kbd "f") #'my-show-next-outstanding-task)
   (define-key org-queue-mode-map (kbd "b") #'my-show-previous-outstanding-task)
   (define-key org-queue-mode-map (kbd "c") #'my-show-current-outstanding-task)
-  ;; (define-key org-queue-mode-map (kbd "r") #'my-reset-and-show-current-outstanding-task)
+  (define-key org-queue-mode-map (kbd "R") #'my-reset-and-show-current-outstanding-task)
   (define-key org-queue-mode-map (kbd "i") #'my-increase-priority-range)
   (define-key org-queue-mode-map (kbd "d") #'my-decrease-priority-range)
+  (define-key org-queue-mode-map (kbd "D") #'org-demote-subtree)
   (define-key org-queue-mode-map (kbd "a") #'my-advance-schedule)
   (define-key org-queue-mode-map (kbd "p") #'my-postpone-schedule)
+  (define-key org-queue-mode-map (kbd "P") #'org-promote-subtree)
   (define-key org-queue-mode-map (kbd "n") #'org-narrow-to-subtree)
   (define-key org-queue-mode-map (kbd "w") #'widen-and-recenter)
+  (define-key org-queue-mode-map (kbd "W") #'org-cut-subtree)
+  (define-key org-queue-mode-map (kbd "Y") #'org-paste-subtree)
   (define-key org-queue-mode-map (kbd "u") #'org-show-parent-heading-cleanly)
   (when (require 'gptel nil t)
     (define-key org-queue-mode-map (kbd "g") #'gptel))
-
-  ;; Auto-exit commands
-  (define-key org-queue-mode-map (kbd "<") (make-auto-exit 'my-set-priority-with-heuristics))
-  (define-key org-queue-mode-map (kbd "S") (make-auto-exit 'my-schedule-and-set-priority-command))
-  (define-key org-queue-mode-map (kbd "F") (make-auto-exit 'my-show-next-outstanding-task))
-  (define-key org-queue-mode-map (kbd "B") (make-auto-exit 'my-show-previous-outstanding-task))
-  (define-key org-queue-mode-map (kbd "C") (make-auto-exit 'my-show-current-outstanding-task))
-  (define-key org-queue-mode-map (kbd "R") (make-auto-exit 'my-reset-and-show-current-outstanding-task))
-  (define-key org-queue-mode-map (kbd "I") (make-auto-exit 'my-increase-priority-range))
-  (define-key org-queue-mode-map (kbd "D") (make-auto-exit 'my-decrease-priority-range))
-  (define-key org-queue-mode-map (kbd "A") (make-auto-exit 'my-advance-schedule))
-  (define-key org-queue-mode-map (kbd "P") (make-auto-exit 'my-postpone-schedule))
-  (define-key org-queue-mode-map (kbd "N") (make-auto-exit 'org-narrow-to-subtree))
-  (define-key org-queue-mode-map (kbd "W") (make-auto-exit 'widen-and-recenter))
-  (define-key org-queue-mode-map (kbd "U") (make-auto-exit 'org-show-parent-heading-cleanly))
-  (when (require 'gptel nil t)
-    (define-key org-queue-mode-map (kbd "G") (make-auto-exit 'gptel)))
 
   ;; Exit key
   (define-key org-queue-mode-map (kbd "e") 
