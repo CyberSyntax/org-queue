@@ -948,29 +948,22 @@ Defaults to 0.2 seconds."
     (pulse-momentary-highlight-one-line (point))))
 
 (defun widen-and-recenter ()
-  "Widen the buffer and then recenter the window."
-  (interactive)
-  (widen)
-  (recenter))
+  "Widen buffer, reset folding, show top-level children, and recenter point.
 
-(defun org-show-current-heading-cleanly ()
-  "Reveal the current Org heading and its immediate children while keeping other content folded.
-If the end of the line is invisible (i.e. the heading is collapsed), simply show the entry and its children.
-Otherwise, move back to the heading, check boundaries, collapse the overall view, and then reveal the heading and its children."
+This function widens the buffer to remove narrowing, resets the global
+folding state with `org-overview', expands the top-level headings with
+`org-fold-show-children', then returns point to its original position,
+revealing it clearly at the center of the screen."
   (interactive)
-  (if (save-excursion (end-of-line) (outline-invisible-p))
-      (progn
-	(org-show-entry)
-	(show-children))
-    (outline-back-to-heading)
-    (unless (and (bolp) (org-on-heading-p))
-      (org-up-heading-safe)
-      (hide-subtree)
-      (error "Boundary reached"))
-    (org-overview)
-    (org-reveal t)
-    (org-show-entry)
-    (show-children)))
+  (let ((marker (point-marker))) ;; Store original position
+    (widen)                      ;; Remove narrowing
+    (ignore-errors (outline-up-heading 1)) ;; Move up heading (safely handle errors)
+    (org-overview)               ;; Collapse all headings to overview state
+    (org-fold-show-children)     ;; Expand top-level headings only
+    (goto-char marker)           ;; Return to original position
+    (org-reveal t)               ;; Fully reveal original point
+    (org-show-children)          ;; Expand current subtree's direct children
+    (recenter)))                 ;; Center point visually
 
 (defun org-show-parent-heading-cleanly ()
   "Move up to the parent heading, widen the buffer, and then reveal the parent heading along with its children."
@@ -989,16 +982,23 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
   (if (and my-outstanding-tasks-list
 	   (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
       (let ((marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
-	(widen)
+	(widen-and-recenter)
 	(switch-to-buffer (marker-buffer marker))
-	(widen)
 	(revert-buffer t t t)
+	(widen-and-recenter)
+        ;; Unfold all content and then perform two global cycles to refold.
+        (org-fold-show-all)
+        (org-global-cycle)
+        (org-global-cycle)
 	(goto-char (marker-position marker))
 	;; Ensure the entire entry is visible
 	(org-show-entry)
-	(org-show-current-heading-cleanly)
 	(recenter)
 	(org-narrow-to-subtree)
+        (org-overview)
+        (org-reveal t)
+        (org-show-entry)
+        (show-children)
 	;; Increment the index after showing the task
 	(setq my-outstanding-tasks-index (1+ my-outstanding-tasks-index))
 	(setq my-anki-task-counter (1+ my-anki-task-counter))
@@ -1013,16 +1013,23 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
 	   (> my-outstanding-tasks-index 0)
 	   (<= my-outstanding-tasks-index (length my-outstanding-tasks-list)))
       (let ((marker (nth (1- my-outstanding-tasks-index) my-outstanding-tasks-list)))
-	(widen)
+	(widen-and-recenter)
 	(switch-to-buffer (marker-buffer marker))
-	(widen)
 	(revert-buffer t t t)
+	(widen-and-recenter)
+	;; Unfold all content and then perform two global cycles to refold.
+	(org-fold-show-all)
+	(org-global-cycle)
+	(org-global-cycle)
 	(goto-char (marker-position marker))
 	;; Ensure the entire entry is visible
 	(org-show-entry)
-	(org-show-current-heading-cleanly)
 	(recenter)
 	(org-narrow-to-subtree)
+	(org-overview)
+	(org-reveal t)
+	(org-show-entry)
+	(show-children)
 	;; Highlight the entry temporarily
 	(my-pulse-highlight-current-line))
     ;; If no current outstanding task, call my-show-next-outstanding-task to move forward.
@@ -1043,15 +1050,23 @@ Otherwise, move back to the heading, check boundaries, collapse the overall view
 	      my-anki-task-counter (max (1- my-anki-task-counter) 0))  ; Prevent negative
 	;; Display
 	(let ((marker (nth adjusted-index my-outstanding-tasks-list)))
-	  (widen)
+	  (widen-and-recenter)
 	  (switch-to-buffer (marker-buffer marker))
-	  (widen)
 	  (revert-buffer t t t)
+	  (widen-and-recenter)
+	  ;; Unfold all content and then perform two global cycles to refold.
+	  (org-fold-show-all)
+	  (org-global-cycle)
+	  (org-global-cycle)
 	  (goto-char (marker-position marker))
-	  (org-show-entry)  ; Show entry and subtree
-	  (org-show-current-heading-cleanly)
+	  ;; Ensure the entire entry is visible
+	  (org-show-entry)
 	  (recenter)
-	  (org-narrow-to-subtree)))
+	  (org-narrow-to-subtree)
+	  (org-overview)
+	  (org-reveal t)
+	  (org-show-entry)
+	  (show-children)))
     (message "No outstanding tasks to navigate.")))
 
 (defun my-reset-outstanding-tasks-index ()
