@@ -87,12 +87,19 @@ Returns t if found, nil otherwise. Uses save-excursion internally."
 
 
 (defun org-srs-entry-p (pos)
-  "Determine if the Org entry at POS or its immediate parent contains the specified log drawer (org-srs-log-drawer-name) by checking lines between headings.
+  "Determine if and where the Org entry at POS or its immediate parent contains the specified log drawer (org-srs-log-drawer-name) by checking lines between headings.
 
-Checks only the region under the current entry and its immediate
-parent. Does not check grandparents or higher ancestors.
-Restores editor state via save-excursion. Returns t or nil.
-Prints debug message."
+Checks only the direct content region under the current entry and
+its immediate parent. Does not check grandparents or higher ancestors.
+Restores editor state via save-excursion.
+
+Returns:
+- 'current : If the drawer is found directly under the current entry.
+- 'parent  : If the drawer is found directly under the immediate parent entry
+            (and not under the current entry).
+- nil      : If the drawer is not found in either location.
+
+Prints a debug message indicating the result."
   ;; Correct interactive specifier
   (interactive (list (point)))
 
@@ -116,33 +123,37 @@ Prints debug message."
     (let ((drawer-regexp (concat "^[[:blank:]]*:"
                                  (regexp-quote org-srs-log-drawer-name) ; Uses the variable!
                                  ":[[:blank:]]*$"))
-          ;; Initialize foundp directly to the result of the first check
-          (foundp nil)
+          ;; Initialize location to nil
+          (location nil)
           (current-heading-pos (point))
           (current-level (org-current-level)))
 
       ;; 1. Check current entry's direct region (using line search helper)
-      (setq foundp (org-srs--check-heading-direct-content-lines current-heading-pos drawer-regexp))
+      (when (org-srs--check-heading-direct-content-lines current-heading-pos drawer-regexp)
+        (setq location 'current)) ; Found in current entry
 
-      ;; 2. If not found and not top-level, check parent's direct region
-      (unless foundp
+      ;; 2. If not found in current, and not top-level, check parent's direct region
+      (unless location ; Only proceed if not found yet
         (when (> current-level 1)
           (save-excursion
              (goto-char current-heading-pos)
              (when (org-up-heading-safe)
-                (setq foundp (org-srs--check-heading-direct-content-lines (point) drawer-regexp)))))
+                ;; Check parent's direct content
+                (when (org-srs--check-heading-direct-content-lines (point) drawer-regexp)
+                  (setq location 'parent)))) ; Found in parent entry
+          ) ; save-excursion ends
         ) ; when ends
 
       ;; --- Debug Message ---
       (message "%s: Result (for drawer '%s') = %s"
-               'org-srs-entry-p org-srs-log-drawer-name (if foundp t nil))
+               'org-srs-entry-p org-srs-log-drawer-name location) ; Use location here
       ;; --- End Debug Message ---
 
-      ;; Return the final value of foundp (nil or t)
-      foundp
+      ;; Return the final location ('current, 'parent, or nil)
+      location
     ) ; let ends
   ) ; save-excursion ends
-  ) ; defun ends
+ ) ; defun ends
 
 (defun my-set-priority-with-heuristics (&optional specific-range retried)
   "Set a random priority within a user-defined heuristic range with retry mechanism.
