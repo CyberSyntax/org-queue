@@ -1300,13 +1300,35 @@ revealing it clearly at the center of the screen."
   (define-key org-queue-mode-map (kbd "e") 
 		(lambda () (interactive) (org-queue-mode -1))))
 
-;; Loop over the printable characters (ASCII 32–126).
-;; These represent the “single click” (unmodified) inputs.
+;; Define a simple ignore function - no conditionals
+(defun org-queue-ignore ()
+  "Ignore key presses unconditionally."
+  (interactive)
+  (message "Key blocked by org-queue-mode (press e to exit)")
+  (ignore))
+
+;; Block standard typing keys (ASCII 32-126)
 (dolist (char (number-sequence 32 126))
   (let ((key (char-to-string char)))
-    ;; If there isn’t already an explicit binding, then block this key.
     (unless (lookup-key org-queue-mode-map (kbd key))
-	(define-key org-queue-mode-map (kbd key) #'ignore))))
+      (define-key org-queue-mode-map (kbd key) #'org-queue-ignore))))
+
+;; Block common editing keys
+(dolist (key-binding '("<backspace>" "<delete>" "<deletechar>"
+                      "<return>" "RET" "DEL"))
+  (unless (lookup-key org-queue-mode-map (kbd key-binding))
+    (define-key org-queue-mode-map (kbd key-binding) #'org-queue-ignore)))
+
+;; Block pasting and other input-adding commands
+(dolist (input-key '("C-y" "C-d" "C-k" "C-o" "C-j" "C-m"))
+  (define-key org-queue-mode-map (kbd input-key) #'org-queue-ignore))
+
+;; Explicitly allow navigation keys and copy operations
+(dolist (allowed-key '("<tab>" "TAB" "<up>" "<down>" "<left>" "<right>"
+                      "<prior>" "<next>" "<home>" "<end>" 
+                      "C-v" "M-v" "C-l" "C-n" "C-p"
+                      "C-c" "M-w" "C-w"))  ;; allow copying and cutting
+  (define-key org-queue-mode-map (kbd allowed-key) nil))
 
 ;; State Containers
 (defvar org-queue--status-active nil
