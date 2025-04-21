@@ -265,60 +265,68 @@ Adjusts the priority within the new range, even if already at the lowest."
 
 (defun my-ensure-priority-set (&optional max-attempts)
   "Ensure the current heading has a priority set.
-					  If PRIORITY is not set, assign one within the appropriate range.
-					  If PRIORITY is set, reassign a priority within the same range.
-					  MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
+If PRIORITY is not set, assign one within the appropriate range.
+If PRIORITY is set, reassign a priority within the same range.
+Skip priority setting if this entry's SRS drawer is in its parent.
+MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
   (let ((max-attempts (or max-attempts 15))
-	  (attempt 0)
-	  (success nil))
-
+        (attempt 0)
+        (success nil))
+    
+    ;; First check if this is a parent-level SRS entry
+    (save-excursion
+      (org-back-to-heading t)
+      (when (eq (org-srs-entry-p (point)) 'parent)
+        (message "Skipping priority set - SRS drawer is in parent entry")
+        (setq success t)))  ;; Mark as successful to skip the loop
+    
     (while (and (not success) (< attempt max-attempts))
-	(setq attempt (1+ attempt))
-
-	(condition-case err
-	    (save-excursion
-	      ;; Move to the current heading
-	      (org-back-to-heading t)
-	      ;; Ensure the heading is fully visible
-	      (org-show-entry)
-	      ;; Retrieve the current PRIORITY property
-	      (let ((current-priority (org-entry-get nil "PRIORITY")))
-		(if (and current-priority (not (string= current-priority " ")))
-		    ;; PRIORITY is set; determine its range and reassign within the same range
-		    (let* ((priority-value (string-to-number current-priority))
-			   (current-range (my-find-priority-range priority-value)))
-		      (if current-range
-			  (progn
-			    (my-set-priority-with-heuristics current-range)
-			    (message "Priority reassigned within range %d." current-range)
-			    (setq success t))
-			(message "Current priority %d does not fall within any defined range."
-				 priority-value)))
-		  ;; PRIORITY is not set; assign a random priority within appropriate ranges
-		  (let* ((matching-ranges
-			  (cl-remove-if-not
-			   (lambda (range)
-			     (let ((min (car (cdr range)))
-				   (max (cdr (cdr range))))
-			       (and (<= min org-priority-lowest)
-				    (>= max org-priority-default))))
-			   my-priority-ranges))
-			 (range-ids (mapcar #'car matching-ranges)))
-		    (if range-ids
-			(let ((selected-range (nth (random (length range-ids)) range-ids)))
-			  (my-set-priority-with-heuristics selected-range)
-			  (message "Priority was not set. Assigned random priority within range %d."
-				   selected-range)
-			  (setq success t))
-		      (error "No valid range found for default priority settings. Check configurations."))))))
-	  (error
-	   (message "Attempt %d/%d failed in my-ensure-priority-set: %s" 
-		    attempt max-attempts (error-message-string err))
-	   (when (>= attempt max-attempts)
-	     (signal (car err) (cdr err))))))
-
+      (setq attempt (1+ attempt))
+      
+      (condition-case err
+          (save-excursion
+            ;; Move to the current heading
+            (org-back-to-heading t)
+            ;; Ensure the heading is fully visible
+            (org-show-entry)
+            ;; Retrieve the current PRIORITY property
+            (let ((current-priority (org-entry-get nil "PRIORITY")))
+              (if (and current-priority (not (string= current-priority " ")))
+                  ;; PRIORITY is set; determine its range and reassign within the same range
+                  (let* ((priority-value (string-to-number current-priority))
+                         (current-range (my-find-priority-range priority-value)))
+                    (if current-range
+                        (progn
+                          (my-set-priority-with-heuristics current-range)
+                          (message "Priority reassigned within range %d." current-range)
+                          (setq success t))
+                      (message "Current priority %d does not fall within any defined range."
+                               priority-value)))
+                ;; PRIORITY is not set; assign a random priority within appropriate ranges
+                (let* ((matching-ranges
+                        (cl-remove-if-not
+                         (lambda (range)
+                           (let ((min (car (cdr range)))
+                                 (max (cdr (cdr range))))
+                             (and (<= min org-priority-lowest)
+                                  (>= max org-priority-default))))
+                         my-priority-ranges))
+                       (range-ids (mapcar #'car matching-ranges)))
+                  (if range-ids
+                      (let ((selected-range (nth (random (length range-ids)) range-ids)))
+                        (my-set-priority-with-heuristics selected-range)
+                        (message "Priority was not set. Assigned random priority within range %d."
+                                 selected-range)
+                        (setq success t))
+                    (error "No valid range found for default priority settings. Check configurations."))))))
+        (error
+         (message "Attempt %d/%d failed in my-ensure-priority-set: %s" 
+                  attempt max-attempts (error-message-string err))
+         (when (>= attempt max-attempts)
+           (signal (car err) (cdr err))))))
+    
     (unless success
-	(error "Failed to set priority after %d attempts" max-attempts))))
+      (error "Failed to set priority after %d attempts" max-attempts))))
 
 (defcustom my-random-schedule-default-months 3
   "Default number of months to schedule if none is specified."
@@ -365,19 +373,26 @@ Adjusts the priority within the new range, even if already at the lowest."
 
 (defun my-random-schedule (months &optional n)
   "Schedules an Org heading MONTHS months in the future using a mathematically elegant distribution.
-									    If N is provided, use that as the exponent. If it's not provided, fallback to `my-random-schedule-exponent'."
+If N is provided, use that as the exponent. If it's not provided, fallback to `my-random-schedule-exponent'.
+Skips scheduling if the current heading or its parent has an SRS drawer."
   (when (and (not noninteractive)
-	       (eq major-mode 'org-mode))
-    (let* ((today (current-time))
-	     (total-days (* months 30))
-	     ;; If `n` is not passed in, use our existing defcustom value
-	     (n (or n my-random-schedule-exponent))
-	     (u (/ (float (random 1000000)) 1000000.0))
-	     (exponent (/ 1.0 (+ n 1)))  ; compute 1/(n+1)
-	     (x (expt u exponent))
-	     (days-ahead (floor (* total-days x)))
-	     (random-date (time-add today (days-to-time days-ahead))))
-	(org-schedule nil (format-time-string "%Y-%m-%d" random-date)))))
+             (eq major-mode 'org-mode))
+    ;; Check if heading or parent has SRS drawer
+    (let ((srs-result (org-srs-entry-p (point))))
+      (if (or (eq srs-result 'current) (eq srs-result 'parent))
+          ;; Skip scheduling if entry or parent has SRS drawer
+          (message "Skipping scheduling for entry with SRS drawer")
+        ;; Otherwise, proceed with normal scheduling
+        (let* ((today (current-time))
+               (total-days (* months 30))
+               ;; If `n` is not passed in, use our existing defcustom value
+               (n (or n my-random-schedule-exponent))
+               (u (/ (float (random 1000000)) 1000000.0))
+               (exponent (/ 1.0 (+ n 1)))  ; compute 1/(n+1)
+               (x (expt u exponent))
+               (days-ahead (floor (* total-days x)))
+               (random-date (time-add today (days-to-time days-ahead))))
+          (org-schedule nil (format-time-string "%Y-%m-%d" random-date)))))))
 
 (defun my-random-schedule-command (&optional months)
   "Interactive command to schedule MONTHS months in the future.
@@ -394,59 +409,68 @@ Adjusts the priority within the new range, even if already at the lowest."
   "Advance the current Org heading by a mathematically adjusted number of months.
 Uses a function that decreases with increasing current schedule weight,
 ensuring that tasks scheduled further in the future are advanced less.
-Does not schedule tasks to dates before today."
+Does not schedule tasks to dates before today.
+Skips scheduling if the current heading or its parent is an SRS entry
+(contains the org-srs-log-drawer-name drawer)."
   (interactive)
   (when (and (not noninteractive)
-	       (eq major-mode 'org-mode))
-    (let* ((e (exp 1))  ; e ≈ 2.71828
-	     ;; Get the current scheduled months ahead
-	     (current-weight (max 0 (my-find-schedule-weight)))  ; Ensure non-negative value
-	     ;; Calculate the adjustment using f(x) = x - 1 / ln(x + e)
-	     (adjusted-months (max 0 (- current-weight
-					(/ 1 (log (+ current-weight e))))))
-	     ;; Generate a random value between current-weight and adjusted-months
-	     (min-months (min current-weight adjusted-months))
-	     (max-months (max current-weight adjusted-months))
-	     (random-months (random-float min-months max-months))
-	     ;; Convert random-months to days
-	     (adjusted-days (* random-months 30)))
-	;; Schedule the task to the adjusted date, ensuring it is not before today
-	(org-schedule nil (format-time-string "%Y-%m-%d"
-					      (time-add (current-time)
-							(days-to-time adjusted-days)))))))
+             (eq major-mode 'org-mode))
+    ;; Check if this is an SRS entry
+    (unless (org-srs-entry-p (point)) ; Only continue if NOT an SRS entry
+      (let* ((e (exp 1))  ; e ≈ 2.71828
+             ;; Get the current scheduled months ahead
+             (current-weight (max 0 (my-find-schedule-weight)))  ; Ensure non-negative value
+             ;; Calculate the adjustment using f(x) = x - 1 / ln(x + e)
+             (adjusted-months (max 0 (- current-weight
+                                        (/ 1 (log (+ current-weight e))))))
+             ;; Generate a random value between current-weight and adjusted-months
+             (min-months (min current-weight adjusted-months))
+             (max-months (max current-weight adjusted-months))
+             (random-months (random-float min-months max-months))
+             ;; Convert random-months to days
+             (adjusted-days (* random-months 30)))
+        ;; Schedule the task to the adjusted date, ensuring it is not before today
+        (org-schedule nil (format-time-string "%Y-%m-%d"
+                                             (time-add (current-time)
+                                                       (days-to-time adjusted-days))))))))
 
 (defun my-postpone-schedule ()
   "Postpone the current Org heading by a mathematically adjusted number of months.
 Calculates the postponement using a function that increases while its derivative decreases,
-to ensure that tasks with larger weights are postponed by relatively smaller amounts."
+to ensure that tasks with larger weights are postponed by relatively smaller amounts.
+Skip postponing if the current entry or its parent contains an SRS drawer."
   (interactive)
   (when (and (not noninteractive)
-	       (eq major-mode 'org-mode))
-    (let* ((e (exp 1))  ; e ≈ 2.71828
-	     (current-weight (max 0 (my-find-schedule-weight)))  ; Ensure non-negative value
-	     ;; Adjusted months using f(x) = x + 1 / ln(x + e)
-	     (adjusted-months (+ current-weight
-				 (/ 1 (log (+ current-weight e)))))
-	     ;; Generate a random value between current-weight and adjusted-months
-	     (min-months (min current-weight adjusted-months))
-	     (max-months (max current-weight adjusted-months))
-	     (random-months (random-float min-months max-months))
-	     ;; Convert random-months to days
-	     (adjusted-days (* random-months 30))
-	     (now (current-time))
-	     (proposed-new-time (time-add now (days-to-time adjusted-days)))
-	     ;; Calculate tomorrow's midnight
-	     (now-decoded (decode-time now))
-	     (year (nth 5 now-decoded))
-	     (month (nth 4 now-decoded))
-	     (day (nth 3 now-decoded))
-	     (tomorrow-midnight (encode-time 0 0 0 (1+ day) month year))
-	     ;; Ensure new-time is at least tomorrow-midnight
-	     (new-time (if (time-less-p proposed-new-time tomorrow-midnight)
-			   tomorrow-midnight
-			 proposed-new-time)))
-	;; Schedule the task to the adjusted date
-	(org-schedule nil (format-time-string "%Y-%m-%d" new-time)))))
+             (eq major-mode 'org-mode))
+    ;; Check if this is an SRS entry (has SRS drawer in current or parent heading)
+    (let ((srs-status (org-srs-entry-p (point))))
+      ;; Only proceed if not an SRS entry (i.e., org-srs-entry-p returns nil)
+      (unless srs-status
+        (let* ((e (exp 1))  ; e ≈ 2.71828
+               (current-weight (max 0 (my-find-schedule-weight)))  ; Ensure non-negative value
+               ;; Adjusted months using f(x) = x + 1 / ln(x + e)
+               (adjusted-months (+ current-weight
+                                   (/ 1 (log (+ current-weight e)))))
+               ;; Generate a random value between current-weight and adjusted-months
+               (min-months (min current-weight adjusted-months))
+               (max-months (max current-weight adjusted-months))
+               (random-months (random-float min-months max-months))
+               ;; Convert random-months to days
+               (adjusted-days (* random-months 30))
+               (now (current-time))
+               (proposed-new-time (time-add now (days-to-time adjusted-days)))
+               ;; Calculate tomorrow's midnight
+               (now-decoded (decode-time now))
+               (year (nth 5 now-decoded))
+               (month (nth 4 now-decoded))
+               (day (nth 3 now-decoded))
+               (tomorrow-midnight (encode-time 0 0 0 (1+ day) month year))
+               ;; Ensure new-time is at least tomorrow-midnight
+               (new-time (if (time-less-p proposed-new-time tomorrow-midnight)
+                             tomorrow-midnight
+                           proposed-new-time)))
+          ;; Schedule the task to the adjusted date
+          (org-schedule nil (format-time-string "%Y-%m-%d" new-time)))))))
 
 (defun my-custom-shuffle (list)
   "Fisher-Yates shuffle implementation for Emacs Lisp."
@@ -513,63 +537,116 @@ to ensure that tasks with larger weights are postponed by relatively smaller amo
 
 (defun my-ensure-priorities-and-schedules-for-all-headings (&optional max-attempts)
   "Ensure priorities and schedules are set for all headings across Org agenda files.
-					       Repeatedly processes headings until all have priorities and schedules, or max-attempts is reached.
-					       MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
+Repeatedly processes headings until all have priorities and schedules, or max-attempts is reached.
+MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
   (interactive)
   (let ((max-attempts (or max-attempts 15))
-	  (attempt 0)
-	  (all-complete nil))
+        (attempt 0)
+        (all-complete nil)
+        (processed-headings (make-hash-table :test 'equal)))
 
     (while (and (not all-complete) (< attempt max-attempts))
-	(setq attempt (1+ attempt))
-	(save-some-buffers t)
+      (setq attempt (1+ attempt))
+      (save-some-buffers t)
 
-	;; First pass: Count total entries and incomplete entries
-	(let ((total-entries 0)
-	      (incomplete-entries 0))
-	  (org-map-entries
-	   (lambda ()
-	     (setq total-entries (1+ total-entries))
-	     (when (or (not (org-entry-get nil "PRIORITY"))
-		       (string= (org-entry-get nil "PRIORITY") " ")
-		       (not (org-entry-get nil "SCHEDULED")))
-	       (setq incomplete-entries (1+ incomplete-entries))))
-	   nil 'agenda)
+      ;; First pass: Count total entries and incomplete entries
+      (let ((total-entries 0)
+            (incomplete-entries 0))
+        (org-map-entries
+         (lambda ()
+           (setq total-entries (1+ total-entries))
+           ;; First check if entry has missing priority or schedule
+           (when (or (not (org-entry-get nil "PRIORITY"))
+                     (string= (org-entry-get nil "PRIORITY") " ")
+                     (not (org-entry-get nil "SCHEDULED")))
+             ;; Only now check if it's an SRS entry (more expensive operation)
+             (let* ((marker (point-marker))
+                    (file (buffer-file-name))
+                    (position (point))
+                    (heading-id (concat file ":" (number-to-string position)))
+                    (srs-status (or (gethash heading-id processed-headings)
+                                    (puthash heading-id (org-srs-entry-p (point)) processed-headings))))
+               
+               ;; Count as incomplete based on SRS status:
+               ;; - 'parent: skip both priority and schedule (never incomplete)
+               ;; - 'current: only incomplete if missing priority (we skip scheduling)
+               ;; - nil: incomplete if missing either priority or schedule
+               (cond
+                ((eq srs-status 'parent)
+                 nil) ; Skip entirely
+                ((eq srs-status 'current)
+                 ;; Only check priority for 'current entries
+                 (when (or (not (org-entry-get nil "PRIORITY"))
+                           (string= (org-entry-get nil "PRIORITY") " "))
+                   (setq incomplete-entries (1+ incomplete-entries))))
+                (t
+                 ;; For non-SRS entries, count if missing either
+                 (setq incomplete-entries (1+ incomplete-entries)))))))
+         nil 'agenda)
 
-	  ;; Process entries if there are incomplete ones
-	  (when (> incomplete-entries 0)
-	    (org-map-entries
-	     (lambda ()
-	       (condition-case err
-		   (progn
-		     ;; Ensure priority is set only if missing
-		     (let ((current-priority (org-entry-get nil "PRIORITY")))
-		       (when (or (not current-priority) 
-				 (string= current-priority " "))
-			 (my-ensure-priority-set)))
-		     ;; Ensure schedule is set only if missing
-		     (unless (org-entry-get nil "SCHEDULED")
-		       (my-random-schedule (my-find-schedule-weight) 0)))
-		 (error
-		  (message "Error processing entry: %s" 
-			   (error-message-string err)))))
-	     nil 'agenda))
+        ;; Process entries if there are incomplete ones
+        (when (> incomplete-entries 0)
+          (org-map-entries
+           (lambda ()
+             ;; First check if entry has missing priority or schedule
+             (when (or (not (org-entry-get nil "PRIORITY"))
+                       (string= (org-entry-get nil "PRIORITY") " ")
+                       (not (org-entry-get nil "SCHEDULED")))
+               ;; Only check SRS status if needed
+               (let* ((file (buffer-file-name))
+                      (position (point))
+                      (heading-id (concat file ":" (number-to-string position)))
+                      (srs-status (or (gethash heading-id processed-headings)
+                                      (puthash heading-id (org-srs-entry-p (point)) processed-headings))))
+                 
+                 (cond
+                  ;; For 'parent entries, skip entirely
+                  ((eq srs-status 'parent)
+                   nil)
+                  
+                  ;; For 'current entries, only set priority if needed
+                  ((eq srs-status 'current)
+                   (condition-case err
+                       (let ((current-priority (org-entry-get nil "PRIORITY")))
+                         (when (or (not current-priority) 
+                                   (string= current-priority " "))
+                           (my-ensure-priority-set)))
+                     (error
+                      (message "Error processing priority for 'current entry: %s" 
+                               (error-message-string err)))))
+                  
+                  ;; For non-SRS entries, process both priority and schedule
+                  (t
+                   (condition-case err
+                       (progn
+                         ;; Ensure priority is set only if missing
+                         (let ((current-priority (org-entry-get nil "PRIORITY")))
+                           (when (or (not current-priority) 
+                                     (string= current-priority " "))
+                             (my-ensure-priority-set)))
+                         ;; Ensure schedule is set only if missing
+                         (unless (org-entry-get nil "SCHEDULED")
+                           (my-random-schedule (my-find-schedule-weight) 0)))
+                     (error
+                      (message "Error processing entry: %s" 
+                               (error-message-string err)))))))))
+           nil 'agenda))
 
-	  ;; Set all-complete if no incomplete entries found
-	  (setq all-complete (zerop incomplete-entries)))
+        ;; Set all-complete if no incomplete entries found
+        (setq all-complete (zerop incomplete-entries)))
 
-	(save-some-buffers t)
+      (save-some-buffers t)
 
-	(message "Attempt %d/%d completed. %s"
-		 attempt 
-		 max-attempts
-		 (if all-complete
-		     "All entries processed successfully!"
-		   "Some entries still incomplete.")))
+      (message "Attempt %d/%d completed. %s"
+               attempt 
+               max-attempts
+               (if all-complete
+                   "All entries processed successfully!"
+                 "Some entries are still incomplete.")))
 
     (when (and (not all-complete) (>= attempt max-attempts))
-	(message "Warning: Reached maximum attempts (%d). Some entries may still be incomplete." 
-		 max-attempts))))
+      (message "Warning: Reached maximum attempts (%d). Some entries may still be incomplete." 
+               max-attempts))))
 
 (defun my-post-org-insert-heading (&rest _args)
     "Run after `org-insert-heading` to assign priority and schedule."
@@ -711,18 +788,20 @@ it is expanded using `org-queue-directory'."
   "Current index in the outstanding tasks list.")
 
 (defun my-get-outstanding-tasks ()
-  "Populate `my-outstanding-tasks-list` with outstanding tasks, sorted by priority."
+  "Populate `my-outstanding-tasks-list` with outstanding tasks, sorted by priority.
+   Skips tasks that are already part of an SRS system (where org-srs-entry-p returns non-nil)."
   (setq my-outstanding-tasks-list nil)
   (org-map-entries
    (lambda ()
-     (when (my-is-outstanding-task)
-	 (let* ((priority (my-get-raw-priority-value))
-		(marker (point-marker)))
-	   (push (cons priority marker) my-outstanding-tasks-list))))
+     (when (and (my-is-outstanding-task)
+                (not (org-srs-entry-p (point))))
+       (let* ((priority (my-get-raw-priority-value))
+              (marker (point-marker)))
+         (push (cons priority marker) my-outstanding-tasks-list))))
    nil
    'agenda)
   (setq my-outstanding-tasks-list
-	  (sort my-outstanding-tasks-list (lambda (a b) (< (car a) (car b)))))
+        (sort my-outstanding-tasks-list (lambda (a b) (< (car a) (car b)))))
   (setq my-outstanding-tasks-list (mapcar #'cdr my-outstanding-tasks-list))
   (setq my-outstanding-tasks-index 0))
 
@@ -1076,7 +1155,7 @@ revealing it clearly at the center of the screen."
   "Move up to the parent heading, widen the buffer, and then reveal the parent heading along with its children."
   (interactive)
   (widen-and-recenter)
-  (outline-up-heading 1)
+  (ignore-errors (outline-up-heading 1)) ;; Move up heading (safely handle errors)
   (org-narrow-to-subtree))
 
 (defun my-show-next-outstanding-task ()
