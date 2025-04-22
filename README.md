@@ -1,7 +1,8 @@
 > ⚠️ WARNING: USE WITH CAUTION ⚠️
 > org-queue is a powerful package that can irreversibly alter your org files.
 
-> Once activated, it modifies task structures and schedules in ways that may not be easily reversible. If you’re not fully familiar with > how the code works or what it’s doing under the hood, do not use it yet.
+> Once activated, it modifies task structures and schedules in ways that may not be easily reversible. If you’re not fully familiar with
+> how the code works or what it’s doing under the hood, do not use it yet.
 
 > Read the source. Understand the logic. Backup your files.
 > You’ve been warned.
