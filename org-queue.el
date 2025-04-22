@@ -48,112 +48,214 @@
 	(let ((priority-value (string-to-number current-priority)))
 	  (my-find-priority-range priority-value)))))
 
-;; Ensure Org mode functions are available
-(require 'org)
-(require 'cl-lib) ; Needed for cl-loop
+(defvar org-queue-mode-map (make-sparse-keymap)
+  "Keymap for org-queue-mode.")
 
-;; --- Helper function (Line-by-Line Search) ---
-(defun org-srs--check-heading-direct-content-lines (heading-pos drawer-regexp)
-  "Check the region between HEADING-POS and the next heading line-by-line for DRAWER-REGEXP.
-Returns t if found, nil otherwise. Uses save-excursion internally."
-  (save-excursion
-    (goto-char heading-pos)
-    (let* (;; Determine the starting line number + 1
-           (start-line-num (1+ (line-number-at-pos)))
-           ;; Find the line number of the absolute next heading, or max lines
-           (end-line-num (save-excursion
-                           (goto-char heading-pos) ; Make sure we start at the right heading
-                           (if (outline-next-heading)
-                               (line-number-at-pos) ; Line number where next heading starts
-                             (line-number-at-pos (point-max))))) ; Last line if no next heading
-           (found nil))
+(progn
+  ;; Commands
+  (define-key org-queue-mode-map (kbd ",") #'my-set-priority-with-heuristics)
+  (define-key org-queue-mode-map (kbd "s") #'my-schedule-command)
+  (define-key org-queue-mode-map (kbd "f") #'my-show-next-outstanding-task)
+  (define-key org-queue-mode-map (kbd "b") #'my-show-previous-outstanding-task)
+  (define-key org-queue-mode-map (kbd "c") #'my-show-current-outstanding-task)
+  (define-key org-queue-mode-map (kbd "R") #'my-reset-and-show-current-outstanding-task)
+  (define-key org-queue-mode-map (kbd "i") #'my-increase-priority-range)
+  (define-key org-queue-mode-map (kbd "d") #'my-decrease-priority-range)
+  (define-key org-queue-mode-map (kbd "D") #'org-demote-subtree)
+  (define-key org-queue-mode-map (kbd "a") #'my-advance-schedule)
+  (define-key org-queue-mode-map (kbd "p") #'my-postpone-schedule)
+  (define-key org-queue-mode-map (kbd "P") #'org-promote-subtree)
+  (define-key org-queue-mode-map (kbd "n") #'org-narrow-to-subtree)
+  (define-key org-queue-mode-map (kbd "w") #'widen-and-recenter)
+  (define-key org-queue-mode-map (kbd "W") #'org-cut-subtree)
+  (define-key org-queue-mode-map (kbd "Y") #'org-paste-subtree)
+  (define-key org-queue-mode-map (kbd "u") #'org-show-parent-heading-cleanly)
+  (when (require 'gptel nil t)
+    (define-key org-queue-mode-map (kbd "g") #'gptel))
 
-      ;; Debugging message (uncomment to see search bounds)
-      ;; (message "Line Search H@%d: StartLine=%d, EndLine=%d, Regexp='%s'"
-      ;;          heading-pos start-line-num end-line-num drawer-regexp)
+  ;; Exit key
+  (define-key org-queue-mode-map (kbd "e") 
+		(lambda () (interactive) (org-queue-mode -1))))
 
-      ;; Use cl-loop to iterate through lines if start is before end
-      (when (< start-line-num end-line-num)
-         (cl-loop for line-num from start-line-num below end-line-num do
-            (goto-line line-num)
-            ;; Check if the current line matches the drawer regexp exactly
-            (when (looking-at drawer-regexp)
-               (setq found t)
-               (cl-return found)))) ; Exit loop immediately if found
+;; Define a simple ignore function - no conditionals
+(defun org-queue-ignore ()
+  "Ignore key presses unconditionally."
+  (interactive)
+  (message "Key blocked by org-queue-mode (press e to exit)")
+  (ignore))
 
-      ;; Return the final value of found
-      found)))
-;; --- End Helper function ---
+;; Block standard typing keys (ASCII 32-126)
+(dolist (char (number-sequence 32 126))
+  (let ((key (char-to-string char)))
+    (unless (lookup-key org-queue-mode-map (kbd key))
+      (define-key org-queue-mode-map (kbd key) #'org-queue-ignore))))
 
+;; Block common editing keys
+(dolist (key-binding '("<backspace>" "<delete>" "<deletechar>"
+                      "<return>" "RET" "DEL"))
+  (unless (lookup-key org-queue-mode-map (kbd key-binding))
+    (define-key org-queue-mode-map (kbd key-binding) #'org-queue-ignore)))
+
+;; Block pasting and other input-adding commands
+(dolist (input-key '("C-y" "C-d" "C-k" "C-o" "C-j" "C-m"))
+  (define-key org-queue-mode-map (kbd input-key) #'org-queue-ignore))
+
+;; Explicitly allow navigation keys and copy operations
+(dolist (allowed-key '("<tab>" "TAB" "<up>" "<down>" "<left>" "<right>"
+                      "<prior>" "<next>" "<home>" "<end>" 
+                      "C-v" "M-v" "C-l" "C-n" "C-p"
+                      "C-c" "M-w" "C-w"))  ;; allow copying and cutting
+  (define-key org-queue-mode-map (kbd allowed-key) nil))
+
+;; State Containers
+(defvar org-queue--status-active nil
+  "Global activation tracking")
+(defvar org-queue--original-cursor nil
+  "Persistent cursor state storage")
+
+;; Mode Line Presentation Layer
+(defface org-queue-global-lighter
+  '((t :inherit font-lock-builtin-face
+	 :height 0.85
+	 :weight medium
+	 :foreground "#B71C1C"
+	 :background "#FFCDD2"))
+  "Cross-theme compatible status indicator")
+
+(defvar org-queue--lighter-display nil)
+(setq-default global-mode-string 
+  '(:eval (when org-queue-mode
+	      (propertize "  ■ WORK" 'face 'org-queue-global-lighter))))
+
+;; Temporal Constants
+(defconst org-queue--idle-delay 3
+  "Seconds before showing status reminder")
+(defconst org-queue--blink-interval 0.7
+  "Cursor blink rate in seconds")
+
+(define-minor-mode org-queue-mode
+  "Global minor mode for task queue management."
+  :init-value nil
+  :global t
+  :keymap org-queue-mode-map
+  :lighter " OrgQ"  ;; Retained original simpler indicator
+  (if org-queue-mode
+	(progn
+	  (setq org-queue--status-active t
+		org-queue--original-cursor cursor-type
+		cursor-type '(box . 3)  ; Thicker box cursor
+		blink-cursor-blinks 0
+		blink-cursor-interval org-queue--blink-interval)
+	  (add-hook 'post-command-hook #'org-queue--notify-presence)
+	  (run-with-idle-timer org-queue--idle-delay nil
+	    (lambda ()
+	      (unless (active-minibuffer-window)
+		(message "%s" (propertize "[Active] Task context engaged (e to exit)"
+					 'face 'font-lock-comment-face))))))
+    ;; Clean State Transition
+    (setq org-queue--status-active nil
+	    cursor-type org-queue--original-cursor
+	    blink-cursor-blinks 40
+	    blink-cursor-interval 0.5)
+    (remove-hook 'post-command-hook #'org-queue--notify-presence)
+    (message "%s" (propertize "[Idle] Context released" 
+			      'face 'font-lock-comment-face))))
+
+(defun org-queue--notify-presence ()
+  "Managed presence indication system"
+  (when (and org-queue-mode 
+	       (not (active-minibuffer-window))
+	       (not (minibufferp)))
+    (force-mode-line-update)
+    (unless cursor-in-non-selected-windows
+	(setq cursor-in-non-selected-windows t))
+    (run-with-idle-timer org-queue--idle-delay nil
+	(lambda ()
+	  (when org-queue-mode
+	    (message "%s" (propertize "[Active] Maintained focus (press e to exit)"
+				     'face 'font-lock-doc-face)))))))
+
+;; The second argument, t, makes the timer repeat.
+(run-with-idle-timer 0.847 t
+  (lambda ()
+    ;; Check if org-queue-mode is not currently enabled.
+    (unless org-queue-mode
+	;; If it's disabled, enable org-queue-mode.
+	(org-queue-mode 1)
+	;; Display a message to notify that org-queue-mode was activated.
+	(message "org-queue-mode enabled due to inactivity."))))
+
+(defun my-enable-org-queue-mode ()
+  (interactive)
+  (org-queue-mode 1))
+
+;; Bind C-c q to enable org-queue-mode.
+(global-set-key (kbd "C-c q") 'my-enable-org-queue-mode)
+
+;; Bind <escape> to enable org-queue-mode
+(global-set-key (kbd "<escape>") 'my-enable-org-queue-mode)
+
+(require 'my-srs-integration)
 
 (defun org-srs-entry-p (pos)
-  "Determine if and where the Org entry at POS or its immediate parent contains the specified log drawer (org-srs-log-drawer-name) by checking lines between headings.
-
-Checks only the direct content region under the current entry and
-its immediate parent. Does not check grandparents or higher ancestors.
-Restores editor state via save-excursion.
+  "Determine if and where the Org entry at POS or its immediate parent contains
+the specified log drawer (org-srs-log-drawer-name).
 
 Returns:
 - 'current : If the drawer is found directly under the current entry.
-- 'parent  : If the drawer is found directly under the immediate parent entry
+- 'parent  : If the drawer is found directly under the immediate parent entry 
             (and not under the current entry).
-- nil      : If the drawer is not found in either location.
-
-Prints a debug message indicating the result."
-  ;; Correct interactive specifier
+- nil      : If the drawer is not found in either location."
   (interactive (list (point)))
 
-  ;; Ensure var defined
+  ;; Ensure the required variable is defined and not empty
   (unless (boundp 'org-srs-log-drawer-name)
-    (error "Variable 'org-srs-log-drawer-name' is not defined. Set it to your drawer name (e.g., \"SRSITEMS\")"))
+    (error "Variable 'org-srs-log-drawer-name' is not defined. Set it to your drawer name"))
   (when (string-empty-p org-srs-log-drawer-name)
-     (error "Variable 'org-srs-log-drawer-name' is empty. Set it to your drawer name."))
+    (error "Variable 'org-srs-log-drawer-name' is empty. Set it to your drawer name"))
 
-
-  ;; Save state
+  ;; Save current buffer state
   (save-excursion
-    ;; --- Core Logic Start ---
+    ;; Ensure we're at a heading
     (goto-char pos)
-    (org-back-to-heading t)
+    (unless (or (org-at-heading-p) (org-back-to-heading t))
+      (message "org-srs-entry-p: Not within an Org entry")
+      (cl-return-from org-srs-entry-p nil))
 
-    (unless (org-at-heading-p)
-      (message "%s: Not within an Org entry." 'org-srs-entry-p)
-      (cl-return nil))
-
-    (let ((drawer-regexp (concat "^[[:blank:]]*:"
-                                 (regexp-quote org-srs-log-drawer-name) ; Uses the variable!
-                                 ":[[:blank:]]*$"))
-          ;; Initialize location to nil
-          (location nil)
-          (current-heading-pos (point))
-          (current-level (org-current-level)))
-
-      ;; 1. Check current entry's direct region (using line search helper)
-      (when (org-srs--check-heading-direct-content-lines current-heading-pos drawer-regexp)
-        (setq location 'current)) ; Found in current entry
-
-      ;; 2. If not found in current, and not top-level, check parent's direct region
-      (unless location ; Only proceed if not found yet
+    (let* ((drawer-regexp (concat "^[ \t]*:" 
+                                 (regexp-quote org-srs-log-drawer-name)
+                                 ":[ \t]*$"))
+           (location nil)
+           (current-heading-pos (point))
+           (current-level (org-outline-level)))
+      
+      ;; Check current entry first
+      (let ((next-heading-pos (save-excursion
+                               (outline-next-heading)
+                               (point))))
+        (save-excursion
+          (forward-line 1) ;; Move past the heading
+          (when (re-search-forward drawer-regexp next-heading-pos t)
+            (setq location 'current))))
+      
+      ;; If not found in current entry and not at top level, check parent
+      (unless location
         (when (> current-level 1)
           (save-excursion
-             (goto-char current-heading-pos)
-             (when (org-up-heading-safe)
-                ;; Check parent's direct content
-                (when (org-srs--check-heading-direct-content-lines (point) drawer-regexp)
-                  (setq location 'parent)))) ; Found in parent entry
-          ) ; save-excursion ends
-        ) ; when ends
-
-      ;; --- Debug Message ---
-      (message "%s: Result (for drawer '%s') = %s"
-               'org-srs-entry-p org-srs-log-drawer-name location) ; Use location here
-      ;; --- End Debug Message ---
-
-      ;; Return the final location ('current, 'parent, or nil)
-      location
-    ) ; let ends
-  ) ; save-excursion ends
- ) ; defun ends
+            (goto-char current-heading-pos)
+            (when (org-up-heading-safe)
+              (let ((parent-pos (point))
+                    (next-heading-pos (save-excursion
+                                       (outline-next-heading)
+                                       (point))))
+                (forward-line 1) ;; Move past the parent heading
+                (when (re-search-forward drawer-regexp next-heading-pos t)
+                  (setq location 'parent)))))))
+      
+      ;; Output debug message and return result
+      (message "org-srs-entry-p: Result (for drawer '%s') = %s" 
+               org-srs-log-drawer-name location)
+      location)))
 
 (defun my-set-priority-with-heuristics (&optional specific-range retried)
   "Set a random priority within a user-defined heuristic range with retry mechanism.
@@ -1160,36 +1262,38 @@ revealing it clearly at the center of the screen."
 
 (defun my-show-next-outstanding-task ()
   "Show the next outstanding task in priority order.
-									    If the list is exhausted, it refreshes the list."
+If the list is exhausted, it refreshes the list."
   (interactive)
   (unless (and my-outstanding-tasks-list
-		 (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+               (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
     (my-get-outstanding-tasks))
   (if (and my-outstanding-tasks-list
-	     (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
-	(let ((marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
-	  (widen-and-recenter)
-	  (switch-to-buffer (marker-buffer marker))
-	  (revert-buffer t t t)
-	  (widen-and-recenter)
+           (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+      (let ((marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
+        (widen-and-recenter)
+        (switch-to-buffer (marker-buffer marker))
+        (revert-buffer t t t)
+        (widen-and-recenter)
         ;; Unfold all content and then perform two global cycles to refold.
         (org-fold-show-all)
         (org-global-cycle)
         (org-global-cycle)
-	  (goto-char (marker-position marker))
-	  ;; Ensure the entire entry is visible
-	  (org-show-entry)
-	  (recenter)
-	  (org-narrow-to-subtree)
+        (goto-char (marker-position marker))
+        ;; Ensure the entire entry is visible
+        (org-show-entry)
+        (recenter)
+        (org-narrow-to-subtree)
         (org-overview)
         (org-reveal t)
         (org-show-entry)
         (show-children)
-	  ;; Increment the index after showing the task
-	  (setq my-outstanding-tasks-index (1+ my-outstanding-tasks-index))
-	  (setq my-anki-task-counter (1+ my-anki-task-counter))
-	  ;; Launch Anki according to the user-defined ratio
-	  (my-maybe-launch-anki))
+        ;; Increment the index after showing the task
+        (setq my-outstanding-tasks-index (1+ my-outstanding-tasks-index))
+        (setq my-anki-task-counter (1+ my-anki-task-counter))
+        ;; Launch Anki according to the user-defined ratio
+        (my-maybe-launch-anki)
+        (my-srs-quit-reviews)
+	(my-srs-start-reviews))
     (message "No more outstanding tasks.")))
 
 (defun my-show-current-outstanding-task ()
@@ -1270,153 +1374,6 @@ revealing it clearly at the center of the screen."
   (my-launch-anki)
   (my-reset-outstanding-tasks-index)  ;; Call function to reset tasks index
   (my-show-current-outstanding-task))  ;; Call function to show the first/current task
-
-(defvar org-queue-mode-map (make-sparse-keymap)
-  "Keymap for org-queue-mode.")
-
-(progn
-  ;; Commands
-  (define-key org-queue-mode-map (kbd ",") #'my-set-priority-with-heuristics)
-  (define-key org-queue-mode-map (kbd "s") #'my-schedule-command)
-  (define-key org-queue-mode-map (kbd "f") #'my-show-next-outstanding-task)
-  (define-key org-queue-mode-map (kbd "b") #'my-show-previous-outstanding-task)
-  (define-key org-queue-mode-map (kbd "c") #'my-show-current-outstanding-task)
-  (define-key org-queue-mode-map (kbd "R") #'my-reset-and-show-current-outstanding-task)
-  (define-key org-queue-mode-map (kbd "i") #'my-increase-priority-range)
-  (define-key org-queue-mode-map (kbd "d") #'my-decrease-priority-range)
-  (define-key org-queue-mode-map (kbd "D") #'org-demote-subtree)
-  (define-key org-queue-mode-map (kbd "a") #'my-advance-schedule)
-  (define-key org-queue-mode-map (kbd "p") #'my-postpone-schedule)
-  (define-key org-queue-mode-map (kbd "P") #'org-promote-subtree)
-  (define-key org-queue-mode-map (kbd "n") #'org-narrow-to-subtree)
-  (define-key org-queue-mode-map (kbd "w") #'widen-and-recenter)
-  (define-key org-queue-mode-map (kbd "W") #'org-cut-subtree)
-  (define-key org-queue-mode-map (kbd "Y") #'org-paste-subtree)
-  (define-key org-queue-mode-map (kbd "u") #'org-show-parent-heading-cleanly)
-  (when (require 'gptel nil t)
-    (define-key org-queue-mode-map (kbd "g") #'gptel))
-
-  ;; Exit key
-  (define-key org-queue-mode-map (kbd "e") 
-		(lambda () (interactive) (org-queue-mode -1))))
-
-;; Define a simple ignore function - no conditionals
-(defun org-queue-ignore ()
-  "Ignore key presses unconditionally."
-  (interactive)
-  (message "Key blocked by org-queue-mode (press e to exit)")
-  (ignore))
-
-;; Block standard typing keys (ASCII 32-126)
-(dolist (char (number-sequence 32 126))
-  (let ((key (char-to-string char)))
-    (unless (lookup-key org-queue-mode-map (kbd key))
-      (define-key org-queue-mode-map (kbd key) #'org-queue-ignore))))
-
-;; Block common editing keys
-(dolist (key-binding '("<backspace>" "<delete>" "<deletechar>"
-                      "<return>" "RET" "DEL"))
-  (unless (lookup-key org-queue-mode-map (kbd key-binding))
-    (define-key org-queue-mode-map (kbd key-binding) #'org-queue-ignore)))
-
-;; Block pasting and other input-adding commands
-(dolist (input-key '("C-y" "C-d" "C-k" "C-o" "C-j" "C-m"))
-  (define-key org-queue-mode-map (kbd input-key) #'org-queue-ignore))
-
-;; Explicitly allow navigation keys and copy operations
-(dolist (allowed-key '("<tab>" "TAB" "<up>" "<down>" "<left>" "<right>"
-                      "<prior>" "<next>" "<home>" "<end>" 
-                      "C-v" "M-v" "C-l" "C-n" "C-p"
-                      "C-c" "M-w" "C-w"))  ;; allow copying and cutting
-  (define-key org-queue-mode-map (kbd allowed-key) nil))
-
-;; State Containers
-(defvar org-queue--status-active nil
-  "Global activation tracking")
-(defvar org-queue--original-cursor nil
-  "Persistent cursor state storage")
-
-;; Mode Line Presentation Layer
-(defface org-queue-global-lighter
-  '((t :inherit font-lock-builtin-face
-	 :height 0.85
-	 :weight medium
-	 :foreground "#B71C1C"
-	 :background "#FFCDD2"))
-  "Cross-theme compatible status indicator")
-
-(defvar org-queue--lighter-display nil)
-(setq-default global-mode-string 
-  '(:eval (when org-queue-mode
-	      (propertize "  ■ WORK" 'face 'org-queue-global-lighter))))
-
-;; Temporal Constants
-(defconst org-queue--idle-delay 3
-  "Seconds before showing status reminder")
-(defconst org-queue--blink-interval 0.7
-  "Cursor blink rate in seconds")
-
-(define-minor-mode org-queue-mode
-  "Global minor mode for task queue management."
-  :init-value nil
-  :global t
-  :keymap org-queue-mode-map
-  :lighter " OrgQ"  ;; Retained original simpler indicator
-  (if org-queue-mode
-	(progn
-	  (setq org-queue--status-active t
-		org-queue--original-cursor cursor-type
-		cursor-type '(box . 3)  ; Thicker box cursor
-		blink-cursor-blinks 0
-		blink-cursor-interval org-queue--blink-interval)
-	  (add-hook 'post-command-hook #'org-queue--notify-presence)
-	  (run-with-idle-timer org-queue--idle-delay nil
-	    (lambda ()
-	      (unless (active-minibuffer-window)
-		(message "%s" (propertize "[Active] Task context engaged (e to exit)"
-					 'face 'font-lock-comment-face))))))
-    ;; Clean State Transition
-    (setq org-queue--status-active nil
-	    cursor-type org-queue--original-cursor
-	    blink-cursor-blinks 40
-	    blink-cursor-interval 0.5)
-    (remove-hook 'post-command-hook #'org-queue--notify-presence)
-    (message "%s" (propertize "[Idle] Context released" 
-			      'face 'font-lock-comment-face))))
-
-(defun org-queue--notify-presence ()
-  "Managed presence indication system"
-  (when (and org-queue-mode 
-	       (not (active-minibuffer-window))
-	       (not (minibufferp)))
-    (force-mode-line-update)
-    (unless cursor-in-non-selected-windows
-	(setq cursor-in-non-selected-windows t))
-    (run-with-idle-timer org-queue--idle-delay nil
-	(lambda ()
-	  (when org-queue-mode
-	    (message "%s" (propertize "[Active] Maintained focus (press e to exit)"
-				     'face 'font-lock-doc-face)))))))
-
-;; The second argument, t, makes the timer repeat.
-(run-with-idle-timer 0.847 t
-  (lambda ()
-    ;; Check if org-queue-mode is not currently enabled.
-    (unless org-queue-mode
-	;; If it's disabled, enable org-queue-mode.
-	(org-queue-mode 1)
-	;; Display a message to notify that org-queue-mode was activated.
-	(message "org-queue-mode enabled due to inactivity."))))
-
-(defun my-enable-org-queue-mode ()
-  (interactive)
-  (org-queue-mode 1))
-
-;; Bind C-c q to enable org-queue-mode.
-(global-set-key (kbd "C-c q") 'my-enable-org-queue-mode)
-
-;; Bind <escape> to enable org-queue-mode
-(global-set-key (kbd "<escape>") 'my-enable-org-queue-mode)
 
 ;; block needs to be executed. If a valid cache exists (i.e. saved today),
 ;; then skip the following block; otherwise, run it and update the cache.
