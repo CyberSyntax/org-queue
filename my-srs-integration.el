@@ -1,10 +1,10 @@
 ;;; my-srs-integration.el --- Immediate SRS integration with advice approach
 
-;;; Commentary:
+    ;;; Commentary:
 ;; This package provides immediate transition from SRS reviews to tasks
 ;; after reaching the goal count.
 
-;;; Code:
+    ;;; Code:
 
 (require 'org)
 
@@ -71,6 +71,12 @@
                   (my-srs-remove-advice)
                   t)))
   
+  ;; Save any modified SRS buffers
+  (save-some-buffers t (lambda ()
+                         (and buffer-file-name
+                              (or (string-match-p "\.org$" buffer-file-name)
+                                  (string-match-p "srs" buffer-file-name)))))
+  
   ;; Exit review mode
   (condition-case nil
       (when (fboundp 'org-srs-review-quit)
@@ -118,12 +124,28 @@
     (advice-remove 'org-srs-review-show #'my-srs-prevent-next-card)
     (advice-remove 'org-srs-review-show (lambda (&rest _) t))))
 
-;; Start reviews with advice
+;; Start reviews with advice - always restart if one exists
 (defun my-srs-start-reviews ()
   "Start SRS review session with counting and immediate exit at goal."
   (interactive)
   
-  ;; Set up our advice
+  ;; Check if there's already a review session active
+  (when (and (boundp 'org-srs-review-item-marker)
+             (local-variable-p 'org-srs-review-item-marker))
+    ;; There's an existing review - always exit it first
+    (message "%s Existing review session detected. Restarting..." 
+             (my-srs--get-symbol 'info))
+    
+    ;; Try to exit the current session cleanly
+    (condition-case nil
+        (when (fboundp 'org-srs-review-quit)
+          (org-srs-review-quit))
+      (error nil))
+    
+    ;; Wait a moment to ensure everything is cleaned up
+    (sit-for 0.2))
+  
+  ;; Start a fresh review session
   (condition-case err
       (progn
         (require 'org-srs)
@@ -198,4 +220,4 @@
 (my-srs-setup-keybindings)
 
 (provide 'my-srs-integration)
-;;; my-srs-integration.el ends here
+    ;;; my-srs-integration.el ends here
