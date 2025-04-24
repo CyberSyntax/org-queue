@@ -1292,8 +1292,13 @@ If the list is exhausted, it refreshes the list."
         (setq my-anki-task-counter (1+ my-anki-task-counter))
         ;; Launch Anki according to the user-defined ratio
         (my-maybe-launch-anki)
+        
+        ;; First quit any existing SRS session
         (my-srs-quit-reviews)
-	(my-srs-start-reviews))
+        
+        ;; Only try to start reviews if not exhausted
+        (unless my-srs-reviews-exhausted
+          (my-srs-start-reviews)))
     (message "No more outstanding tasks.")))
 
 (defun my-show-current-outstanding-task ()
