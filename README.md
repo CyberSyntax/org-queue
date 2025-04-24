@@ -103,7 +103,7 @@ Smart rescheduling of overdue tasks on Emacs startup using priority-based linear
 
 Open your terminal and run:  
 ```sh
-git clone <https://github.com/CyberSyntax/org-queue.git>
+git clone https://github.com/CyberSyntax/org-queue.git
 ```
 
 
