@@ -117,7 +117,7 @@ Add the following lines to your Emacs configuration file (`.emacs` or `init.el`)
 ;; 📁 Directory Setup
 (setq cache-dir "path/to/cache")
 
-(setq org-agenda-directory "path/to/org-queue")
+(setq org-agenda-directory "path/to/org-agenda")
 (setq org-agenda-files (directory-files-recursively org-agenda-directory "\\.org$"))
 
 (setq org-queue-directory org-agenda-directory)
@@ -151,12 +151,7 @@ Add the following lines to your Emacs configuration file (`.emacs` or `init.el`)
   (define-key org-mode-map (kbd "<f8>") #'org-srs-review-rate-again))
 
 ;; 📋 Load org-queue
-(setq my-project-lisp-directory "path/to/org-queue")
-(add-to-list 'load-path (file-name-as-directory my-project-lisp-directory))
-
-(message "DEBUG: About to load org-queue.el")
-(load-file (expand-file-name "org-queue.el" my-project-lisp-directory))
-(message "DEBUG: Finished loading org-queue.el")
+(add-to-list 'load-path "path/to/org-queue")
 
 (setq my-anki-task-ratio 4)          ;; Review after 4 tasks
 (setq my-actually-launch-anki nil)   ;; Disable auto-launch
