@@ -114,27 +114,55 @@ git clone https://github.com/CyberSyntax/org-queue.git
 Add the following lines to your Emacs configuration file (`.emacs` or `init.el`):
 
 ```emacs-lisp
-;; Add the path to the org-queue directory
-(add-to-list 'load-path "path/to/org-queue")
+;; 📁 Directory Setup
+(setq cache-dir "path/to/cache")
 
-;; Load org-queue
+(setq org-agenda-directory "path/to/org-queue")
+(setq org-agenda-files (directory-files-recursively org-agenda-directory "\\.org$"))
+
+(setq org-queue-directory org-agenda-directory)
+
+;; 📦 Load FSRS
+(add-to-list 'load-path "path/to/fsrs")
+(require 'fsrs)
+
+;; ⚖️ FSRS Weights
+(setq my-fsrs-weights
+      [0.2228 1.0368 10.4109 10.4109 7.2805 0.1947 2.1963 0.0092 1.3297
+       0.0077 0.8288 1.6248 0.2235 0.3794 2.0227 0.2315 1.0000 0.3060 0.4473])
+
+;; 🔁 Load org-srs
+(add-to-list 'load-path "path/to/org-srs")
+(require 'org-srs)
+
+(setq org-srs-review-order-new 'priority)
+(setq org-srs-review-order-review 'priority)
+
+(defun org-srs-review-show-rating-after-rate ()
+  (when-let ((rating (bound-and-true-p org-srs-review-rating)))
+    (message "Rated: %S" rating)
+    (sleep-for 0.5)))
+
+(add-hook 'org-srs-review-after-rate-hook 'org-srs-review-show-rating-after-rate)
+
+;; ⌨️ Rating Shortcuts (Optional)
+(with-eval-after-load 'org
+  (define-key org-mode-map (kbd "<f6>") #'org-srs-review-rate-good)
+  (define-key org-mode-map (kbd "<f8>") #'org-srs-review-rate-again))
+
+;; 📋 Load org-queue
+(setq my-project-lisp-directory "path/to/org-queue")
+(add-to-list 'load-path (file-name-as-directory my-project-lisp-directory))
+
+(message "DEBUG: About to load org-queue.el")
+(load-file (expand-file-name "org-queue.el" my-project-lisp-directory))
+(message "DEBUG: Finished loading org-queue.el")
+
+(setq my-anki-task-ratio 4)          ;; Review after 4 tasks
+(setq my-actually-launch-anki nil)   ;; Disable auto-launch
+
 (require 'org-queue)
-
-;; Optional: Adjust the default scheduling range
-(setq my-random-schedule-default-months 3)
-
-;; Optional: Set the default Anki launch ratio
-(setq my-anki-task-ratio 1)  ;; Default is 1:1 (Anki launched every task)
 ```
-
-**Note**: Replace `path/to/org-queue` with the full directory path where you cloned the repository. Examples for different operating systems:
-
--   **Linux**: `/home/your-username/repository-folder/org-queue/`
--   **macOS**: `/Users/your-username/repository-folder/org-queue/`
--   **Windows**: `C:/Users/your-username/repository-folder/org-queue/`
-
-Replace `your-username` with your actual system username and `repository-folder` with the name of the folder where you saved the `org-queue` repository. Use the correct path format for your operating system.
-
 
 <a id="org620857f"></a>
 
