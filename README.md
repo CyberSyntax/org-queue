@@ -137,6 +137,7 @@ Add the following lines to your Emacs configuration file (`.emacs` or `init.el`)
 
 (setq org-srs-review-order-new 'priority)
 (setq org-srs-review-order-review 'priority)
+(setq org-srs-review-learn-ahead-limit nil)
 
 (defun org-srs-review-show-rating-after-rate ()
   (when-let ((rating (bound-and-true-p org-srs-review-rating)))
