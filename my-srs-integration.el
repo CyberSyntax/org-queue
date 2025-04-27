@@ -2,7 +2,7 @@
 
 ;; This package provides seamless integration between tasks and spaced repetition.
 
-  ;;; Code:
+    ;;; Code:
 
 (require 'org)
 
@@ -42,13 +42,18 @@
           (advice-add 'org-srs-review-rate-again :after #'my-srs-count-review)
           
           ;; Detect when reviews are finished
-          (advice-add 'org-srs-review-message-review-done :before 
-                      (lambda (&rest _)
-                        (setq my-srs-reviews-exhausted t)
-                        (message "No more cards to review in this session.")
-                        ;; Return to current task
-                        (when (fboundp 'my-show-current-outstanding-task)
-                          (my-show-current-outstanding-task))))
+	  (advice-add 'org-srs-review-message-review-done :before 
+		      (lambda (&rest _)
+			;; Save any modified org buffers when reviews are exhausted
+			(save-some-buffers t (lambda ()
+					       (and buffer-file-name
+						    (string-match-p "\\.org$" buffer-file-name))))
+			(setq my-srs-reviews-exhausted t)
+			(message "No more cards to review in this session.")
+			;; Return to current task
+			(when (fboundp 'my-show-current-outstanding-task)
+			  (my-show-current-outstanding-task))))
+
           
           ;; Start the review session
           (when (fboundp 'org-srs-review-start)
@@ -135,4 +140,4 @@
 (run-at-time "00:00" 86400 #'my-srs-reset-exhausted-flag)
 
 (provide 'my-srs-integration)
-  ;;; my-srs-integration.el ends here
+    ;;; my-srs-integration.el ends here
