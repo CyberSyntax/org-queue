@@ -72,7 +72,10 @@
   (define-key org-queue-mode-map (kbd "u") #'org-show-parent-heading-cleanly)
   (when (require 'gptel nil t)
     (define-key org-queue-mode-map (kbd "g") #'gptel))
-
+  (when (require 'org-srs nil t)
+    (define-key org-queue-mode-map (kbd "1") #'org-srs-review-rate-again)
+    (define-key org-queue-mode-map (kbd "3") #'org-srs-review-rate-good))
+  
   ;; Exit key
   (define-key org-queue-mode-map (kbd "e") 
 		(lambda () (interactive) (org-queue-mode -1))))
