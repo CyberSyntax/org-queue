@@ -1099,86 +1099,155 @@ Saves buffers and regenerates the task list for consistency."
 		     (- original-count (length my-outstanding-tasks-list))))))
   (my-reset-outstanding-tasks-index))
 
+(defconst my-priority-flag-table
+  '((1 . "Flag:1")          ; 1
+    (2 . "Flag:2")          ; 2
+    (3 . "Flag:3")          ; 3–4
+    (4 . "Flag:4")          ; 5–8
+    (5 . "Flag:5")          ; 9–16
+    (6 . "Flag:6")          ; 17–32
+    (7 . "Flag:7"))         ; 33–64
+  "Mapping from flag group to description for Anki-style flagging.")
+
+(defun my-priority-flag (prio)
+  "Return the flag number for a given PRIORITY."
+  (cond
+   ((= prio 1) 1)
+   ((= prio 2) 2)
+   ((<= prio 4) 3)
+   ((<= prio 8) 4)
+   ((<= prio 16) 5)
+   ((<= prio 32) 6)
+   ((<= prio 64) 7)))
+
+(defun my-current-flag-counts ()
+  "Return (flag-name flag-number total count remaining remaining-pos) for current outstanding task."
+  (let* ((idx (if (and my-outstanding-tasks-list
+                       (> my-outstanding-tasks-index 0)
+                       (<= my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+                  (1- my-outstanding-tasks-index)
+                0))
+         (marker (nth idx my-outstanding-tasks-list))
+         (prio (when marker
+                 (with-current-buffer (marker-buffer marker)
+                   (save-excursion
+                     (goto-char (marker-position marker))
+                     (let ((priority-str (org-entry-get nil "PRIORITY")))
+                       (when priority-str (string-to-number priority-str)))))))
+         (flag-num (and prio (my-priority-flag prio)))
+         (flag-name (and flag-num (alist-get flag-num my-priority-flag-table)))
+         (all-flags
+          (mapcar (lambda (m)
+                    (with-current-buffer (marker-buffer m)
+                      (save-excursion
+                        (goto-char (marker-position m))
+                        (let ((priority-str (org-entry-get nil "PRIORITY")))
+                          (my-priority-flag (string-to-number priority-str))))))
+                  my-outstanding-tasks-list))
+         (flag-indices (cl-loop for i from 0 for f in all-flags
+                                when (equal f flag-num) collect i))
+         (total (length flag-indices))
+         (remaining (cl-count flag-num (nthcdr idx all-flags)))
+         (remaining-pos (+ 1 (cl-position idx flag-indices)))) ; e.g., "2 of 6"
+    (list :priority prio
+          :flag-name flag-name
+          :flag-num flag-num
+          :flag-count total
+          :flag-left remaining
+          :flag-pos remaining-pos)))
+
 (require 'pulse)
 
-  ;; Display a message in a full-screen error window.
-  (defun display-fullscreen-error (message)
-    "Display MESSAGE in a full-screen buffer named *Anki Error*."
-    (let ((buf (get-buffer-create "*Anki Error*")))
-	(with-current-buffer buf
-	  (read-only-mode -1)      ; Remove read-only so we can update the buffer.
-	  (erase-buffer)
-	  (insert message)
-	  (read-only-mode 1)
-	  (goto-char (point-min)))
-	(delete-other-windows)      ; Make the error buffer full screen.
-	(switch-to-buffer buf)))
+;; Display a message in a full-screen error window.
+(defun display-fullscreen-error (message)
+  "Display MESSAGE in a full-screen buffer named *Anki Error*."
+  (let ((buf (get-buffer-create "*Anki Error*")))
+    (with-current-buffer buf
+      (read-only-mode -1)      ; Remove read-only so we can update the buffer.
+      (erase-buffer)
+      (insert message)
+      (read-only-mode 1)
+      (goto-char (point-min)))
+    (delete-other-windows)      ; Make the error buffer full screen.
+    (switch-to-buffer buf)))
 
-  ;; Display learning instructions in a full-screen info window.
-  (defun display-fullscreen-info ()
-    "Display optimal topic-to-item ratio learning instructions in a full-screen window."
-    (let ((buf (get-buffer-create "*Anki Learning Info*"))
-	    (content (concat
-  "* Optimal Topic-to-Item Ratio in Learning\n"
-  "================================================\n\n"
-  "                [ New Topic ]\n"
-  "                        |\n"
-  "  --------------┼---------------------------------------------\n"
-  "                        |\n"
-  "  [ Item Review ] - [ Item Review ] - [ Item Review ] - [ Item Review ] - ...\n\n"
-  "(1 New Topic balanced with 4 or more Item Reviews)\n\n"
-  "** Key Points\n"
-  "- *Aim for a 1:4 or lower ratio*: For each new topic introduced, aim to review at least four items or more.\n"
-  "- Maintaining this balance helps prevent overload, supporting effective retention and steady learning progress.\n\n"
-  "** Open *Anki*\n"
-  "Click on *Anki* to launch it directly and start practicing this balanced approach in your reviews.\n")))
-	(with-current-buffer buf
-	  (read-only-mode -1)
-	  (erase-buffer)
-	  (insert content)
-	  (org-mode)
-	  (org-fold-show-all) 
-	  (read-only-mode 1)
-	  (goto-char (point-min)))
-	(delete-other-windows)      ; Make the info buffer take up the whole frame.
-	(switch-to-buffer buf)))
+;; Display learning instructions in a full-screen info window.
+(defun display-fullscreen-info ()
+  "Display optimal topic-to-item ratio learning instructions and current task flag/priority/location."
+  (let* ((buf (get-buffer-create "*Anki Learning Info*"))
+         (data (my-current-flag-counts))
+         (prio (plist-get data :priority))
+         (flag-name (plist-get data :flag-name))
+         (fidx (plist-get data :flag-pos))
+         (ftotal (plist-get data :flag-count))
+         (fleft (plist-get data :flag-left))
+         (statline
+          (format "* Current Priority: %s\n  • %s (%d/%d in this flag; %d left)\n\n"
+                  (or prio "N/A")
+                  (or flag-name "Flag: N/A")
+                  (or fidx 1) (or ftotal 1) (or fleft 1)))
+         (content (concat
+                   statline
+                   "* Optimal Topic-to-Item Ratio in Learning\n"
+                   "================================================\n\n"
+                   "                [ New Topic ]\n"
+                   "                        |\n"
+                   "  --------------┼---------------------------------------------\n"
+                   "                        |\n"
+                   "  [ Item Review ] - [ Item Review ] - [ Item Review ] - [ Item Review ] - ...\n\n"
+                   "(1 New Topic balanced with 4 or more Item Reviews)\n\n"
+                   "** Key Points\n"
+                   "- *Aim for a 1:4 or lower ratio*: For each new topic introduced, aim to review at least four items or more.\n"
+                   "- Maintaining this balance helps prevent overload, supporting effective retention and steady learning progress.\n\n"
+                   "** Open *Anki*\n"
+                   "Click on *Anki* to launch it directly and start practicing this balanced approach in your reviews.\n")))
+    (with-current-buffer buf
+      (read-only-mode -1)
+      (erase-buffer)
+      (insert content)
+      (org-mode)
+      (org-fold-show-all)
+      (read-only-mode 1)
+      (goto-char (point-min)))
+    (delete-other-windows)
+    (switch-to-buffer buf)))
 
 ;; Define a customizable variable to control whether Anki should actually launch
 (defcustom my-actually-launch-anki t
   "When non-nil, actually launch the Anki executable.
-When nil, skip Anki execution but still display the learning instructions."
+  When nil, skip Anki execution but still display the learning instructions."
   :type 'boolean
   :group 'my-learning-tools)
 
 (defun my-launch-anki ()
   "Launch the Anki application on Windows if it exists and if enabled.
-Regardless of whether Anki launches successfully, is disabled, or an error occurs,
-always display the full-screen learning instructions."
+  Regardless of whether Anki launches successfully, is disabled, or an error occurs,
+  always display the full-screen learning instructions."
   (when (and (eq system-type 'windows-nt) my-actually-launch-anki)
     (let* ((user-profile (getenv "USERPROFILE"))
-	     (anki-path (expand-file-name "AppData/Local/Programs/Anki/anki.exe" user-profile)))
-	(if (file-exists-p anki-path)
-	    (condition-case err
-		(start-process "Anki" nil anki-path)
-	      (error (display-fullscreen-error
-		      (format "Failed to launch Anki: %s" (error-message-string err)))))
-	  (display-fullscreen-error
-	   (format "Anki executable not found at: %s" anki-path)))))
-
+	   (anki-path (expand-file-name "AppData/Local/Programs/Anki/anki.exe" user-profile)))
+      (if (file-exists-p anki-path)
+	  (condition-case err
+	      (start-process "Anki" nil anki-path)
+	    (error (display-fullscreen-error
+		    (format "Failed to launch Anki: %s" (error-message-string err)))))
+	(display-fullscreen-error
+	 (format "Anki executable not found at: %s" anki-path)))))
+  
   ;; Ensure the list exists, refresh if empty.
   (unless my-outstanding-tasks-list (my-get-outstanding-tasks))
   (if my-outstanding-tasks-list
-	(let* ((total (length my-outstanding-tasks-list))
-	       ;; Wrap index using modulo (supports negative numbers)
-	       (new-index (mod (- my-outstanding-tasks-index 2) total))
-	       (adjusted-index (if (>= new-index 0)
-				  new-index
-				(+ new-index total))))
-	  ;; Update index and counter
-	  (setq my-outstanding-tasks-index (1+ adjusted-index)
-		my-anki-task-counter (1- my-anki-task-counter))
-	  ;; Display the full-screen learning instructions
-	  (display-fullscreen-info))))
+      (let* ((total (length my-outstanding-tasks-list))
+	     ;; Wrap index using modulo (supports negative numbers)
+	     (new-index (mod (- my-outstanding-tasks-index 2) total))
+	     (adjusted-index (if (>= new-index 0)
+				 new-index
+			       (+ new-index total))))
+	;; Update index and counter
+	(setq my-outstanding-tasks-index (1+ adjusted-index)
+	      my-anki-task-counter (1- my-anki-task-counter))
+	;; Display the full-screen learning instructions
+	(display-fullscreen-info))))
 
 (defcustom my-anki-task-ratio 1
   "Ratio of Anki launches to tasks displayed. Default is 1:1 (Anki launched every task).
