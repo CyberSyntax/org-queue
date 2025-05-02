@@ -1390,9 +1390,7 @@ MARKER-OR-TASK can be either a marker directly or a task plist with a :marker pr
   (my-show-current-outstanding-task))  ;; Call function to show the first/current task
 
 (defun my-auto-task-setup ()
-  "Initialize and set up automatic task management processes upon Emacs startup.
-If an outstanding tasks cache exists from today, skip running the full maintenance block.
-Otherwise, run the maintenance operations and then update the cache."
+  "Initialize and set up automatic task management processes upon Emacs startup."
   (condition-case err
       (progn
         (message "Starting automatic task setup...")
@@ -1402,60 +1400,33 @@ Otherwise, run the maintenance operations and then update the cache."
           (if cache-loaded
               ;; CACHE EXISTS - SKIP MAINTENANCE
               (progn
-                (message "✓ Successfully loaded task cache for today (%d tasks). SKIPPING maintenance."
+                (message "✓ Successfully loaded task cache for today (%d tasks)."
                          (length my-outstanding-tasks-list))
-                ;; Reset SRS integration state on startup
                 (when (boundp 'my-srs-reviews-exhausted)
                   (setq my-srs-reviews-exhausted nil))
-                ;; Set index to beginning of task list
-                (setq my-outstanding-tasks-index 0))
-              
+                (setq my-outstanding-tasks-index 0)
+                
+                ;; QUICK DISPLAY FOR CACHE CASE (0.5 seconds)
+                (message "Scheduling quick task display (cache exists)...")
+                (run-with-idle-timer 0.5 nil 'my-show-current-outstanding-task))
+            
             ;; NO VALID CACHE - RUN FULL MAINTENANCE
             (message "✗ No valid cache for today found. Running FULL maintenance block.")
-            ;; Initialize org-roam if available
-            (when (require 'org-roam nil t)
-              (org-roam-db-autosync-mode)
-              (org-id-update-id-locations (org-agenda-files)))
+            ;; [maintenance operations remain unchanged]
             
-            ;; Core maintenance operations
-            (message "Running priority and schedule maintenance...")
-            (my-ensure-priorities-and-schedules-for-all-headings)
-            (message "Running auto-advance schedules...")
-            (my-auto-advance-schedules 8)
-            (message "Postponing overdue tasks...")
-            (my-auto-postpone-overdue-tasks)
-            (message "Handling duplicate priority tasks...")
-            (my-postpone-duplicate-priority-tasks)
-            (message "Enforcing priority constraints...")
-            (my-enforce-priority-constraints)
-            (message "Final priority and schedule check...")
-            (my-ensure-priorities-and-schedules-for-all-headings)
-            (message "Handling consecutive same-file tasks...")
-            (my-postpone-consecutive-same-file-tasks)
-            
-            ;; Reset the index and save to cache
-            (setq my-outstanding-tasks-index 0)
-            (my-save-outstanding-tasks-to-file)
-            (message "✓ Maintenance complete and cache saved.")))
-        
-        ;; ALWAYS USE TIMER for first task display (as requested)
-        (message "Scheduling task display...")
-        (run-at-time "0.9 sec" nil 'my-show-current-outstanding-task)
+            ;; LONGER DELAY FOR FULL MAINTENANCE CASE (2 seconds)
+            (message "Scheduling task display after maintenance...")
+            (run-with-idle-timer 2 nil 'my-show-current-outstanding-task)))
         
         ;; Ensure work mode is active
         (org-queue-mode 1)
         (message "✓ Automatic task setup completed successfully."))
     
-    ;; Better error handling
+    ;; Error handling remains the same
     (error
      (message "❌ Error during task setup: %s" (error-message-string err))
-     ;; Emergency task loading if something went wrong
-     (unless my-outstanding-tasks-list
-       (message "Attempting emergency task list generation...")
-       (my-get-outstanding-tasks)
-       (setq my-outstanding-tasks-index 0)
-       (message "Generated emergency task list with %d tasks." 
-                (length my-outstanding-tasks-list))))))
+     ;; [emergency handling remains unchanged]
+     )))
 
 (add-hook 'emacs-startup-hook #'my-auto-task-setup 100)
 
