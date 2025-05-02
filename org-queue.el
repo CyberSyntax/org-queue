@@ -216,26 +216,11 @@
            ;; Get exact line where cursor is for content
            (content-line (buffer-substring-no-properties
                          (line-beginning-position)
-                         (line-end-position)))
-           (next-cloze-num 1))
-      
-      ;; Find highest existing cloze number in the current line
-      (save-excursion
-        (goto-char (line-beginning-position))
-        (while (re-search-forward "{{c\\([0-9]+\\)::" (line-end-position) t)
-          (let ((num (string-to-number (match-string 1))))
-            (setq next-cloze-num (max (1+ num) next-cloze-num)))))
-      
-      ;; Use cloze number 1 if nothing exists in this line
-      (when (= next-cloze-num 1)
-        (save-excursion
-          (goto-char (line-beginning-position))
-          (unless (re-search-forward "{{c[0-9]+::" (line-end-position) t)
-            (setq next-cloze-num 1))))
+                         (line-end-position))))
       
       ;; Replace selected text with cloze
       (delete-region start end)
-      (insert (format "{{c%d::%s}}" next-cloze-num selected-text))
+      (insert (format "{{clozed:%s}}" selected-text))
       
       ;; Get updated content line
       (setq content-line (buffer-substring-no-properties
@@ -255,14 +240,14 @@
           ;; Create child content - replace the current cloze with [...]
           (let ((child-content 
                  (replace-regexp-in-string 
-                  (format "{{c%d::%s}}" next-cloze-num selected-text)
+                  (format "{{clozed:%s}}" selected-text)
                   "[...]"
                   content-line)))
             ;; Replace all other clozes with their content
             (let ((processed-content child-content))
-              (while (string-match "{{c\\([0-9]+\\)::\\([^}]+\\)}}" processed-content)
+              (while (string-match "{{clozed:\\([^}]+\\)}}" processed-content)
                 (setq processed-content 
-                      (replace-match (match-string 2 processed-content) t t processed-content)))
+                      (replace-match "\\1" t nil processed-content)))
               (insert processed-content))
             (insert "\n" selected-text))
           
@@ -272,7 +257,7 @@
           (org-srs-item-new 'card)          ;; Set up as org-srs card
         ))
       
-      (message "Created cloze %d with org-srs card" next-cloze-num))))
+      (message "Created cloze deletion with org-srs card"))))
 
 (defun org-interactive-extract ()
   "Create a SuperMemo-style extract from selected text and generate a child heading."
