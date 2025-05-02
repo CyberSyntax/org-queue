@@ -1302,7 +1302,7 @@ MARKER-OR-TASK can be either a marker directly or a task plist with a :marker pr
   
   ;; If no list exists or we're at the end, get/refresh the list
   (when (or (not my-outstanding-tasks-list)
-           (>= my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+            (>= my-outstanding-tasks-index (length my-outstanding-tasks-list)))
     (if my-outstanding-tasks-list
         ;; If we have a list but reached the end, reset index to 0
         (setq my-outstanding-tasks-index 0)
@@ -1324,14 +1324,15 @@ MARKER-OR-TASK can be either a marker directly or a task plist with a :marker pr
         ;; Display operations
         (my-display-task-at-marker task-or-marker)
         (my-pulse-highlight-current-line)
-        (my-show-current-flag-status)
         
         ;; Handle SRS reviews - only when NOT exhausted
         (unless my-srs-reviews-exhausted
           (my-srs-quit-reviews)  ;; Always clean up any previous session
           (condition-case nil
               (my-srs-start-reviews)
-            (error (setq my-srs-reviews-exhausted t)))))
+            (error (setq my-srs-reviews-exhausted t))))
+
+	(my-show-current-flag-status))
     (message "No outstanding tasks found.")))
 
 (defun my-show-previous-outstanding-task ()
@@ -1439,8 +1440,6 @@ Otherwise, run the maintenance operations and then update the cache."
         
         ;; ALWAYS USE TIMER for first task display (as requested)
         (message "Scheduling task display...")
-        (run-at-time "0.3 sec" nil 'my-show-current-outstanding-task)
-        (run-at-time "0.6 sec" nil 'my-show-current-outstanding-task)
         (run-at-time "0.9 sec" nil 'my-show-current-outstanding-task)
         
         ;; Ensure work mode is active
