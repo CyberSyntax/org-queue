@@ -1398,7 +1398,7 @@ MARKER-OR-TASK can be either a marker directly or a task plist with a :marker pr
         ;; Try to load today's cache
         (let ((cache-loaded (my-load-outstanding-tasks-from-file)))
           (if cache-loaded
-              ;; CACHE EXISTS - SKIP MAINTENANCE
+              ;; CACHE EXISTS - Display task automatically
               (progn
                 (message "✓ Successfully loaded task cache for today (%d tasks)."
                          (length my-outstanding-tasks-list))
@@ -1406,27 +1406,46 @@ MARKER-OR-TASK can be either a marker directly or a task plist with a :marker pr
                   (setq my-srs-reviews-exhausted nil))
                 (setq my-outstanding-tasks-index 0)
                 
-                ;; QUICK DISPLAY FOR CACHE CASE (0.5 seconds)
-                (message "Scheduling quick task display (cache exists)...")
-                (run-with-idle-timer 0.5 nil 'my-show-current-outstanding-task))
+                ;; ONLY show task automatically when loading from cache
+                (run-with-idle-timer 0.5 nil 'my-show-current-outstanding-task)
+                (message "Task display scheduled."))
             
-            ;; NO VALID CACHE - RUN FULL MAINTENANCE
-            (message "✗ No valid cache for today found. Running FULL maintenance block.")
-            ;; [maintenance operations remain unchanged]
+            ;; NO VALID CACHE - Run maintenance WITHOUT auto-displaying task
+            (message "✗ No valid cache for today found. Running maintenance.")
+            ;; Run maintenance
+            (when (require 'org-roam nil t)
+              (org-roam-db-autosync-mode)
+              (org-id-update-id-locations (org-agenda-files)))
             
-            ;; LONGER DELAY FOR FULL MAINTENANCE CASE (2 seconds)
-            (message "Scheduling task display after maintenance...")
-            (run-with-idle-timer 2 nil 'my-show-current-outstanding-task)))
+            (message "Running maintenance operations...")
+            (my-ensure-priorities-and-schedules-for-all-headings)
+            (my-auto-advance-schedules 8)
+            (my-auto-postpone-overdue-tasks)
+            (my-postpone-duplicate-priority-tasks)
+            (my-enforce-priority-constraints)
+            (my-ensure-priorities-and-schedules-for-all-headings)
+            (my-postpone-consecutive-same-file-tasks)
+            
+            ;; Prepare tasks and save cache, but DON'T auto-display
+            (my-get-outstanding-tasks)
+            (setq my-outstanding-tasks-index 0)
+            (my-save-outstanding-tasks-to-file)
+            (message "Maintenance complete. Tasks are ready but not auto-displayed.")))
         
         ;; Ensure work mode is active
         (org-queue-mode 1)
         (message "✓ Automatic task setup completed successfully."))
     
-    ;; Error handling remains the same
+    ;; Error handling
     (error
      (message "❌ Error during task setup: %s" (error-message-string err))
-     ;; [emergency handling remains unchanged]
-     )))
+     ;; Emergency task loading
+     (unless my-outstanding-tasks-list
+       (message "Attempting emergency task list generation...")
+       (my-get-outstanding-tasks)
+       (setq my-outstanding-tasks-index 0)
+       (message "Generated emergency task list with %d tasks." 
+                (length my-outstanding-tasks-list))))))
 
 (add-hook 'emacs-startup-hook #'my-auto-task-setup 100)
 
