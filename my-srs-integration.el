@@ -2,7 +2,7 @@
 
 ;; This package provides seamless integration between tasks and spaced repetition.
 
-    ;;; Code:
+        ;;; Code:
 
 (require 'org)
 
@@ -42,17 +42,17 @@
           (advice-add 'org-srs-review-rate-again :after #'my-srs-count-review)
           
           ;; Detect when reviews are finished
-	  (advice-add 'org-srs-review-message-review-done :before 
-		      (lambda (&rest _)
-			;; Save any modified org buffers when reviews are exhausted
-			(save-some-buffers t (lambda ()
-					       (and buffer-file-name
-						    (string-match-p "\\.org$" buffer-file-name))))
-			(setq my-srs-reviews-exhausted t)
-			(message "No more cards to review in this session.")
-			;; Return to current task
-			(when (fboundp 'my-show-current-outstanding-task)
-			  (my-show-current-outstanding-task))))
+    	  (advice-add 'org-srs-review-message-review-done :before 
+    		      (lambda (&rest _)
+    			;; Save any modified org buffers when reviews are exhausted
+    			(save-some-buffers t (lambda ()
+    					       (and buffer-file-name
+    						    (string-match-p "\\.org$" buffer-file-name))))
+    			(setq my-srs-reviews-exhausted t)
+    			(message "No more cards to review in this session.")
+    			;; Return to current task
+    			(when (fboundp 'my-show-current-outstanding-task)
+    			  (my-show-current-outstanding-task))))
 
           
           ;; Start the review session
@@ -119,15 +119,36 @@
   (setq my-srs-reviews-exhausted nil)
   (message "SRS reviews reset and available again."))
 
-;; Manually quit reviews
-(defun my-srs-quit-reviews ()
-  "Manually quit SRS review session."
+(defun my-srs-force-reset ()
+  "Force a complete reset of the SRS integration state."
   (interactive)
+  (setq my-srs-reviews-exhausted nil)
+  (setq my-srs-review-count 0)
+  (my-srs-remove-advice)
   (condition-case nil
       (when (fboundp 'org-srs-review-quit)
         (org-srs-review-quit))
     (error nil))
-  (my-srs-remove-advice))
+  (message "SRS integration state completely reset"))
+
+;; Manually quit reviews
+(defun my-srs-quit-reviews ()
+  "Manually quit SRS review session with better state management."
+  (interactive)
+  ;; Remove advice first to prevent callback loops
+  (my-srs-remove-advice)
+  
+  ;; Try to quit properly
+  (condition-case nil
+      (when (fboundp 'org-srs-review-quit)
+        (org-srs-review-quit))
+    (error nil))
+  
+  ;; Check for "No more cards" message
+  (when (and (current-message)
+             (string-match-p "No more cards to review" (current-message)))
+    (setq my-srs-reviews-exhausted t)
+    (message "Review session complete.")))
 
 ;; Set reviews per task
 (defun my-srs-set-reviews-per-task (n)
@@ -140,4 +161,4 @@
 (run-at-time "00:00" 86400 #'my-srs-reset-exhausted-flag)
 
 (provide 'my-srs-integration)
-    ;;; my-srs-integration.el ends here
+        ;;; my-srs-integration.el ends here
