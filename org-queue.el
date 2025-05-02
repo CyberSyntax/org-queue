@@ -299,65 +299,113 @@
       (message "Created extract from selected text"))))
 
 (defface org-clozed-face
-  '((((class color) (min-colors 88) (background light))
-     (:background "#E67300" :foreground "black"))
-    (((class color) (min-colors 88) (background dark))
-     (:background "#E67300" :foreground "black"))
-    (t (:background "orange")))
-  "Face for clozed text in org-mode."
-  :group 'org-faces)
+  '((t (:background "#E67300" :foreground "black")))
+  "Face for clozed text in org-mode.")
 
 (defface org-extract-face
-  '((((class color) (min-colors 88) (background light))
-     (:background "#44C2FF" :foreground "black"))
-    (((class color) (min-colors 88) (background dark))
-     (:background "#44C2FF" :foreground "black"))
-    (t (:background "lightblue")))
-  "Face for extracted text in org-mode."
-  :group 'org-faces)
+  '((t (:background "#44C2FF" :foreground "black")))
+  "Face for extracted text in org-mode.")
 
-(defun org-custom-highlighter-setup ()
-  "Set up custom syntax highlighting correctly."
+(defvar-local org-custom-overlays nil
+  "List of overlays for custom syntax highlighting.")
+
+(defun org-clear-custom-overlays ()
+  "Clear all custom syntax highlighting overlays."
   (interactive)
-  ;; Remove previous keywords if any
-  (font-lock-remove-keywords
-   'org-mode
-   '(("{{\\(clozed\\):\\([^}]+\\)}}" 0 'org-clozed-face t)
-     ("{{\\(extract\\):\\([^}]+\\)}}" 0 'org-extract-face t)))
+  (while org-custom-overlays
+    (delete-overlay (pop org-custom-overlays))))
 
-  ;; Add the keywords with highest priority
-  (font-lock-add-keywords
-   'org-mode
-   '(("{{\\(clozed\\):\\([^}]+\\)}}" 0 'org-clozed-face prepend)
-     ("{{\\(extract\\):\\([^}]+\\)}}" 0 'org-extract-face prepend))
-   t)
-  
-  ;; Force re-fontification
+(defun org-highlight-custom-syntax ()
+  "Highlight custom syntax patterns using overlays with concealed markers."
+  (interactive)
   (when (eq major-mode 'org-mode)
-    (font-lock-flush)
-    (font-lock-ensure)))
+    (org-clear-custom-overlays)
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "{{\\(clozed\\|extract\\):\\([^}]+\\)}}" nil t)
+        (let* ((full-match-start (match-beginning 0))
+               (full-match-end (match-end 0))
+               (content-start (match-beginning 2))
+               (content-end (match-end 2))
+               (type (match-string-no-properties 1))
+               (face (if (string= type "clozed") 'org-clozed-face 'org-extract-face)))
+          
+          ;; Create overlay for the full match to set content properties
+          (let ((ov (make-overlay full-match-start full-match-end)))
+            (overlay-put ov 'face face)
+            (overlay-put ov 'priority 100)
+            (overlay-put ov 'evaporate t)
+            (push ov org-custom-overlays))
+          
+          ;; Create overlay to hide the opening marker
+          (let ((ov-start (make-overlay full-match-start content-start)))
+            (overlay-put ov-start 'invisible t)
+            (overlay-put ov-start 'evaporate t)
+            (overlay-put ov-start 'priority 101)
+            (push ov-start org-custom-overlays))
+          
+          ;; Create overlay to hide the closing marker
+          (let ((ov-end (make-overlay content-end full-match-end)))
+            (overlay-put ov-end 'invisible t)
+            (overlay-put ov-end 'evaporate t)
+            (overlay-put ov-end 'priority 101)
+            (push ov-end org-custom-overlays))))
+      
+      ;; Ensure we don't have duplicate overlays
+      (setq org-custom-overlays (delete-dups org-custom-overlays)))))
 
-;; Add to org-mode hook
-(add-hook 'org-mode-hook 'org-custom-highlighter-setup)
+;; Variable to store buffer-local timers
+(defvar-local org-custom-syntax-timer nil
+  "Timer for updating syntax highlighting.")
 
-;; Provide a command to manually refresh highlighting
-(defun org-refresh-custom-highlighting ()
-  "Refresh custom syntax highlighting in the current buffer."
+;; Function to update after changes
+(defun org-update-custom-syntax-after-change (_beg _end _len)
+  "Update custom syntax highlighting after buffer changes."
+  (when (eq major-mode 'org-mode)
+    (when org-custom-syntax-timer
+      (cancel-timer org-custom-syntax-timer))
+    (setq org-custom-syntax-timer
+          (run-with-idle-timer 0.2 nil
+                               (lambda ()
+                                 (when (buffer-live-p (current-buffer))
+                                   (with-current-buffer (current-buffer)
+                                     (org-highlight-custom-syntax))))))))
+
+;; Set up for org-mode
+(add-hook 'org-mode-hook 'org-highlight-custom-syntax)
+(add-hook 'org-mode-hook
+          (lambda ()
+            (add-hook 'after-change-functions 
+                      'org-update-custom-syntax-after-change nil t)))
+
+;; Toggle visibility of markers
+(defvar-local org-syntax-markers-visible nil
+  "Whether syntax markers are visible.")
+
+(defun org-toggle-syntax-markers ()
+  "Toggle visibility of custom syntax markers."
   (interactive)
-  (org-custom-highlighter-setup))
+  (setq-local org-syntax-markers-visible 
+              (not org-syntax-markers-visible))
+  (dolist (ov org-custom-overlays)
+    (when (overlay-get ov 'invisible)
+      (overlay-put ov 'invisible 
+                   (not org-syntax-markers-visible))))
+  (message "Syntax markers now %s" 
+           (if org-syntax-markers-visible "visible" "hidden")))
 
-;; Refresh all open org-mode buffers
-(defun org-refresh-all-buffers-highlighting ()
+;; Refresh all open org buffers
+(defun org-refresh-all-custom-highlighting ()
   "Apply custom highlighting to all org-mode buffers."
   (interactive)
   (dolist (buf (buffer-list))
     (with-current-buffer buf
       (when (eq major-mode 'org-mode)
-        (org-custom-highlighter-setup)))))
+        (org-highlight-custom-syntax)))))
 
-;; Run the refresh for all buffers
+;; Run initially when loading
 (when (featurep 'org)
-  (org-refresh-all-buffers-highlighting))
+  (org-refresh-all-custom-highlighting))
 
 (defun org-srs-entry-p (pos)
   "Determine if and where the Org entry at POS or its immediate parent contains
