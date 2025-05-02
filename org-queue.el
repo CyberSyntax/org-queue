@@ -202,26 +202,20 @@
 (require 'my-srs-integration)
 
 (defun org-interactive-cloze ()
-  "Create a cloze deletion from selected text and generate a proper child heading."
+  "Create a cloze deletion from selected text and generate a proper child heading with org-srs."
   (interactive)
   (if (not (use-region-p))
       (message "Please select text to create a cloze")
     (let* ((start (region-beginning))
            (end (region-end))
            (selected-text (buffer-substring-no-properties start end))
-           ;; Get parent heading position and level
-           (parent-pos (save-excursion (org-back-to-heading) (point)))
-           (parent-level (save-excursion (goto-char parent-pos) (org-outline-level)))
-           ;; Get parent heading title (for reference)
-           (parent-title (save-excursion 
-                          (goto-char parent-pos)
-                          (buffer-substring-no-properties 
-                           (+ (point) (1+ parent-level))
-                           (line-end-position))))
+           ;; Get current heading position and level
+           (heading-pos (save-excursion (org-back-to-heading) (point)))
+           (heading-level (save-excursion (goto-char heading-pos) (org-outline-level)))
            ;; Get exact line where cursor is for content
-           (parent-line (buffer-substring-no-properties
-                        (line-beginning-position)
-                        (line-end-position)))
+           (content-line (buffer-substring-no-properties
+                         (line-beginning-position)
+                         (line-end-position)))
            (next-cloze-num 1))
       
       ;; Find highest existing cloze number in the current line
@@ -242,34 +236,42 @@
       (delete-region start end)
       (insert (format "{{c%d::%s}}" next-cloze-num selected-text))
       
-      ;; Get updated parent content line
-      (setq parent-line (buffer-substring-no-properties
-                        (line-beginning-position)
-                        (line-end-position)))
+      ;; Get updated content line
+      (setq content-line (buffer-substring-no-properties
+                         (line-beginning-position)
+                         (line-end-position)))
       
       ;; Create child heading with cloze placeholder
       (save-excursion
-        (org-back-to-heading)
+        (goto-char heading-pos)
         (org-end-of-subtree)
         
-        ;; Create the child heading with proper level
-        (insert "\n" (make-string (1+ parent-level) ?*) " ")
-        
-        ;; Create child content - replace the current cloze with [...]
-        (let ((child-content 
-               (replace-regexp-in-string 
-                (format "{{c%d::%s}}" next-cloze-num selected-text)
-                "[...]"
-                parent-line)))
-          ;; Replace all other clozes with their content
-          (let ((processed-content child-content))
-            (while (string-match "{{c\\([0-9]+\\)::\\([^}]+\\)}}" processed-content)
-              (setq processed-content 
-                    (replace-match (match-string 2 processed-content) t t processed-content)))
-            (insert processed-content))
-          (insert "\n" selected-text)))
+        ;; Insert position for the new heading
+        (let ((new-heading-pos (point)))
+          ;; Create the child heading with proper level
+          (insert "\n" (make-string (1+ heading-level) ?*) " ")
+          
+          ;; Create child content - replace the current cloze with [...]
+          (let ((child-content 
+                 (replace-regexp-in-string 
+                  (format "{{c%d::%s}}" next-cloze-num selected-text)
+                  "[...]"
+                  content-line)))
+            ;; Replace all other clozes with their content
+            (let ((processed-content child-content))
+              (while (string-match "{{c\\([0-9]+\\)::\\([^}]+\\)}}" processed-content)
+                (setq processed-content 
+                      (replace-match (match-string 2 processed-content) t t processed-content)))
+              (insert processed-content))
+            (insert "\n" selected-text))
+          
+          ;; Now set up org-srs for this child heading
+          (goto-char (1+ new-heading-pos))  ;; Go to the new heading
+          (org-id-get-create)               ;; Create ID for org-srs
+          (org-srs-item-new 'card)          ;; Set up as org-srs card
+        ))
       
-      (message "Created cloze %d" next-cloze-num))))
+      (message "Created cloze %d with org-srs card" next-cloze-num))))
 
 (defun org-srs-entry-p (pos)
   "Determine if and where the Org entry at POS or its immediate parent contains
