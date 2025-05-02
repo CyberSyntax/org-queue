@@ -821,7 +821,7 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
 ;; Define a customizable variable for the base directory.
 (defcustom org-queue-directory nil
   "Base directory for task files for Org Queue.
-If nil, a safe default directory will be used and created automatically."
+  If nil, a safe default directory will be used and created automatically."
   :type 'directory
   :group 'org-queue)
 
@@ -829,7 +829,7 @@ If nil, a safe default directory will be used and created automatically."
 (defcustom my-outstanding-tasks-cache-file
   (expand-file-name "org-queue-outstanding-tasks.cache" cache-dir)
   "File path to store the cached outstanding tasks list along with its date stamp.
-  By default, this file will be inside the cache directory (cache-dir)."
+    By default, this file will be inside the cache directory (cache-dir)."
   :type 'string
   :group 'org-queue)
 
@@ -838,76 +838,99 @@ If nil, a safe default directory will be used and created automatically."
   "List of outstanding tasks, sorted by priority.")
 
 (defun my-save-outstanding-tasks-to-file ()
-  "Save `my-outstanding-tasks-list` to `my-outstanding-tasks-cache-file` with a date stamp.
-Each task is stored as a cons cell (FILE-PATH . POSITION). When FILE-PATH is inside
-`org-queue-directory`, the path is saved relative to that directory."
+  "Save task list to cache, correctly handling plists or markers."
   (with-temp-file my-outstanding-tasks-cache-file
     (let* ((today (format-time-string "%Y-%m-%d"))
-	     (tasks-saved
-	      (delq nil
-		    (mapcar
-		     (lambda (marker)
-		       (when (and (marker-buffer marker)
-				  (buffer-file-name (marker-buffer marker)))
-			 (with-current-buffer (marker-buffer marker)
-			   (let* ((full (file-truename (buffer-file-name)))
-				  (path (if (file-in-directory-p full org-queue-directory)
-					    (file-relative-name full org-queue-directory)
-					  full)))
-			     (cons path (marker-position marker))))))
-		     my-outstanding-tasks-list))))
-	(insert (prin1-to-string (list :date today :tasks tasks-saved))))))
+           (tasks-saved
+            (delq nil
+                  (mapcar
+                   (lambda (task-or-marker)
+                     (let ((marker (cond
+                                    ;; If it's already a marker
+                                    ((markerp task-or-marker) task-or-marker)
+                                    ;; If it's a plist with a marker
+                                    ((plist-get task-or-marker :marker)
+                                     (plist-get task-or-marker :marker))
+                                    ;; Otherwise, can't save it
+                                    (t nil))))
+                       (when (and marker
+                                  (marker-buffer marker)
+                                  (buffer-file-name (marker-buffer marker)))
+                         (with-current-buffer (marker-buffer marker)
+                           (let* ((full (file-truename (buffer-file-name)))
+                                  (path (if (and (boundp 'org-queue-directory)
+                                                 org-queue-directory
+                                                 (file-in-directory-p full org-queue-directory))
+                                            (file-relative-name full org-queue-directory)
+                                          full)))
+                             (cons path (marker-position marker)))))))
+                   my-outstanding-tasks-list))))
+      (insert (prin1-to-string (list :date today :tasks tasks-saved))))))
 
 (defun my-load-outstanding-tasks-from-file ()
-  "Load cached tasks from `my-outstanding-tasks-cache-file`.
-If the saved date matches today, each stored (FILE-PATH . POSITION) pair is converted back
-to a marker and stored in `my-outstanding-tasks-list'. If the stored file path is relative,
-it is expanded using `org-queue-directory'."
+  "Load cached tasks, creating proper plist structures."
   (if (file-exists-p my-outstanding-tasks-cache-file)
-	(let* ((data (with-temp-buffer
-		       (insert-file-contents my-outstanding-tasks-cache-file)
-		       (read (buffer-string))))
-	       (saved-date (plist-get data :date))
-	       (saved-tasks (plist-get data :tasks))
-	       (today (format-time-string "%Y-%m-%d")))
-	  (if (string= saved-date today)
-	      (progn
-		(setq my-outstanding-tasks-list
-		      (mapcar
-		       (lambda (task)
-			 (let* ((stored-path (car task))
-				(abs-path (if (or (file-name-absolute-p stored-path)
-						  (string-match-p "^[A-Za-z]:[/\\\\]" stored-path))
-					      stored-path
-					    (expand-file-name stored-path org-queue-directory))))
-			   (with-current-buffer (find-file-noselect abs-path)
-			     (save-excursion
-			       (goto-char (cdr task))
-			       (point-marker)))))
-		       saved-tasks))
-		t)
-	    nil))
+      (let* ((data (with-temp-buffer
+                     (insert-file-contents my-outstanding-tasks-cache-file)
+                     (read (buffer-string))))
+             (saved-date (plist-get data :date))
+             (saved-tasks (plist-get data :tasks))
+             (today (format-time-string "%Y-%m-%d")))
+        (if (string= saved-date today)
+            (progn
+              (setq my-outstanding-tasks-list
+                    (mapcar
+                     (lambda (task-pair)
+                       (let* ((stored-path (car task-pair))
+                              (position (cdr task-pair))
+                              (abs-path (if (or (file-name-absolute-p stored-path)
+						(string-match-p "^[A-Za-z]:[/\\\\]" stored-path))
+                                            stored-path
+                                          (expand-file-name stored-path 
+                                                            (or org-queue-directory default-directory)))))
+                         ;; Open the file and create a marker
+                         (with-current-buffer (find-file-noselect abs-path)
+                           (save-excursion
+                             (goto-char position)
+                             ;; Create the new plist structure
+                             (let* ((marker (point-marker))
+                                    (priority (my-get-raw-priority-value))
+                                    (flag (my-priority-flag priority))
+                                    (file abs-path))
+                               (list :marker marker
+                                     :priority priority
+                                     :flag flag
+                                     :file file))))))
+                     saved-tasks))
+              t)
+          nil))
     nil))
 
 (defvar my-outstanding-tasks-index 0
   "Current index in the outstanding tasks list.")
 
 (defun my-get-outstanding-tasks ()
-  "Populate `my-outstanding-tasks-list` with outstanding tasks, sorted by priority.
-   Skips tasks that are already part of an SRS system (where org-srs-entry-p returns non-nil)."
+  "Populate task list with metadata for stable tracking."
   (setq my-outstanding-tasks-list nil)
   (org-map-entries
    (lambda ()
      (when (and (my-is-outstanding-task)
                 (not (org-srs-entry-p (point))))
-       (let* ((priority (my-get-raw-priority-value))
-              (marker (point-marker)))
-         (push (cons priority marker) my-outstanding-tasks-list))))
-   nil
-   'agenda)
+       (let* ((marker (point-marker))
+              (priority (my-get-raw-priority-value))
+              (flag (my-priority-flag priority))
+              (file (buffer-file-name))
+              (task-data (list :marker marker
+                              :priority priority
+                              :flag flag
+                              :file file)))
+         (push (cons priority task-data) my-outstanding-tasks-list))))
+   nil 'agenda)
+  
+  ;; Sort by priority and extract only the task data
   (setq my-outstanding-tasks-list
-        (sort my-outstanding-tasks-list (lambda (a b) (< (car a) (car b)))))
-  (setq my-outstanding-tasks-list (mapcar #'cdr my-outstanding-tasks-list))
+        (mapcar #'cdr
+                (sort my-outstanding-tasks-list (lambda (a b) (< (car a) (car b))))))
   (setq my-outstanding-tasks-index 0))
 
 (defun my-auto-postpone-overdue-tasks ()
@@ -1121,182 +1144,91 @@ Saves buffers and regenerates the task list for consistency."
    ((<= prio 64) 7)))
 
 (defun my-current-flag-counts ()
-  "Return (flag-name flag-number total count remaining remaining-pos) for current outstanding task."
-  (let* ((idx (if (and my-outstanding-tasks-list
-                       (> my-outstanding-tasks-index 0)
-                       (<= my-outstanding-tasks-index (length my-outstanding-tasks-list)))
-                  (1- my-outstanding-tasks-index)
-                0))
-         (marker (nth idx my-outstanding-tasks-list))
-         (prio (when marker
-                 (with-current-buffer (marker-buffer marker)
-                   (save-excursion
-                     (goto-char (marker-position marker))
-                     (let ((priority-str (org-entry-get nil "PRIORITY")))
-                       (when priority-str (string-to-number priority-str)))))))
-         (flag-num (and prio (my-priority-flag prio)))
-         (flag-name (and flag-num (alist-get flag-num my-priority-flag-table)))
-         (all-flags
-          (mapcar (lambda (m)
-                    (with-current-buffer (marker-buffer m)
-                      (save-excursion
-                        (goto-char (marker-position m))
-                        (let ((priority-str (org-entry-get nil "PRIORITY")))
-                          (my-priority-flag (string-to-number priority-str))))))
-                  my-outstanding-tasks-list))
-         (flag-indices (cl-loop for i from 0 for f in all-flags
-                                when (equal f flag-num) collect i))
-         (total (length flag-indices))
-         (remaining (cl-count flag-num (nthcdr idx all-flags)))
-         (remaining-pos (+ 1 (cl-position idx flag-indices)))) ; e.g., "2 of 6"
-    (list :priority prio
-          :flag-name flag-name
-          :flag-num flag-num
-          :flag-count total
-          :flag-left remaining
-          :flag-pos remaining-pos)))
-
-(require 'pulse)
-
-;; Display a message in a full-screen error window.
-(defun display-fullscreen-error (message)
-  "Display MESSAGE in a full-screen buffer named *Anki Error*."
-  (let ((buf (get-buffer-create "*Anki Error*")))
-    (with-current-buffer buf
-      (read-only-mode -1)      ; Remove read-only so we can update the buffer.
-      (erase-buffer)
-      (insert message)
-      (read-only-mode 1)
-      (goto-char (point-min)))
-    (delete-other-windows)      ; Make the error buffer full screen.
-    (switch-to-buffer buf)))
-
-;; Display learning instructions in a full-screen info window.
-(defun display-fullscreen-info ()
-  "Display optimal topic-to-item ratio learning instructions and current task flag/priority/location."
-  (let* ((buf (get-buffer-create "*Anki Learning Info*"))
-         (data (my-current-flag-counts))
-         (prio (plist-get data :priority))
-         (flag-name (plist-get data :flag-name))
-         (fidx (plist-get data :flag-pos))
-         (ftotal (plist-get data :flag-count))
-         (fleft (plist-get data :flag-left))
-         (statline
-          (format "* Current Priority: %s\n  • %s (%d/%d in this flag; %d left)\n\n"
-                  (or prio "N/A")
-                  (or flag-name "Flag: N/A")
-                  (or fidx 1) (or ftotal 1) (or fleft 1)))
-         (content (concat
-                   statline
-                   "* Optimal Topic-to-Item Ratio in Learning\n"
-                   "================================================\n\n"
-                   "                [ New Topic ]\n"
-                   "                        |\n"
-                   "  --------------┼---------------------------------------------\n"
-                   "                        |\n"
-                   "  [ Item Review ] - [ Item Review ] - [ Item Review ] - [ Item Review ] - ...\n\n"
-                   "(1 New Topic balanced with 4 or more Item Reviews)\n\n"
-                   "** Key Points\n"
-                   "- *Aim for a 1:4 or lower ratio*: For each new topic introduced, aim to review at least four items or more.\n"
-                   "- Maintaining this balance helps prevent overload, supporting effective retention and steady learning progress.\n\n"
-                   "** Open *Anki*\n"
-                   "Click on *Anki* to launch it directly and start practicing this balanced approach in your reviews.\n")))
-    (with-current-buffer buf
-      (read-only-mode -1)
-      (erase-buffer)
-      (insert content)
-      (org-mode)
-      (org-fold-show-all)
-      (read-only-mode 1)
-      (goto-char (point-min)))
-    (delete-other-windows)
-    (switch-to-buffer buf)))
-
-;; Define a customizable variable to control whether Anki should actually launch
-(defcustom my-actually-launch-anki t
-  "When non-nil, actually launch the Anki executable.
-  When nil, skip Anki execution but still display the learning instructions."
-  :type 'boolean
-  :group 'my-learning-tools)
-
-(defun my-launch-anki ()
-  "Launch the Anki application on Windows if it exists and if enabled.
-  Regardless of whether Anki launches successfully, is disabled, or an error occurs,
-  always display the full-screen learning instructions."
-  (when (and (eq system-type 'windows-nt) my-actually-launch-anki)
-    (let* ((user-profile (getenv "USERPROFILE"))
-	   (anki-path (expand-file-name "AppData/Local/Programs/Anki/anki.exe" user-profile)))
-      (if (file-exists-p anki-path)
-	  (condition-case err
-	      (start-process "Anki" nil anki-path)
-	    (error (display-fullscreen-error
-		    (format "Failed to launch Anki: %s" (error-message-string err)))))
-	(display-fullscreen-error
-	 (format "Anki executable not found at: %s" anki-path)))))
+  "Calculate flag metrics for the current outstanding task."
+  ;; Validate task list and index
+  (unless (and my-outstanding-tasks-list
+               (>= my-outstanding-tasks-index 0)
+               (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+    (message "No valid task at current position")
+    (cl-return-from my-current-flag-counts nil))
   
-  ;; Ensure the list exists, refresh if empty.
-  (unless my-outstanding-tasks-list (my-get-outstanding-tasks))
-  (if my-outstanding-tasks-list
-      (let* ((total (length my-outstanding-tasks-list))
-	     ;; Wrap index using modulo (supports negative numbers)
-	     (new-index (mod (- my-outstanding-tasks-index 2) total))
-	     (adjusted-index (if (>= new-index 0)
-				 new-index
-			       (+ new-index total))))
-	;; Update index and counter
-	(setq my-outstanding-tasks-index (1+ adjusted-index)
-	      my-anki-task-counter (1- my-anki-task-counter))
-	;; Display the full-screen learning instructions
-	(display-fullscreen-info))))
+  ;; Get current task information
+  (let* ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list))
+         (current-flag (my-get-marker-flag task-or-marker))
+         (flag-name (alist-get current-flag my-priority-flag-table)))
+    
+    ;; Check validity
+    (unless current-flag
+      (message "Cannot determine flag for current task")
+      (cl-return-from my-current-flag-counts nil))
+    
+    ;; Count same-flag tasks and current position
+    (let ((same-flag-count 0)
+          (position 0))
+      
+      ;; Scan all tasks
+      (dotimes (i (length my-outstanding-tasks-list))
+        (let* ((m (nth i my-outstanding-tasks-list))
+               (flag (my-get-marker-flag m)))
+          (when (and flag (= flag current-flag))
+            (setq same-flag-count (1+ same-flag-count))
+            (when (= i my-outstanding-tasks-index)
+              (setq position same-flag-count)))))
+      
+      ;; Calculate remaining (including current)
+      (let ((remaining (- same-flag-count (1- position))))
+        (list :flag-name flag-name
+              :flag-num current-flag
+              :flag-count same-flag-count
+              :flag-pos position
+              :flag-left remaining)))))
 
-(defcustom my-anki-task-ratio 1
-  "Ratio of Anki launches to tasks displayed. Default is 1:1 (Anki launched every task).
-									       Should be a positive integer."
-  :type 'integer
-  :group 'org-queue)
+(defun my-get-marker-flag (marker-or-task)
+  "Helper to safely get flag from marker or task."
+  (cond
+   ;; Case 1: It's a marker
+   ((markerp marker-or-task)
+    (when (and (marker-buffer marker-or-task)
+               (buffer-live-p (marker-buffer marker-or-task)))
+      (with-current-buffer (marker-buffer marker-or-task)
+        (save-excursion
+          (goto-char (marker-position marker-or-task))
+          (my-priority-flag
+           (string-to-number (or (org-entry-get nil "PRIORITY") "0")))))))
+   
+   ;; Case 2: It has a :flag property (plist)
+   ((plist-get marker-or-task :flag)
+    (plist-get marker-or-task :flag))
+   
+   ;; Case 3: It has a :marker property (plist)
+   ((plist-get marker-or-task :marker)
+    (let ((marker (plist-get marker-or-task :marker)))
+      (when (and (markerp marker)
+                 (marker-buffer marker)
+                 (buffer-live-p (marker-buffer marker)))
+        (with-current-buffer (marker-buffer marker)
+          (save-excursion
+            (goto-char (marker-position marker))
+            (my-priority-flag
+             (string-to-number (or (org-entry-get nil "PRIORITY") "0"))))))))
+   
+   ;; Default: Can't determine flag
+   (t nil)))
 
-(defvar my-anki-task-counter 0
-  "Counter of tasks displayed since last Anki launch.")
-
-(defun my-set-anki-task-ratio (ratio)
-  "Set the ratio of Anki launches to tasks displayed.
-									       For example, if RATIO is 3, Anki will be launched once every 3 tasks. RATIO should be a positive integer."
-  (interactive "nSet Anki:Task ratio (positive integer): ")
-  (setq my-anki-task-ratio (max 1 ratio))
-  (setq my-anki-ratio-interpolation nil)
-  ;; Reset the counter whenever the ratio is changed
-  (setq my-anki-task-counter 0)
-  (message "Anki will be launched once every %d task(s)." my-anki-task-ratio))
-
-(defcustom my-anki-ratio-interpolation t
-  "Whether to use priority-based linear interpolation for Anki task ratio.
-			If nil, uses fixed ratio specified by my-anki-task-ratio."
-  :type 'boolean
-  :group 'org-queue)
-
-(defun my-calculate-interpolated-anki-ratio (priority)
-  "Calculate interpolated Anki ratio based on priority."
-  (if (not my-anki-ratio-interpolation)
-	my-anki-task-ratio
-    (let* ((highest-priority org-priority-highest)    ; e.g., 1
-	     (lowest-priority org-priority-lowest)      ; e.g., 64
-	     (max-ratio my-anki-task-ratio)            ; e.g., 8
-	     (min-ratio 1)
-	     ;; Linear interpolation
-	     (ratio (* (+ min-ratio
-			  (* (- max-ratio min-ratio)
-			     (/ (float (- lowest-priority priority))
-				(- lowest-priority highest-priority))))
-		       1.0)))
-	(max 1 (round ratio)))))
-
-(defun my-maybe-launch-anki ()
-  "Launch Anki according to priority-based interpolated ratio."
-  (let* ((current-priority (my-get-priority-value))
-	   (interpolated-ratio (my-calculate-interpolated-anki-ratio current-priority)))
-    (when (>= my-anki-task-counter interpolated-ratio)
-	(setq my-anki-task-counter 0)
-	(my-launch-anki))))
+(defun my-show-current-flag-status ()
+  "Display in minibuffer: flag name (or number), position in flag, and how many left."
+  (interactive)
+  (let ((data (my-current-flag-counts)))
+    (if data
+        (let* ((flag-name (plist-get data :flag-name))
+               (flag-num (plist-get data :flag-num))
+               (fidx (plist-get data :flag-pos))
+               (ftotal (plist-get data :flag-count))
+               (fleft (plist-get data :flag-left)))
+          (message "%s (%d of %d, %d left)"
+                   (or flag-name (format "Flag %s" (or flag-num "?")))
+                   fidx ftotal fleft))
+      (message "No current flag info available."))))
 
 (defun my-pulse-highlight-current-line (&optional time)
   "Temporarily pulse-highlight the current line.
@@ -1332,159 +1264,199 @@ revealing it clearly at the center of the screen."
   (ignore-errors (outline-up-heading 1)) ;; Move up heading (safely handle errors)
   (org-narrow-to-subtree))
 
+(defun my-display-task-at-marker (marker-or-task)
+  "Display the task at MARKER-OR-TASK with appropriate visibility settings.
+MARKER-OR-TASK can be either a marker directly or a task plist with a :marker property."
+  (let ((marker (if (markerp marker-or-task)
+                    marker-or-task
+                  (plist-get marker-or-task :marker))))
+    (when (and marker (markerp marker))
+      (widen-and-recenter)
+      (switch-to-buffer (marker-buffer marker))
+      (revert-buffer t t t)
+      (widen-and-recenter)
+      ;; Unfold all content and then perform two global cycles to refold.
+      (org-fold-show-all)
+      (org-global-cycle)
+      (org-global-cycle)
+      (goto-char (marker-position marker))
+      ;; Ensure the entire entry is visible
+      (org-show-entry)
+      (recenter)
+      (org-narrow-to-subtree)
+      (org-overview)
+      (org-reveal t)
+      (org-show-entry)
+      (show-children))))
+
 (defun my-show-next-outstanding-task ()
-  "Show the next outstanding task in priority order.
-If the list is exhausted, it refreshes the list."
+  "Show the next outstanding task in priority order with proper SRS handling."
   (interactive)
-  (unless (and my-outstanding-tasks-list
-               (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
-    (my-get-outstanding-tasks))
+  
+  ;; First check if SRS session just ended (detect message)
+  (when (and (current-message)
+             (string-match-p "No more cards to review" (current-message)))
+    (message "Review session complete - continuing with tasks")
+    (sit-for 1)  ;; Brief pause for user to see the message
+    (setq my-srs-reviews-exhausted t))
+  
+  ;; If no list exists or we're at the end, get/refresh the list
+  (when (or (not my-outstanding-tasks-list)
+           (>= my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+    (if my-outstanding-tasks-list
+        ;; If we have a list but reached the end, reset index to 0
+        (setq my-outstanding-tasks-index 0)
+      ;; If no list, get it
+      (my-get-outstanding-tasks)))
+  
+  ;; Increment index for next task
+  (when (and my-outstanding-tasks-list 
+             (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+    (setq my-outstanding-tasks-index (1+ my-outstanding-tasks-index))
+    ;; Handle wraparound if we go past the end
+    (when (>= my-outstanding-tasks-index (length my-outstanding-tasks-list))
+      (setq my-outstanding-tasks-index 0)))
+  
+  ;; Now show the task at the current index
   (if (and my-outstanding-tasks-list
            (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
-      (let ((marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
-        (widen-and-recenter)
-        (switch-to-buffer (marker-buffer marker))
-        (revert-buffer t t t)
-        (widen-and-recenter)
-        ;; Unfold all content and then perform two global cycles to refold.
-        (org-fold-show-all)
-        (org-global-cycle)
-        (org-global-cycle)
-        (goto-char (marker-position marker))
-        ;; Ensure the entire entry is visible
-        (org-show-entry)
-        (recenter)
-        (org-narrow-to-subtree)
-        (org-overview)
-        (org-reveal t)
-        (org-show-entry)
-        (show-children)
-        ;; Increment the index after showing the task
-        (setq my-outstanding-tasks-index (1+ my-outstanding-tasks-index))
-        (setq my-anki-task-counter (1+ my-anki-task-counter))
-        ;; Launch Anki according to the user-defined ratio
-        (my-maybe-launch-anki)
+      (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
+        ;; Display operations
+        (my-display-task-at-marker task-or-marker)
+        (my-pulse-highlight-current-line)
+        (my-show-current-flag-status)
         
-        ;; First quit any existing SRS session
-        (my-srs-quit-reviews)
-        
-        ;; Only try to start reviews if not exhausted
+        ;; Handle SRS reviews - only when NOT exhausted
         (unless my-srs-reviews-exhausted
-          (my-srs-start-reviews)))
-    (message "No more outstanding tasks.")))
-
-(defun my-show-current-outstanding-task ()
-  "Show the current outstanding task, or call my-show-next-outstanding-task if no valid task exists."
-  (interactive)
-  (if (and my-outstanding-tasks-list
-	     (> my-outstanding-tasks-index 0)
-	     (<= my-outstanding-tasks-index (length my-outstanding-tasks-list)))
-	(let ((marker (nth (1- my-outstanding-tasks-index) my-outstanding-tasks-list)))
-	  (widen-and-recenter)
-	  (switch-to-buffer (marker-buffer marker))
-	  (revert-buffer t t t)
-	  (widen-and-recenter)
-	  ;; Unfold all content and then perform two global cycles to refold.
-	  (org-fold-show-all)
-	  (org-global-cycle)
-	  (org-global-cycle)
-	  (goto-char (marker-position marker))
-	  ;; Ensure the entire entry is visible
-	  (org-show-entry)
-	  (recenter)
-	  (org-narrow-to-subtree)
-	  (org-overview)
-	  (org-reveal t)
-	  (org-show-entry)
-	  (show-children)
-	  ;; Highlight the entry temporarily
-	  (my-pulse-highlight-current-line))
-    ;; If no current outstanding task, call my-show-next-outstanding-task to move forward.
-    (my-show-next-outstanding-task)))
+          (my-srs-quit-reviews)  ;; Always clean up any previous session
+          (condition-case nil
+              (my-srs-start-reviews)
+            (error (setq my-srs-reviews-exhausted t)))))
+    (message "No outstanding tasks found.")))
 
 (defun my-show-previous-outstanding-task ()
   "Show the previous outstanding task in priority order, cycling if needed."
   (interactive)
-  ;; Ensure the list exists, refresh if empty.
+  ;; Ensure the list exists
   (unless my-outstanding-tasks-list (my-get-outstanding-tasks))
+  
   (if my-outstanding-tasks-list
-	(let* ((total (length my-outstanding-tasks-list))
-	       ;; Wrap index using modulo (supports negative numbers)
-	       (new-index (mod (- my-outstanding-tasks-index 2) total))
-	       (adjusted-index (if (>= new-index 0) new-index (+ new-index total))))
-	  ;; Update index and counter
-	  (setq my-outstanding-tasks-index (1+ adjusted-index)
-		my-anki-task-counter (max (1- my-anki-task-counter) 0))  ; Prevent negative
-	  ;; Display
-	  (let ((marker (nth adjusted-index my-outstanding-tasks-list)))
-	    (widen-and-recenter)
-	    (switch-to-buffer (marker-buffer marker))
-	    (revert-buffer t t t)
-	    (widen-and-recenter)
-	    ;; Unfold all content and then perform two global cycles to refold.
-	    (org-fold-show-all)
-	    (org-global-cycle)
-	    (org-global-cycle)
-	    (goto-char (marker-position marker))
-	    ;; Ensure the entire entry is visible
-	    (org-show-entry)
-	    (recenter)
-	    (org-narrow-to-subtree)
-	    (org-overview)
-	    (org-reveal t)
-	    (org-show-entry)
-	    (show-children)))
+      (progn
+        ;; Update index BEFORE showing the task for consistency
+        (if (<= my-outstanding-tasks-index 0)
+            (setq my-outstanding-tasks-index (1- (length my-outstanding-tasks-list)))
+          (setq my-outstanding-tasks-index (1- my-outstanding-tasks-index)))
+        
+        ;; Display operations
+        (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
+          (my-display-task-at-marker task-or-marker)
+          (my-pulse-highlight-current-line)
+          (my-show-current-flag-status)))
     (message "No outstanding tasks to navigate.")))
+
+(defun my-show-current-outstanding-task ()
+  "Show the current outstanding task, or get a new list and show the first task if not valid."
+  (interactive)
+  ;; If no list or index invalid, get/reset the list
+  (when (or (not my-outstanding-tasks-list)
+           (< my-outstanding-tasks-index 0)
+           (>= my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+    (my-get-outstanding-tasks) ;; Reset list
+    (setq my-outstanding-tasks-index 0)) ;; Start at first task
+    
+  (if (and my-outstanding-tasks-list 
+           (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+      (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
+        ;; Display operations
+        (my-display-task-at-marker task-or-marker)
+        (my-pulse-highlight-current-line)
+        (my-show-current-flag-status))
+    ;; Truly no tasks - unlikely after reset above
+    (message "No outstanding tasks found.")))
 
 (defun my-reset-outstanding-tasks-index ()
   "Reset the outstanding tasks index to start from the first task."
   (interactive)
   (my-get-outstanding-tasks)
   (setq my-outstanding-tasks-index 0)
-  (setq my-anki-task-counter 0)
   (my-save-outstanding-tasks-to-file)
   (message "Outstanding tasks index reset."))
 
 (defun my-reset-and-show-current-outstanding-task ()
   "Reset the outstanding tasks index and then show the current outstanding task."
   (interactive)  ;; Allows the function to be executed via M-x in Emacs
-  (my-launch-anki)
   (my-reset-outstanding-tasks-index)  ;; Call function to reset tasks index
   (my-show-current-outstanding-task))  ;; Call function to show the first/current task
 
-;; block needs to be executed. If a valid cache exists (i.e. saved today),
-;; then skip the following block; otherwise, run it and update the cache.
 (defun my-auto-task-setup ()
   "Initialize and set up automatic task management processes upon Emacs startup.
 If an outstanding tasks cache exists from today, skip running the full maintenance block.
 Otherwise, run the maintenance operations and then update the cache."
   (condition-case err
-	(progn
-	  (if (my-load-outstanding-tasks-from-file)
-	      (message "Loaded outstanding tasks cache for today. Skipping auto setup maintenance block.")
-	    (progn
-	      (message "No valid cache for today found. Running full auto-setup maintenance block.")
-	      (when (require 'org-roam nil t)
-		;; Enable org-roam-db-autosync-mode
-		(org-roam-db-autosync-mode)
-		;; Update org-id locations for agenda files
-		(org-id-update-id-locations (org-agenda-files)))
-	      ;; Maintenance Block: run these only once per day.
-	      (my-ensure-priorities-and-schedules-for-all-headings)
-	      (my-auto-advance-schedules 8)
-	      (my-auto-postpone-overdue-tasks)
-	      (my-postpone-duplicate-priority-tasks)
-	      (my-enforce-priority-constraints)
-	      (my-ensure-priorities-and-schedules-for-all-headings)
-	      (my-postpone-consecutive-same-file-tasks)
-	      ;; After processing, save the current outstanding tasks list to cache.
-	      (my-save-outstanding-tasks-to-file)))
-	  ;; Regardless of whether the maintenance block ran, schedule the display of the current outstanding task.
-	  (run-at-time "0.3 sec" nil 'my-show-current-outstanding-task)
-	  (message "Automatic task setup completed successfully.")
-	  (org-queue-mode 1))
+      (progn
+        (message "Starting automatic task setup...")
+        
+        ;; Try to load today's cache
+        (let ((cache-loaded (my-load-outstanding-tasks-from-file)))
+          (if cache-loaded
+              ;; CACHE EXISTS - SKIP MAINTENANCE
+              (progn
+                (message "✓ Successfully loaded task cache for today (%d tasks). SKIPPING maintenance."
+                         (length my-outstanding-tasks-list))
+                ;; Reset SRS integration state on startup
+                (when (boundp 'my-srs-reviews-exhausted)
+                  (setq my-srs-reviews-exhausted nil))
+                ;; Set index to beginning of task list
+                (setq my-outstanding-tasks-index 0))
+              
+            ;; NO VALID CACHE - RUN FULL MAINTENANCE
+            (message "✗ No valid cache for today found. Running FULL maintenance block.")
+            ;; Initialize org-roam if available
+            (when (require 'org-roam nil t)
+              (org-roam-db-autosync-mode)
+              (org-id-update-id-locations (org-agenda-files)))
+            
+            ;; Core maintenance operations
+            (message "Running priority and schedule maintenance...")
+            (my-ensure-priorities-and-schedules-for-all-headings)
+            (message "Running auto-advance schedules...")
+            (my-auto-advance-schedules 8)
+            (message "Postponing overdue tasks...")
+            (my-auto-postpone-overdue-tasks)
+            (message "Handling duplicate priority tasks...")
+            (my-postpone-duplicate-priority-tasks)
+            (message "Enforcing priority constraints...")
+            (my-enforce-priority-constraints)
+            (message "Final priority and schedule check...")
+            (my-ensure-priorities-and-schedules-for-all-headings)
+            (message "Handling consecutive same-file tasks...")
+            (my-postpone-consecutive-same-file-tasks)
+            
+            ;; Reset the index and save to cache
+            (setq my-outstanding-tasks-index 0)
+            (my-save-outstanding-tasks-to-file)
+            (message "✓ Maintenance complete and cache saved.")))
+        
+        ;; ALWAYS USE TIMER for first task display (as requested)
+        (message "Scheduling task display...")
+        (run-at-time "0.3 sec" nil 'my-show-current-outstanding-task)
+        (run-at-time "0.6 sec" nil 'my-show-current-outstanding-task)
+        (run-at-time "0.9 sec" nil 'my-show-current-outstanding-task)
+        
+        ;; Ensure work mode is active
+        (org-queue-mode 1)
+        (message "✓ Automatic task setup completed successfully."))
+    
+    ;; Better error handling
     (error
-     (message "Error during automatic task setup: %s" (error-message-string err)))))
+     (message "❌ Error during task setup: %s" (error-message-string err))
+     ;; Emergency task loading if something went wrong
+     (unless my-outstanding-tasks-list
+       (message "Attempting emergency task list generation...")
+       (my-get-outstanding-tasks)
+       (setq my-outstanding-tasks-index 0)
+       (message "Generated emergency task list with %d tasks." 
+                (length my-outstanding-tasks-list))))))
 
 (add-hook 'emacs-startup-hook #'my-auto-task-setup 100)
 
