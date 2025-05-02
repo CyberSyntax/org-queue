@@ -298,6 +298,67 @@
       
       (message "Created extract from selected text"))))
 
+(defface org-clozed-face
+  '((((class color) (min-colors 88) (background light))
+     (:background "#E67300" :foreground "black"))
+    (((class color) (min-colors 88) (background dark))
+     (:background "#E67300" :foreground "black"))
+    (t (:background "orange")))
+  "Face for clozed text in org-mode."
+  :group 'org-faces)
+
+(defface org-extract-face
+  '((((class color) (min-colors 88) (background light))
+     (:background "#44C2FF" :foreground "black"))
+    (((class color) (min-colors 88) (background dark))
+     (:background "#44C2FF" :foreground "black"))
+    (t (:background "lightblue")))
+  "Face for extracted text in org-mode."
+  :group 'org-faces)
+
+(defun org-custom-highlighter-setup ()
+  "Set up custom syntax highlighting correctly."
+  (interactive)
+  ;; Remove previous keywords if any
+  (font-lock-remove-keywords
+   'org-mode
+   '(("{{\\(clozed\\):\\([^}]+\\)}}" 0 'org-clozed-face t)
+     ("{{\\(extract\\):\\([^}]+\\)}}" 0 'org-extract-face t)))
+
+  ;; Add the keywords with highest priority
+  (font-lock-add-keywords
+   'org-mode
+   '(("{{\\(clozed\\):\\([^}]+\\)}}" 0 'org-clozed-face prepend)
+     ("{{\\(extract\\):\\([^}]+\\)}}" 0 'org-extract-face prepend))
+   t)
+  
+  ;; Force re-fontification
+  (when (eq major-mode 'org-mode)
+    (font-lock-flush)
+    (font-lock-ensure)))
+
+;; Add to org-mode hook
+(add-hook 'org-mode-hook 'org-custom-highlighter-setup)
+
+;; Provide a command to manually refresh highlighting
+(defun org-refresh-custom-highlighting ()
+  "Refresh custom syntax highlighting in the current buffer."
+  (interactive)
+  (org-custom-highlighter-setup))
+
+;; Refresh all open org-mode buffers
+(defun org-refresh-all-buffers-highlighting ()
+  "Apply custom highlighting to all org-mode buffers."
+  (interactive)
+  (dolist (buf (buffer-list))
+    (with-current-buffer buf
+      (when (eq major-mode 'org-mode)
+        (org-custom-highlighter-setup)))))
+
+;; Run the refresh for all buffers
+(when (featurep 'org)
+  (org-refresh-all-buffers-highlighting))
+
 (defun org-srs-entry-p (pos)
   "Determine if and where the Org entry at POS or its immediate parent contains
 the specified log drawer (org-srs-log-drawer-name).
