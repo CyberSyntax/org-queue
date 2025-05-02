@@ -74,7 +74,8 @@
     (define-key org-queue-mode-map (kbd "g") #'gptel))
   (when (require 'org-srs nil t)
     (define-key org-queue-mode-map (kbd "1") #'org-srs-review-rate-again)
-    (define-key org-queue-mode-map (kbd "3") #'org-srs-review-rate-good))
+    (define-key org-queue-mode-map (kbd "3") #'org-srs-review-rate-good)
+    (define-key org-queue-mode-map (kbd "z") #'org-interactive-cloze))
   
   ;; Exit key
   (define-key org-queue-mode-map (kbd "e") 
@@ -199,6 +200,76 @@
 (global-set-key (kbd "<escape>") 'my-enable-org-queue-mode)
 
 (require 'my-srs-integration)
+
+(defun org-interactive-cloze ()
+  "Create a cloze deletion from selected text and generate a proper child heading."
+  (interactive)
+  (if (not (use-region-p))
+      (message "Please select text to create a cloze")
+    (let* ((start (region-beginning))
+           (end (region-end))
+           (selected-text (buffer-substring-no-properties start end))
+           ;; Get parent heading position and level
+           (parent-pos (save-excursion (org-back-to-heading) (point)))
+           (parent-level (save-excursion (goto-char parent-pos) (org-outline-level)))
+           ;; Get parent heading title (for reference)
+           (parent-title (save-excursion 
+                          (goto-char parent-pos)
+                          (buffer-substring-no-properties 
+                           (+ (point) (1+ parent-level))
+                           (line-end-position))))
+           ;; Get exact line where cursor is for content
+           (parent-line (buffer-substring-no-properties
+                        (line-beginning-position)
+                        (line-end-position)))
+           (next-cloze-num 1))
+      
+      ;; Find highest existing cloze number in the current line
+      (save-excursion
+        (goto-char (line-beginning-position))
+        (while (re-search-forward "{{c\\([0-9]+\\)::" (line-end-position) t)
+          (let ((num (string-to-number (match-string 1))))
+            (setq next-cloze-num (max (1+ num) next-cloze-num)))))
+      
+      ;; Use cloze number 1 if nothing exists in this line
+      (when (= next-cloze-num 1)
+        (save-excursion
+          (goto-char (line-beginning-position))
+          (unless (re-search-forward "{{c[0-9]+::" (line-end-position) t)
+            (setq next-cloze-num 1))))
+      
+      ;; Replace selected text with cloze
+      (delete-region start end)
+      (insert (format "{{c%d::%s}}" next-cloze-num selected-text))
+      
+      ;; Get updated parent content line
+      (setq parent-line (buffer-substring-no-properties
+                        (line-beginning-position)
+                        (line-end-position)))
+      
+      ;; Create child heading with cloze placeholder
+      (save-excursion
+        (org-back-to-heading)
+        (org-end-of-subtree)
+        
+        ;; Create the child heading with proper level
+        (insert "\n" (make-string (1+ parent-level) ?*) " ")
+        
+        ;; Create child content - replace the current cloze with [...]
+        (let ((child-content 
+               (replace-regexp-in-string 
+                (format "{{c%d::%s}}" next-cloze-num selected-text)
+                "[...]"
+                parent-line)))
+          ;; Replace all other clozes with their content
+          (let ((processed-content child-content))
+            (while (string-match "{{c\\([0-9]+\\)::\\([^}]+\\)}}" processed-content)
+              (setq processed-content 
+                    (replace-match (match-string 2 processed-content) t t processed-content)))
+            (insert processed-content))
+          (insert "\n" selected-text)))
+      
+      (message "Created cloze %d" next-cloze-num))))
 
 (defun org-srs-entry-p (pos)
   "Determine if and where the Org entry at POS or its immediate parent contains
