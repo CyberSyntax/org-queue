@@ -70,6 +70,7 @@
   (define-key org-queue-mode-map (kbd "W") #'org-cut-subtree)
   (define-key org-queue-mode-map (kbd "Y") #'org-paste-subtree)
   (define-key org-queue-mode-map (kbd "u") #'org-show-parent-heading-cleanly)
+  (define-key org-queue-mode-map (kbd "x") #'org-interactive-extract)    
   (when (require 'gptel nil t)
     (define-key org-queue-mode-map (kbd "g") #'gptel))
   (when (require 'org-srs nil t)
@@ -272,6 +273,45 @@
         ))
       
       (message "Created cloze %d with org-srs card" next-cloze-num))))
+
+(defun org-interactive-extract ()
+  "Create a SuperMemo-style extract from selected text and generate a child heading."
+  (interactive)
+  (if (not (use-region-p))
+      (message "Please select text to extract")
+    (let* ((start (region-beginning))
+           (end (region-end))
+           (selected-text (buffer-substring-no-properties start end))
+           ;; Get current heading position and level
+           (heading-pos (save-excursion (org-back-to-heading) (point)))
+           (heading-level (save-excursion (goto-char heading-pos) (org-outline-level)))
+           ;; Get parent priority range
+           (parent-priority-range (save-excursion 
+                                   (goto-char heading-pos)
+                                   (my-get-current-priority-range))))
+      
+      ;; Replace selected text with extract marker
+      (delete-region start end)
+      (insert (format "{{extract:%s}}" selected-text))
+      
+      ;; Create child heading with extracted content
+      (save-excursion
+        (goto-char heading-pos)
+        (org-end-of-subtree)
+        
+        ;; Insert position for the new heading
+        (let ((new-heading-pos (point)))
+          ;; Create the child heading with proper level (no title, just blank)
+          (insert "\n" (make-string (1+ heading-level) ?*) " ")
+          ;; Insert the extracted text as content
+          (insert "\n" selected-text)
+          
+          ;; Set priority based on parent (if needed)
+          (when parent-priority-range
+            (goto-char (1+ new-heading-pos))  ;; Go to the new heading
+            (my-set-priority-with-heuristics parent-priority-range))))
+      
+      (message "Created extract from selected text"))))
 
 (defun org-srs-entry-p (pos)
   "Determine if and where the Org entry at POS or its immediate parent contains
