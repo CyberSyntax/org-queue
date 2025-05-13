@@ -72,6 +72,8 @@
   (define-key org-queue-mode-map (kbd "Y") #'org-paste-subtree)
   (define-key org-queue-mode-map (kbd "u") #'org-show-parent-heading-cleanly)
   (define-key org-queue-mode-map (kbd "x") #'org-interactive-extract)    
+  (when (require 'org-web-tools nil t)
+    (define-key org-queue-mode-map (kbd "I") #'org-web-tools-insert-web-page-as-entry))
   (when (require 'gptel nil t)
     (define-key org-queue-mode-map (kbd "g") #'gptel))
   (when (require 'org-srs nil t)
