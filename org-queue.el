@@ -58,6 +58,7 @@
   (define-key org-queue-mode-map (kbd "f") #'my-show-next-outstanding-task)
   (define-key org-queue-mode-map (kbd "b") #'my-show-previous-outstanding-task)
   (define-key org-queue-mode-map (kbd "c") #'my-show-current-outstanding-task)
+  (define-key org-queue-mode-map (kbd "r") #'my-remove-current-task)
   (define-key org-queue-mode-map (kbd "R") #'my-reset-and-show-current-outstanding-task)
   (define-key org-queue-mode-map (kbd "i") #'my-increase-priority-range)
   (define-key org-queue-mode-map (kbd "d") #'my-decrease-priority-range)
@@ -1139,6 +1140,39 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
         (mapcar #'cdr
                 (sort my-outstanding-tasks-list (lambda (a b) (< (car a) (car b))))))
   (setq my-outstanding-tasks-index 0))
+
+(defun my-remove-current-task ()
+  "Remove the task at current index from outstanding tasks list and update cache file."
+  (interactive)
+  
+  ;; Validate the task list
+  (unless (and my-outstanding-tasks-list 
+               (> (length my-outstanding-tasks-list) 0)
+               (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+    (message "No valid task at current index to remove")
+    (cl-return-from my-remove-current-task nil))
+  
+  ;; Remove the task
+  (setq my-outstanding-tasks-list
+        (append (seq-take my-outstanding-tasks-list my-outstanding-tasks-index)
+                (seq-drop my-outstanding-tasks-list (1+ my-outstanding-tasks-index))))
+  
+  ;; Set index using your exact logic
+  (if (<= my-outstanding-tasks-index 0)
+      (setq my-outstanding-tasks-index (1- (length my-outstanding-tasks-list)))
+    (setq my-outstanding-tasks-index (1- my-outstanding-tasks-index)))
+  
+  ;; Update cache file
+  (my-save-outstanding-tasks-to-file)
+  
+  ;; Show feedback
+  (message "Task removed. %d tasks remaining." (length my-outstanding-tasks-list))
+  
+  ;; Regenerate list if it became empty
+  (when (zerop (length my-outstanding-tasks-list))
+    (my-get-outstanding-tasks)
+    (setq my-outstanding-tasks-index 0)
+    (my-save-outstanding-tasks-to-file)))
 
 (defun my-auto-postpone-overdue-tasks ()
   "Auto-postpone all overdue tasks using linear interpolation for priorities.
