@@ -1,6 +1,9 @@
 (require 'org-agenda)
 (require 'cl-lib)  ;; Required for cl-find-if and cl-remove-if-not
 
+;; Disable large file warning
+(setq large-file-warning-threshold nil)
+
 (random t)
 
 (defun random-float (min max)
