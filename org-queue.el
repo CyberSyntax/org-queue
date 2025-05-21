@@ -120,73 +120,35 @@
                       "C-c" "M-w" "C-w"))  ;; allow copying and cutting
   (define-key org-queue-mode-map (kbd allowed-key) nil))
 
-;; State Containers
-(defvar org-queue--status-active nil
-  "Global activation tracking")
-(defvar org-queue--original-cursor nil
-  "Persistent cursor state storage")
+;; State tracking variables
+  (defvar org-queue--original-cursor nil
+    "Persistent cursor state storage")
 
-;; Mode Line Presentation Layer
-(defface org-queue-global-lighter
-  '((t :inherit font-lock-builtin-face
-	 :height 0.85
-	 :weight medium
-	 :foreground "#B71C1C"
-	 :background "#FFCDD2"))
-  "Cross-theme compatible status indicator")
+  ;; Define custom face for the lighter
+  (defface org-queue-mode-line-face
+    '((t :inherit font-lock-builtin-face
+         :weight bold
+         :foreground "#B71C1C"
+         :background "#FFCDD2"))
+    "Face for org-queue mode lighter.")
 
-(defvar org-queue--lighter-display nil)
-(setq-default global-mode-string 
-  '(:eval (when org-queue-mode
-	      (propertize "  ■ WORK" 'face 'org-queue-global-lighter))))
-
-;; Temporal Constants
-(defconst org-queue--idle-delay 3
-  "Seconds before showing status reminder")
-(defconst org-queue--blink-interval 0.7
-  "Cursor blink rate in seconds")
-
-(define-minor-mode org-queue-mode
-  "Global minor mode for task queue management."
-  :init-value nil
-  :global t
-  :keymap org-queue-mode-map
-  :lighter " OrgQ"  ;; Retained original simpler indicator
-  (if org-queue-mode
-	(progn
-	  (setq org-queue--status-active t
-		org-queue--original-cursor cursor-type
-		cursor-type '(box . 3)  ; Thicker box cursor
-		blink-cursor-blinks 0
-		blink-cursor-interval org-queue--blink-interval)
-	  (add-hook 'post-command-hook #'org-queue--notify-presence)
-	  (run-with-idle-timer org-queue--idle-delay nil
-	    (lambda ()
-	      (unless (active-minibuffer-window)
-		(message "%s" (propertize "[Active] Task context engaged (e to exit)"
-					 'face 'font-lock-comment-face))))))
-    ;; Clean State Transition
-    (setq org-queue--status-active nil
-	    cursor-type org-queue--original-cursor
-	    blink-cursor-blinks 40
-	    blink-cursor-interval 0.5)
-    (remove-hook 'post-command-hook #'org-queue--notify-presence)
-    (message "%s" (propertize "[Idle] Context released" 
-			      'face 'font-lock-comment-face))))
-
-(defun org-queue--notify-presence ()
-  "Managed presence indication system"
-  (when (and org-queue-mode 
-	       (not (active-minibuffer-window))
-	       (not (minibufferp)))
-    (force-mode-line-update)
-    (unless cursor-in-non-selected-windows
-	(setq cursor-in-non-selected-windows t))
-    (run-with-idle-timer org-queue--idle-delay nil
-	(lambda ()
-	  (when org-queue-mode
-	    (message "%s" (propertize "[Active] Maintained focus (press e to exit)"
-				     'face 'font-lock-doc-face)))))))
+  ;; The core minor mode with colored lighter
+  (define-minor-mode org-queue-mode
+    "Global minor mode for task queue management."
+    :init-value nil
+    :global t
+    :keymap org-queue-mode-map
+    :lighter (:propertize " OrgQ" face org-queue-mode-line-face)
+    (if org-queue-mode
+        (progn
+          (setq org-queue--original-cursor cursor-type
+                cursor-type '(box . 3)  ; Thicker box cursor
+                blink-cursor-blinks 0
+                blink-cursor-interval 0.7))
+      ;; Restore cursor on disable
+      (setq cursor-type org-queue--original-cursor
+            blink-cursor-blinks 40
+            blink-cursor-interval 0.5)))
 
 (defcustom org-queue-auto-enable nil
   "When non-nil, org-queue-mode will automatically activate after idle time.
@@ -194,26 +156,22 @@ Set this to nil to prevent automatic activation."
   :type 'boolean
   :group 'org-queue)
 
-;; Timer management variable
-(defvar org-queue--auto-timer nil
-  "Timer object for automatic org-queue-mode activation.")
+;; Auto-enable timer (if needed)
+(defvar org-queue--auto-timer nil)
+(defvar org-queue-auto-enable t)
 
 (defun org-queue-setup-auto-timer ()
-  "Set up or cancel the automatic activation timer based on user settings."
   (when org-queue--auto-timer
     (cancel-timer org-queue--auto-timer)
     (setq org-queue--auto-timer nil))
   
   (when org-queue-auto-enable
     (setq org-queue--auto-timer
-          (run-with-idle-timer 0.847 t
-            (lambda ()
-              ;; Only activate if auto-enable is still on and mode is off
+          (run-with-idle-timer 0.618 t
+            (lambda (&rest _)
               (when (and org-queue-auto-enable (not org-queue-mode))
-                (org-queue-mode 1)
-                (message "org-queue-mode enabled due to inactivity.")))))))
+                (org-queue-mode 1)))))))
 
-;; Initialize the timer based on the current setting
 (org-queue-setup-auto-timer)
 
 (defun org-queue-toggle-auto-enable ()
@@ -1468,6 +1426,29 @@ Saves buffers and regenerates the task list for consistency."
 		     (- original-count (length my-outstanding-tasks-list))))))
   (my-reset-outstanding-tasks-index))
 
+(defun my-launch-anki ()
+  "Launch Anki application if it exists. Works on Windows and macOS. On error or Android, show message and call `my-show-current-flag-status`."
+  (interactive)
+  (let ((anki-path
+         (cond
+          ;; Windows
+          ((eq system-type 'windows-nt)
+           (expand-file-name "AppData/Local/Programs/Anki/anki.exe" (getenv "USERPROFILE")))
+          ;; macOS (default install location)
+          ((eq system-type 'darwin)
+           "/Applications/Anki.app/Contents/MacOS/Anki")
+          ;; Else nil (e.g. Android/GNU/Linux)
+          (t nil))))
+    (if (and anki-path (file-exists-p anki-path))
+        (condition-case err
+            (start-process "Anki" nil anki-path)
+          (error
+           (message "Failed to launch Anki: %s" (error-message-string err))
+           (my-show-current-flag-status)))
+      (message "Anki executable not found%s"
+               (if anki-path (format " at: %s" anki-path) " on this OS."))
+      (my-show-current-flag-status))))
+
 (defconst my-priority-flag-table
   '((1 . "Flag:1")          ; 1
     (2 . "Flag:2")          ; 2
@@ -1692,7 +1673,8 @@ MARKER-OR-TASK can be either a marker directly or a task plist with a :marker pr
               (my-srs-start-reviews)
             (error (setq my-srs-reviews-exhausted t))))
 
-	(my-show-current-flag-status))
+	(my-show-current-flag-status)
+	(my-launch-anki))
     (message "No outstanding tasks found.")))
 
 (defun my-show-previous-outstanding-task ()
