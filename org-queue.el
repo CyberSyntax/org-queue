@@ -56,6 +56,7 @@
 
 (progn
   ;; Commands
+  (define-key org-queue-mode-map (kbd "t") 'org-queue-toggle-auto-enable)
   (define-key org-queue-mode-map (kbd ",") #'my-set-priority-with-heuristics)
   (define-key org-queue-mode-map (kbd "s") #'my-schedule-command)
   (define-key org-queue-mode-map (kbd "f") #'my-show-next-outstanding-task)
@@ -187,15 +188,50 @@
 	    (message "%s" (propertize "[Active] Maintained focus (press e to exit)"
 				     'face 'font-lock-doc-face)))))))
 
-;; The second argument, t, makes the timer repeat.
-(run-with-idle-timer 0.847 t
-  (lambda ()
-    ;; Check if org-queue-mode is not currently enabled.
-    (unless org-queue-mode
-	;; If it's disabled, enable org-queue-mode.
-	(org-queue-mode 1)
-	;; Display a message to notify that org-queue-mode was activated.
-	(message "org-queue-mode enabled due to inactivity."))))
+(defcustom org-queue-auto-enable nil
+  "When non-nil, org-queue-mode will automatically activate after idle time.
+Set this to nil to prevent automatic activation."
+  :type 'boolean
+  :group 'org-queue)
+
+;; Timer management variable
+(defvar org-queue--auto-timer nil
+  "Timer object for automatic org-queue-mode activation.")
+
+(defun org-queue-setup-auto-timer ()
+  "Set up or cancel the automatic activation timer based on user settings."
+  (when org-queue--auto-timer
+    (cancel-timer org-queue--auto-timer)
+    (setq org-queue--auto-timer nil))
+  
+  (when org-queue-auto-enable
+    (setq org-queue--auto-timer
+          (run-with-idle-timer 0.847 t
+            (lambda ()
+              ;; Only activate if auto-enable is still on and mode is off
+              (when (and org-queue-auto-enable (not org-queue-mode))
+                (org-queue-mode 1)
+                (message "org-queue-mode enabled due to inactivity.")))))))
+
+;; Initialize the timer based on the current setting
+(org-queue-setup-auto-timer)
+
+(defun org-queue-toggle-auto-enable ()
+  "Toggle automatic activation of org-queue-mode.
+When enabling auto-activation, immediately activates org-queue-mode.
+When disabling auto-activation, immediately deactivates org-queue-mode."
+  (interactive)
+  (setq org-queue-auto-enable (not org-queue-auto-enable))
+  (org-queue-setup-auto-timer)
+  
+  ;; Immediately apply the new state
+  (if org-queue-auto-enable
+      (progn
+        (org-queue-mode 1)  ; Enable org-queue-mode
+        (message "Org-queue auto-activation enabled and mode activated"))
+    (progn
+      (org-queue-mode -1)  ; Disable org-queue-mode
+      (message "Org-queue auto-activation disabled and mode deactivated"))))
 
 (defun my-enable-org-queue-mode ()
   (interactive)
