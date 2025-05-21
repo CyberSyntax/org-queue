@@ -273,35 +273,33 @@
     (let* ((start (region-beginning))
            (end (region-end))
            (selected-text (buffer-substring-no-properties start end))
-           ;; Get current heading position and level
            (heading-pos (save-excursion (org-back-to-heading) (point)))
            (heading-level (save-excursion (goto-char heading-pos) (org-outline-level)))
-           ;; Get parent priority range
            (parent-priority-range (save-excursion 
                                    (goto-char heading-pos)
-                                   (my-get-current-priority-range))))
+                                   (my-get-current-priority-range)))
+           (cleaned-text selected-text))
       
-      ;; Replace selected text with extract marker
+      ;; Remove ONLY citations (like ^{[[#cite_note-192][[192 ]]]} and ^{: 4 })
+      (setq cleaned-text (replace-regexp-in-string "\\^{[^}]*}" "" cleaned-text))
+      
+      ;; Fix double spaces caused by deletions
+      (setq cleaned-text (replace-regexp-in-string "  +" " " cleaned-text))
+      
+      ;; Replace original text with extract marker (for reference)
       (delete-region start end)
       (insert (format "{{extract:%s}}" selected-text))
       
-      ;; Create child heading with extracted content
+      ;; Create child heading with cleaned text
       (save-excursion
         (goto-char heading-pos)
         (org-end-of-subtree)
-        
-        ;; Insert position for the new heading
         (let ((new-heading-pos (point)))
-          ;; Create the child heading with proper level (no title, just blank)
           (insert "\n" (make-string (1+ heading-level) ?*) " ")
-          ;; Insert the extracted text as content
-          (insert "\n" selected-text)
-          
-          ;; Set priority based on parent (if needed)
+          (insert "\n" cleaned-text)
           (when parent-priority-range
-            (goto-char (1+ new-heading-pos))  ;; Go to the new heading
+            (goto-char (1+ new-heading-pos))
             (my-set-priority-with-heuristics parent-priority-range))))
-      
       (message "Created extract from selected text"))))
 
 (defface org-clozed-face
@@ -322,42 +320,60 @@
     (delete-overlay (pop org-custom-overlays))))
 
 (defun org-highlight-custom-syntax ()
-  "Highlight custom syntax patterns using overlays with concealed markers."
+  "Highlight nested custom syntax patterns like {{extract:...}} and {{clozed:...}}.
+Handles overlapping or nested formats robustly by counting braces."
   (interactive)
   (when (eq major-mode 'org-mode)
     (org-clear-custom-overlays)
     (save-excursion
       (goto-char (point-min))
-      (while (re-search-forward "{{\\(clozed\\|extract\\):\\([^}]+\\)}}" nil t)
-        (let* ((full-match-start (match-beginning 0))
-               (full-match-end (match-end 0))
-               (content-start (match-beginning 2))
-               (content-end (match-end 2))
-               (type (match-string-no-properties 1))
-               (face (if (string= type "clozed") 'org-clozed-face 'org-extract-face)))
-          
-          ;; Create overlay for the full match to set content properties
-          (let ((ov (make-overlay full-match-start full-match-end)))
-            (overlay-put ov 'face face)
-            (overlay-put ov 'priority 100)
-            (overlay-put ov 'evaporate t)
-            (push ov org-custom-overlays))
-          
-          ;; Create overlay to hide the opening marker
-          (let ((ov-start (make-overlay full-match-start content-start)))
-            (overlay-put ov-start 'invisible t)
-            (overlay-put ov-start 'evaporate t)
-            (overlay-put ov-start 'priority 101)
-            (push ov-start org-custom-overlays))
-          
-          ;; Create overlay to hide the closing marker
-          (let ((ov-end (make-overlay content-end full-match-end)))
-            (overlay-put ov-end 'invisible t)
-            (overlay-put ov-end 'evaporate t)
-            (overlay-put ov-end 'priority 101)
-            (push ov-end org-custom-overlays))))
-      
-      ;; Ensure we don't have duplicate overlays
+      (let ((stack '()))  ; Stack to track open {{...}} regions: (start-pos type content-start)
+
+        (while (< (point) (point-max))
+          (cond
+           ;; Case 1: Opening {{extract:... or {{clozed:...
+           ((looking-at "{{\\(extract\\|clozed\\|[^}:]+\\):")
+            (let ((type (match-string-no-properties 1))
+                  (content-start (match-end 0)))  ; Start after {{type:
+              (push (list (match-beginning 0) type content-start) stack)
+              (goto-char content-start)))
+
+           ;; Case 2: Closing }} - pop if stack not empty
+           ((looking-at "}}")
+            (when stack
+              (let* ((entry (pop stack))
+                     (full-start (nth 0 entry))
+                     (type (nth 1 entry))
+                     (content-start (nth 2 entry))
+                     (content-end (point))
+                     (full-end (+ (point) 2))
+                     (face (cond
+                            ((string= type "clozed") 'org-clozed-face)
+                            ((string= type "extract") 'org-extract-face)
+                            (t 'org-default-custom-face))))
+
+                ;; Create overlay for the entire {{...}} block
+                (let ((ov (make-overlay full-start full-end)))
+                  (overlay-put ov 'face face)
+                  (overlay-put ov 'priority 100)
+                  (push ov org-custom-overlays))
+
+                ;; Hide opening {{...:
+                (let ((ov-start (make-overlay full-start content-start)))
+                  (overlay-put ov-start 'display "")
+                  (overlay-put ov-start 'priority 101)
+                  (push ov-start org-custom-overlays))
+
+                ;; Hide closing }}
+                (let ((ov-end (make-overlay content-end full-end)))
+                  (overlay-put ov-end 'display "")
+                  (overlay-put ov-end 'priority 101)
+                  (push ov-end org-custom-overlays))))
+            (forward-char 2))  ; Skip past closing }}
+
+           ;; Default: Advance by 1 char
+           (t (forward-char 1)))))
+
       (setq org-custom-overlays (delete-dups org-custom-overlays)))))
 
 ;; Variable to store buffer-local timers
