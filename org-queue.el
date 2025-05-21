@@ -74,7 +74,8 @@
   (define-key org-queue-mode-map (kbd "W") #'org-cut-subtree)
   (define-key org-queue-mode-map (kbd "Y") #'org-paste-subtree)
   (define-key org-queue-mode-map (kbd "u") #'org-show-parent-heading-cleanly)
-  (define-key org-queue-mode-map (kbd "x") #'org-interactive-extract)    
+  (define-key org-queue-mode-map (kbd "x") #'org-interactive-extract)
+  (define-key org-queue-mode-map (kbd "X") #'org-remove-all-extract-blocks)    
   (when (require 'org-web-tools nil t)
     (define-key org-queue-mode-map (kbd "I") #'org-web-tools-insert-web-page-as-entry))
   (when (require 'gptel nil t)
@@ -320,61 +321,88 @@
     (delete-overlay (pop org-custom-overlays))))
 
 (defun org-highlight-custom-syntax ()
-  "Highlight nested custom syntax patterns like {{extract:...}} and {{clozed:...}}.
-Handles overlapping or nested formats robustly by counting braces."
+  "Highlight custom syntax patterns like {{extract:...}} with proper LaTeX awareness."
   (interactive)
   (when (eq major-mode 'org-mode)
     (org-clear-custom-overlays)
     (save-excursion
       (goto-char (point-min))
-      (let ((stack '()))  ; Stack to track open {{...}} regions: (start-pos type content-start)
-
-        (while (< (point) (point-max))
-          (cond
-           ;; Case 1: Opening {{extract:... or {{clozed:...
-           ((looking-at "{{\\(extract\\|clozed\\|[^}:]+\\):")
-            (let ((type (match-string-no-properties 1))
-                  (content-start (match-end 0)))  ; Start after {{type:
-              (push (list (match-beginning 0) type content-start) stack)
-              (goto-char content-start)))
-
-           ;; Case 2: Closing }} - pop if stack not empty
-           ((looking-at "}}")
-            (when stack
-              (let* ((entry (pop stack))
-                     (full-start (nth 0 entry))
-                     (type (nth 1 entry))
-                     (content-start (nth 2 entry))
-                     (content-end (point))
-                     (full-end (+ (point) 2))
-                     (face (cond
-                            ((string= type "clozed") 'org-clozed-face)
-                            ((string= type "extract") 'org-extract-face)
-                            (t 'org-default-custom-face))))
-
-                ;; Create overlay for the entire {{...}} block
-                (let ((ov (make-overlay full-start full-end)))
-                  (overlay-put ov 'face face)
-                  (overlay-put ov 'priority 100)
-                  (push ov org-custom-overlays))
-
-                ;; Hide opening {{...:
-                (let ((ov-start (make-overlay full-start content-start)))
-                  (overlay-put ov-start 'display "")
-                  (overlay-put ov-start 'priority 101)
-                  (push ov-start org-custom-overlays))
-
-                ;; Hide closing }}
-                (let ((ov-end (make-overlay content-end full-end)))
-                  (overlay-put ov-end 'display "")
-                  (overlay-put ov-end 'priority 101)
-                  (push ov-end org-custom-overlays))))
-            (forward-char 2))  ; Skip past closing }}
-
-           ;; Default: Advance by 1 char
-           (t (forward-char 1)))))
-
-      (setq org-custom-overlays (delete-dups org-custom-overlays)))))
+      (while (re-search-forward "{{\\(extract\\|clozed\\|[^}:]*\\):" nil t)
+        (let ((start (match-beginning 0))
+              (type (match-string-no-properties 1))
+              (content-start (point))
+              (brace-level 1)
+              (latex-mode nil)
+              (found-end nil))
+          
+          ;; Search for matching closing braces
+          (while (and (> brace-level 0) (not (eobp)))
+            (cond
+             ;; Beginning of LaTeX expression
+             ((looking-at "\\\\(")
+              (setq latex-mode t)
+              (forward-char 2))
+             
+             ;; End of LaTeX expression
+             ((and latex-mode (looking-at "\\\\)"))
+              (setq latex-mode nil)
+              (forward-char 2))
+             
+             ;; Opening double braces (when not in LaTeX)
+             ((and (not latex-mode) (looking-at "{{"))
+              (setq brace-level (1+ brace-level))
+              (forward-char 2))
+             
+             ;; Closing double braces (when not in LaTeX)
+             ((and (not latex-mode) (looking-at "}}"))
+              (setq brace-level (1- brace-level))
+              (forward-char 2))
+             
+             ;; Default case: move forward
+             (t (forward-char 1))))
+          
+          ;; Check if we found the matching end
+          (when (= brace-level 0)
+            (setq found-end t)
+            ;; Move back over the }} we just passed
+            (backward-char 2))
+          
+          ;; If we found a proper ending, create the overlays
+          (when found-end
+            (let* ((content-end (point))
+                   (full-end (+ content-end 2))
+                   (face (cond
+                          ((string= type "clozed") 'org-clozed-face)
+                          ((string= type "extract") 'org-extract-face)
+                          (t 'org-default-custom-face))))
+              
+              ;; Main overlay for the content
+              (let ((ov (make-overlay start full-end)))
+                (overlay-put ov 'face face)
+                (overlay-put ov 'priority 100)
+                (push ov org-custom-overlays))
+              
+              ;; Hide opening marker
+              (let ((ov-start (make-overlay start content-start)))
+                (overlay-put ov-start 'display "")
+                (overlay-put ov-start 'priority 101)
+                (push ov-start org-custom-overlays))
+              
+              ;; Hide closing marker
+              (let ((ov-end (make-overlay content-end full-end)))
+                (overlay-put ov-end 'display "")
+                (overlay-put ov-end 'priority 101)
+                (push ov-end org-custom-overlays))
+              
+              ;; Move past this block
+              (goto-char full-end))
+            
+            ;; If no end was found, just move forward
+            (unless found-end
+              (goto-char content-start)
+              (forward-char 1)))))))
+  
+  (setq org-custom-overlays (delete-dups org-custom-overlays)))
 
 ;; Variable to store buffer-local timers
 (defvar-local org-custom-syntax-timer nil
@@ -428,6 +456,26 @@ Handles overlapping or nested formats robustly by counting braces."
 ;; Run initially when loading
 (when (featurep 'org)
   (org-refresh-all-custom-highlighting))
+
+(defun org-remove-all-extract-blocks ()
+  "Remove all {{extract:...}} blocks from the current buffer."
+  (interactive)
+  (when (eq major-mode 'org-mode)
+    ;; Ensure highlighting is up-to-date
+    (org-highlight-custom-syntax)
+    
+    ;; Process removal
+    (let ((count 0))
+      ;; Find all blue highlights (extract blocks only)
+      (dolist (ov (overlays-in (point-min) (point-max)))
+        ;; Only target the blue 'extract' highlights
+        (when (eq (overlay-get ov 'face) 'org-extract-face)
+          ;; Track how many we've found
+          (setq count (1+ count))
+          ;; Remove this extract block
+          (delete-region (overlay-start ov) (overlay-end ov))))
+
+      (message "Removed %d extract blocks" count))))
 
 (defun org-srs-entry-p (pos)
   "Determine if and where the Org entry at POS or its immediate parent contains
@@ -1517,14 +1565,16 @@ revealing it clearly at the center of the screen."
     (goto-char marker)           ;; Return to original position
     (org-reveal t)               ;; Fully reveal original point
     (org-show-children)          ;; Expand current subtree's direct children
-    (recenter)))                 ;; Center point visually
+    (recenter)                   ;; Center point visually
+    (org-highlight-custom-syntax))) ;; Ensure highlighting is up-to-date
 
 (defun org-show-parent-heading-cleanly ()
   "Move up to the parent heading, widen the buffer, and then reveal the parent heading along with its children."
   (interactive)
   (widen-and-recenter)
   (ignore-errors (outline-up-heading 1)) ;; Move up heading (safely handle errors)
-  (org-narrow-to-subtree))
+  (org-narrow-to-subtree)
+  (org-highlight-custom-syntax))
 
 (defun my-display-task-at-marker (marker-or-task)
   "Display the task at MARKER-OR-TASK with appropriate visibility settings.
