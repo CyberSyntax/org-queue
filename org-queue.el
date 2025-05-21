@@ -1562,19 +1562,31 @@ Saves buffers and regenerates the task list for consistency."
    (t nil)))
 
 (defun my-show-current-flag-status ()
-  "Display in minibuffer: flag name (or number), position in flag, and how many left."
+  "Show flag info and current outstanding task index (1-based) and total."
   (interactive)
-  (let ((data (my-current-flag-counts)))
+  (let ((data (my-current-flag-counts))
+        (tasks (if (boundp 'my-outstanding-tasks-list)
+                   (length my-outstanding-tasks-list)
+                 nil))
+        (idx (if (and (boundp 'my-outstanding-tasks-index)
+                      (boundp 'my-outstanding-tasks-list)
+                      my-outstanding-tasks-list)
+                 (1+ my-outstanding-tasks-index)
+               nil)))
     (if data
         (let* ((flag-name (plist-get data :flag-name))
                (flag-num (plist-get data :flag-num))
                (fidx (plist-get data :flag-pos))
                (ftotal (plist-get data :flag-count))
                (fleft (plist-get data :flag-left)))
-          (message "%s (%d of %d, %d left)"
+          (message "%s (%d of %d, %d left) | Task %s/%s"
                    (or flag-name (format "Flag %s" (or flag-num "?")))
-                   fidx ftotal fleft))
-      (message "No current flag info available."))))
+                   fidx ftotal fleft
+                   (or idx "?")
+                   (or tasks 0)))
+      (message "No current flag info. Task %s/%s"
+               (or idx "?")
+               (or tasks 0)))))
 
 (defun my-pulse-highlight-current-line (&optional time)
   "Temporarily pulse-highlight the current line.
