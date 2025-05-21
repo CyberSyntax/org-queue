@@ -1078,16 +1078,46 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
 	(+ org-priority-default
 	   (random (+ 1 (- org-priority-lowest org-priority-default)))))))
 
+(defun my-extract-marker (task-or-marker)
+  "Extract marker from TASK-OR-MARKER which can be a marker or a task plist.
+Returns nil if no valid marker could be extracted."
+  (cond
+   ((markerp task-or-marker) task-or-marker)
+   ((and (listp task-or-marker) (plist-get task-or-marker :marker))
+    (plist-get task-or-marker :marker))
+   (t nil)))
+
+(defun my-safe-marker-buffer (task-or-marker)
+  "Safely get the buffer of TASK-OR-MARKER.
+TASK-OR-MARKER can be a marker or a plist with a :marker property."
+  (let ((marker (my-extract-marker task-or-marker)))
+    (when (and marker 
+               (markerp marker)
+               (marker-buffer marker)
+               (buffer-live-p (marker-buffer marker)))
+      (marker-buffer marker))))
+
+(defun my-safe-marker-position (task-or-marker)
+  "Safely get the position of TASK-OR-MARKER.
+TASK-OR-MARKER can be a marker or a plist with a :marker property."
+  (let ((marker (my-extract-marker task-or-marker)))
+    (when (and marker 
+               (markerp marker)
+               (marker-buffer marker)
+               (buffer-live-p (marker-buffer marker)))
+      (marker-position marker))))
+
 (defun my-get-priority-value ()
   "Get the priority value of the current task from the task list."
-  (let* ((marker (nth my-outstanding-tasks-index my-outstanding-tasks-list))
-	   (priority-str (when marker
-			   (org-with-point-at marker
-			     (org-entry-get nil "PRIORITY")))))
+  (let* ((task (nth my-outstanding-tasks-index my-outstanding-tasks-list))
+         (marker (my-extract-marker task))
+         (priority-str (when (and marker (marker-buffer marker))
+                         (org-with-point-at marker
+                           (org-entry-get nil "PRIORITY")))))
     (if priority-str
-	  (string-to-number priority-str)
-	(+ org-priority-default
-	   (random (+ 1 (- org-priority-lowest org-priority-default)))))))
+        (string-to-number priority-str)
+      (+ org-priority-default
+         (random (+ 1 (- org-priority-lowest org-priority-default)))))))
 
 ;; Define a customizable variable for the base directory.
 (defcustom org-queue-directory nil
@@ -1397,33 +1427,38 @@ Saves buffers and regenerates the task list for consistency."
   (interactive)
   (my-reset-outstanding-tasks-index)
   (when my-outstanding-tasks-list
-	(let ((prev-file nil)
-	      (modified-buffers nil)
-	      (original-count (length my-outstanding-tasks-list)))
-	  ;; Iterate through tasks in order
-	  (dolist (marker my-outstanding-tasks-list)
-	    (let* ((buffer (marker-buffer marker))
-		   (file (when (buffer-live-p buffer)
-			   (expand-file-name (buffer-file-name buffer)))))
-	      (if (and file (equal file prev-file))
-		  (progn
-		    (org-with-point-at marker
-		      (my-postpone-schedule)
-		      (add-to-list 'modified-buffers buffer))
-		    (message "Postponed: %s (File: %s)" 
-			     (org-get-heading t t)
-			     (file-name-nondirectory file)))
-		(setq prev-file file))))
-	  ;; Save modified buffers to disk
-	  (dolist (buf modified-buffers)
-	    (when (buffer-live-p buf)
-	      (with-current-buffer buf
-		(save-buffer))))
-	  ;; Regenerate task list if changes occurred
-	  (when modified-buffers
-	    (my-get-outstanding-tasks)
-	    (message "%d consecutive task(s) postponed. List regenerated." 
-		     (- original-count (length my-outstanding-tasks-list))))))
+    (let ((prev-file nil)
+          (modified-buffers nil)
+          (original-count (length my-outstanding-tasks-list)))
+      ;; Iterate over the task PLISTS, not raw markers
+      (dolist (entry my-outstanding-tasks-list)
+        ;; Extract the real marker from the plist
+        (let* ((marker (plist-get entry :marker))
+               (buffer (and (markerp marker)
+                            (marker-buffer marker)))
+               (file   (and buffer
+                            (buffer-file-name buffer))))
+          (when buffer
+            (if (and file (equal file prev-file))
+                (progn
+                  ;; postpone it
+                  (with-current-buffer buffer
+                    (goto-char (marker-position marker))
+                    (my-postpone-schedule))
+                  (push buffer modified-buffers)
+                  (message "Postponed duplicate in: %s"
+                           (file-name-nondirectory file)))
+              (setq prev-file file)))))
+      ;; Save all changed buffers
+      (dolist (buf (delete-dups modified-buffers))
+        (when (buffer-live-p buf)
+          (with-current-buffer buf
+            (save-buffer))))
+      ;; If we actually postponed anything, rebuild the list
+      (when modified-buffers
+        (my-get-outstanding-tasks)
+        (message "%d consecutive task(s) postponed, list regenerated."
+                 (- original-count (length my-outstanding-tasks-list))))))
   (my-reset-outstanding-tasks-index))
 
 (defun my-launch-anki ()
@@ -1579,23 +1614,20 @@ Defaults to 0.2 seconds."
     (pulse-momentary-highlight-one-line (point))))
 
 (defun widen-and-recenter ()
-  "Widen buffer, reset folding, show top-level children, and recenter point.
-
-This function widens the buffer to remove narrowing, resets the global
-folding state with `org-overview', expands the top-level headings with
-`org-fold-show-children', then returns point to its original position,
-revealing it clearly at the center of the screen."
+  "Widen buffer, reset folding, show top-level children, and recenter point."
   (interactive)
   (let ((marker (point-marker))) ;; Store original position
     (widen)                      ;; Remove narrowing
-    (ignore-errors (outline-up-heading 1)) ;; Move up heading (safely handle errors)
-    (org-overview)               ;; Collapse all headings to overview state
-    (org-fold-show-children)     ;; Expand top-level headings only
+    (ignore-errors (outline-up-heading 1))
+    (org-overview)
+    (ignore-errors (org-fold-show-children))
     (goto-char marker)           ;; Return to original position
-    (org-reveal t)               ;; Fully reveal original point
-    (org-show-children)          ;; Expand current subtree's direct children
-    (recenter)                   ;; Center point visually
-    (org-highlight-custom-syntax))) ;; Ensure highlighting is up-to-date
+    (ignore-errors (org-reveal t))
+    (ignore-errors (org-show-children))
+    ;; Only recenter when buffer is displayed in current window
+    (when (eq (current-buffer) (window-buffer (selected-window)))
+      (recenter))
+    (ignore-errors (org-highlight-custom-syntax))))
 
 (defun org-show-parent-heading-cleanly ()
   "Move up to the parent heading, widen the buffer, and then reveal the parent heading along with its children."
@@ -1605,30 +1637,31 @@ revealing it clearly at the center of the screen."
   (org-narrow-to-subtree)
   (org-highlight-custom-syntax))
 
-(defun my-display-task-at-marker (marker-or-task)
-  "Display the task at MARKER-OR-TASK with appropriate visibility settings.
-MARKER-OR-TASK can be either a marker directly or a task plist with a :marker property."
-  (let ((marker (if (markerp marker-or-task)
-                    marker-or-task
-                  (plist-get marker-or-task :marker))))
-    (when (and marker (markerp marker))
-      (widen-and-recenter)
-      (switch-to-buffer (marker-buffer marker))
-      (revert-buffer t t t)
-      (widen-and-recenter)
-      ;; Unfold all content and then perform two global cycles to refold.
-      (org-fold-show-all)
-      (org-global-cycle)
-      (org-global-cycle)
-      (goto-char (marker-position marker))
-      ;; Ensure the entire entry is visible
-      (org-show-entry)
-      (recenter)
-      (org-narrow-to-subtree)
-      (org-overview)
-      (org-reveal t)
-      (org-show-entry)
-      (show-children))))
+(defun my-display-task-at-marker (task-or-marker)
+  "Display the task at TASK-OR-MARKER with appropriate visibility settings."
+  (let* ((marker (my-extract-marker task-or-marker))
+         (buf (and marker (marker-buffer marker)))
+         (pos (and marker (marker-position marker))))
+    (when (and buf pos)
+      (condition-case err
+          (progn
+            (switch-to-buffer buf)
+            (revert-buffer t t t) ;; Safe revert without confirmation
+            (widen)
+            (org-fold-show-all)
+            (org-cycle '(4)) ;; Like pressing shift-TAB once
+            (goto-char pos)
+            (org-show-entry)
+            ;; Only recenter if buffer is in current window
+            (when (eq buf (window-buffer (selected-window)))
+              (recenter))
+            (org-narrow-to-subtree)
+            (org-overview)
+            (org-reveal t)
+            (org-show-entry)
+            (show-children))
+        (error
+         (message "Error displaying task: %s" (error-message-string err)))))))
 
 (defun my-show-next-outstanding-task ()
   "Show the next outstanding task in priority order with proper SRS handling."
@@ -1690,7 +1723,6 @@ MARKER-OR-TASK can be either a marker directly or a task plist with a :marker pr
             (setq my-outstanding-tasks-index (1- (length my-outstanding-tasks-list)))
           (setq my-outstanding-tasks-index (1- my-outstanding-tasks-index)))
         
-        ;; Display operations
         (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
           (my-display-task-at-marker task-or-marker)
           (my-pulse-highlight-current-line)
@@ -1733,61 +1765,132 @@ MARKER-OR-TASK can be either a marker directly or a task plist with a :marker pr
 
 (defun my-auto-task-setup ()
   "Initialize and set up automatic task management processes upon Emacs startup."
+  (message "Starting automatic task setup...")
+  
+  ;; Enable debug on error to get better backtraces
+  (setq debug-on-error t)
+  
+  ;; Add tracing for each step
   (condition-case err
       (progn
-        (message "Starting automatic task setup...")
-        
-        ;; Try to load today's cache
+        (message "Step 1: Attempting to load tasks from file...")
         (let ((cache-loaded (my-load-outstanding-tasks-from-file)))
+          (message "Step 1 complete: Cache loaded? %s" cache-loaded)
+          
+          (message "Checking task format - First task: %S" 
+                   (and my-outstanding-tasks-list 
+                        (car my-outstanding-tasks-list)))
+          
           (if cache-loaded
-              ;; CACHE EXISTS - Display task automatically
               (progn
-                (message "✓ Successfully loaded task cache for today (%d tasks)."
-                         (length my-outstanding-tasks-list))
+                (message "Step 2A: Cache exists, processing...")
                 (when (boundp 'my-srs-reviews-exhausted)
                   (setq my-srs-reviews-exhausted nil))
                 (setq my-outstanding-tasks-index 0)
-                
-                ;; ONLY show task automatically when loading from cache
-                (run-with-idle-timer 0.5 nil 'my-show-current-outstanding-task)
-                (message "Task display scheduled."))
+                (message "Step 2A complete: About to schedule task display"))
             
-            ;; NO VALID CACHE - Run maintenance WITHOUT auto-displaying task
-            (message "✗ No valid cache for today found. Running maintenance.")
-            ;; Run maintenance
-            (when (require 'org-roam nil t)
-              (org-roam-db-autosync-mode)
-              (org-id-update-id-locations (org-agenda-files)))
-            
-            (message "Running maintenance operations...")
-            (my-ensure-priorities-and-schedules-for-all-headings)
-            (my-auto-advance-schedules 8)
-            (my-auto-postpone-overdue-tasks)
-            (my-postpone-duplicate-priority-tasks)
-            (my-enforce-priority-constraints)
-            (my-ensure-priorities-and-schedules-for-all-headings)
-            (my-postpone-consecutive-same-file-tasks)
-            
-            ;; Prepare tasks and save cache, but DON'T auto-display
-            (my-get-outstanding-tasks)
-            (setq my-outstanding-tasks-index 0)
-            (my-save-outstanding-tasks-to-file)
-            (message "Maintenance complete. Tasks are ready but not auto-displayed.")))
+            (progn
+              (message "Step 2B: No cache, running maintenance...")
+              (when (require 'org-roam nil t)
+                (message "Step 2B.1: Setting up org-roam...")
+                (org-roam-db-autosync-mode)
+                (org-id-update-id-locations (org-agenda-files))
+                (message "Step 2B.1 complete"))
+              
+              (message "Step 2B.2: Running maintenance operations...")
+              (message "Step 2B.2.1: Ensuring priorities and schedules...")
+              (my-ensure-priorities-and-schedules-for-all-headings)
+              
+              (message "Step 2B.2.2: Advancing schedules...")
+              (my-auto-advance-schedules 8)
+              
+              (message "Step 2B.2.3: Postponing overdue tasks...")
+              (my-auto-postpone-overdue-tasks)
+              
+              (message "Step 2B.2.4: Postponing duplicate priority tasks...")
+              (my-postpone-duplicate-priority-tasks)
+              
+              (message "Step 2B.2.5: Enforcing priority constraints...")
+              (my-enforce-priority-constraints)
+              
+              (message "Step 2B.2.6: Re-ensuring priorities and schedules...")
+              (my-ensure-priorities-and-schedules-for-all-headings)
+              
+              (message "Step 2B.2.7: Postponing consecutive same-file tasks...")
+              (my-postpone-consecutive-same-file-tasks)
+              
+              (message "Step 2B.3: Getting outstanding tasks...")
+              (my-get-outstanding-tasks)
+              (setq my-outstanding-tasks-index 0)
+              
+              (message "Step 2B.4: Saving tasks to file...")
+              (my-save-outstanding-tasks-to-file)
+              (message "Maintenance complete"))))
         
-        ;; Ensure work mode is active
+        (message "Step 3: Enabling org-queue-mode...")
         (org-queue-mode 1)
-        (message "✓ Automatic task setup completed successfully."))
+        (message "✓ Automatic task setup completed successfully.")
+        
+        ;; Schedule task display - this is done whether cache exists or not
+        (run-with-idle-timer 1.5 nil
+                           (lambda ()
+                             (condition-case err
+                                 (if (and my-outstanding-tasks-list
+                                          (> (length my-outstanding-tasks-list) 0)
+                                          (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+                                     (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
+                                       ;; Use safe display function
+                                       (my-display-task-at-marker task-or-marker)
+                                       (my-show-current-flag-status))
+                                   (message "Task list empty or invalid index"))
+                               (error
+                                (message "Error preparing task display: %s" (error-message-string err))))))
+        (message "Task display scheduled.")
+
+        ;; Disable debug mode after successful setup
+        (setq debug-on-error nil))
     
-    ;; Error handling
     (error
      (message "❌ Error during task setup: %s" (error-message-string err))
-     ;; Emergency task loading
+     (message "Task that caused error: %S" 
+              (and my-outstanding-tasks-list 
+                   (nth (or my-outstanding-tasks-index 0) 
+                        my-outstanding-tasks-list)))
+     
+     (message "Backtrace: %S" (with-output-to-string (backtrace)))
+     
+     ;; Try emergency generation with safety
      (unless my-outstanding-tasks-list
        (message "Attempting emergency task list generation...")
-       (my-get-outstanding-tasks)
-       (setq my-outstanding-tasks-index 0)
-       (message "Generated emergency task list with %d tasks." 
-                (length my-outstanding-tasks-list))))))
+       (condition-case err-emergency
+           (progn
+             (my-get-outstanding-tasks)
+             (setq my-outstanding-tasks-index 0)
+             (message "Generated emergency task list with %d tasks." 
+                      (length my-outstanding-tasks-list)))
+         (error
+          (message "Emergency task generation also failed: %s" 
+                   (error-message-string err-emergency)))))
+     
+     ;; Disable debug mode after handling error
+     (setq debug-on-error nil))))
+
+(defun my-emergency-reset ()
+  "Emergency reset function that clears all task cache data and rebuilds."
+  (interactive)
+  (message "Performing emergency reset...")
+  
+  ;; Clear all variables
+  (setq my-outstanding-tasks-list nil)
+  (setq my-outstanding-tasks-index 0)
+  (when (file-exists-p my-outstanding-tasks-cache-file)
+    (delete-file my-outstanding-tasks-cache-file))
+  
+  ;; Rebuild the task list
+  (my-get-outstanding-tasks)
+  (my-save-outstanding-tasks-to-file)
+  (message "Reset complete. Generated %d tasks." 
+           (length my-outstanding-tasks-list)))
 
 (add-hook 'emacs-startup-hook #'my-auto-task-setup 100)
 
