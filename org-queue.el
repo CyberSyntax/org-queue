@@ -1700,15 +1700,16 @@ Defaults to 0.2 seconds."
         (my-display-task-at-marker task-or-marker)
         (my-pulse-highlight-current-line)
         
-        ;; Handle SRS reviews - only when NOT exhausted
-        (unless my-srs-reviews-exhausted
-          (my-srs-quit-reviews)  ;; Always clean up any previous session
-          (condition-case nil
-              (my-srs-start-reviews)
-            (error (setq my-srs-reviews-exhausted t))))
+        ;; Handle SRS reviews
+	(if (not my-srs-reviews-exhausted)
+	    (progn
+	      (my-srs-quit-reviews)
+	      (condition-case nil
+		  (my-srs-start-reviews)
+		(error (setq my-srs-reviews-exhausted t))))
+	  (my-launch-anki))
 
-	(my-show-current-flag-status)
-	(my-launch-anki))
+  	(my-show-current-flag-status))
     (message "No outstanding tasks found.")))
 
 (defun my-show-previous-outstanding-task ()
