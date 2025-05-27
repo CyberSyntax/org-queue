@@ -269,22 +269,37 @@ When disabling auto-activation, immediately deactivates org-queue-mode."
     (let* ((start (region-beginning))
            (end (region-end))
            (selected-text (buffer-substring-no-properties start end))
-           (heading-pos (save-excursion (org-back-to-heading) (point)))
-           (heading-level (save-excursion (goto-char heading-pos) (org-outline-level)))
+           ;; Find the parent heading for the selection start point
+           (heading-pos (save-excursion 
+                          (goto-char start)
+                          (org-back-to-heading t) 
+                          (point)))
+           (heading-level (save-excursion 
+                            (goto-char heading-pos) 
+                            (org-current-level)))
            (parent-priority-range (save-excursion 
                                    (goto-char heading-pos)
                                    (my-get-current-priority-range)))
-           (cleaned-text selected-text))
+           (cleaned-text selected-text)
+           ;; Check if selection ends with a newline
+           (ends-with-newline (and (> end start)
+                                  (= (char-before end) ?\n))))
       
-      ;; Remove ONLY citations (like ^{[[#cite_note-192][[192 ]]]} and ^{: 4 })
+      ;; Remove ONLY citations (like ^{[[#cite_note-192][[192 ]]]} and ^{: 4 })
       (setq cleaned-text (replace-regexp-in-string "\\^{[^}]*}" "" cleaned-text))
       
       ;; Fix double spaces caused by deletions
       (setq cleaned-text (replace-regexp-in-string "  +" " " cleaned-text))
       
-      ;; Replace original text with extract marker (for reference)
+      ;; Replace original text with extract marker
       (delete-region start end)
-      (insert (format "{{extract:%s}}" selected-text))
+      
+      (if ends-with-newline
+          ;; If selection ends with newline, place }} before the newline
+          (let ((text-without-newline (substring selected-text 0 -1)))
+            (insert (format "{{extract:%s}}\n" text-without-newline)))
+        ;; Normal case
+        (insert (format "{{extract:%s}}" selected-text)))
       
       ;; Create child heading with cleaned text
       (save-excursion
@@ -316,7 +331,7 @@ When disabling auto-activation, immediately deactivates org-queue-mode."
     (delete-overlay (pop org-custom-overlays))))
 
 (defun org-highlight-custom-syntax ()
-  "Highlight custom syntax patterns like {{extract:...}} with proper LaTeX awareness."
+  "Highlight custom syntax patterns like {{extract:...}} with proper handling of nested structures."
   (interactive)
   (when (eq major-mode 'org-mode)
     (org-clear-custom-overlays)
@@ -327,43 +342,101 @@ When disabling auto-activation, immediately deactivates org-queue-mode."
               (type (match-string-no-properties 1))
               (content-start (point))
               (brace-level 1)
-              (latex-mode nil)
-              (found-end nil))
+              (found-end nil)
+              ;; Stack to track nested structures (LaTeX, citations, etc.)
+              (context-stack '())
+              ;; Point where we need to track from
+              (search-start-pos (point)))
           
-          ;; Search for matching closing braces
-          (while (and (> brace-level 0) (not (eobp)))
-            (cond
-             ;; Beginning of LaTeX expression
-             ((looking-at "\\\\(")
-              (setq latex-mode t)
-              (forward-char 2))
-             
-             ;; End of LaTeX expression
-             ((and latex-mode (looking-at "\\\\)"))
-              (setq latex-mode nil)
-              (forward-char 2))
-             
-             ;; Opening double braces (when not in LaTeX)
-             ((and (not latex-mode) (looking-at "{{"))
-              (setq brace-level (1+ brace-level))
-              (forward-char 2))
-             
-             ;; Closing double braces (when not in LaTeX)
-             ((and (not latex-mode) (looking-at "}}"))
-              (setq brace-level (1- brace-level))
-              (forward-char 2))
-             
-             ;; Default case: move forward
-             (t (forward-char 1))))
-          
-          ;; Check if we found the matching end
-          (when (= brace-level 0)
-            (setq found-end t)
-            ;; Move back over the }} we just passed
-            (backward-char 2))
+          ;; Process character by character to properly handle all nested structures
+          (while (and (not found-end) (not (eobp)))
+            (let ((char-at-point (char-after)))
+              (cond
+               ;; Track superscript citation patterns
+               ((and (= char-at-point ?^) (looking-at "\\^{"))
+                (push 'citation context-stack)
+                (forward-char 2)  ; Skip ^{
+                (setq search-start-pos (point)))
+               
+               ;; Handle square brackets in citations
+               ((and (eq (car-safe context-stack) 'citation)
+                     (= char-at-point ?\[))
+                (push 'bracket context-stack)
+                (forward-char 1))
+               
+               ;; Handle closing square brackets in citations
+               ((and (eq (car-safe context-stack) 'bracket)
+                     (= char-at-point ?\]))
+                (pop context-stack)  ; Remove the bracket context
+                (forward-char 1))
+               
+               ;; Handle closing brace for citations
+               ((and (eq (car-safe context-stack) 'citation)
+                     (= char-at-point ?}))
+                (pop context-stack)  ; Remove the citation context
+                (forward-char 1))
+               
+               ;; Handle LaTeX inline math \( ... \)
+               ((looking-at "\\\\(")
+                (push 'latex-inline context-stack)
+                (forward-char 2))
+               
+               ((and (eq (car-safe context-stack) 'latex-inline)
+                     (looking-at "\\\\)"))
+                (pop context-stack)  ; End of inline math
+                (forward-char 2))
+               
+               ;; Handle LaTeX environments
+               ((looking-at "\\\\begin{\\([^}]+\\)}")
+                (push (cons 'latex-env (match-string-no-properties 1)) context-stack)
+                (goto-char (match-end 0)))
+               
+               ((and (looking-at "\\\\end{\\([^}]+\\)}")
+                     (eq (car-safe (car-safe context-stack)) 'latex-env))
+                (let ((env (match-string-no-properties 1)))
+                  (when (string= env (cdr (car context-stack)))
+                    (pop context-stack)))
+                (goto-char (match-end 0)))
+               
+               ;; Handle dollar sign math delimiters
+               ((= char-at-point ?$)
+                (if (eq (car-safe context-stack) 'latex-dollar)
+                    (pop context-stack)
+                  (push 'latex-dollar context-stack))
+                (forward-char 1))
+               
+               ;; Handle double dollar sign math delimiters
+               ((looking-at "\\$\\$")
+                (if (eq (car-safe context-stack) 'latex-double-dollar)
+                    (pop context-stack)
+                  (push 'latex-double-dollar context-stack))
+                (forward-char 2))
+               
+               ;; Handle opening braces - only count when not in a special context
+               ((and (= char-at-point ?{) (looking-at "{{")
+                     (not context-stack))
+                (setq brace-level (1+ brace-level))
+                (forward-char 2))
+               
+               ;; Handle closing braces - only count when not in a special context
+               ((and (= char-at-point ?}) (looking-at "}}")
+                     (not context-stack))
+                (setq brace-level (1- brace-level))
+                (when (= brace-level 0)
+                  (setq found-end t))
+                (forward-char 2))
+               
+               ;; Handle single braces that are part of the content
+               ((or (= char-at-point ?{) (= char-at-point ?}))
+                (forward-char 1))
+               
+               ;; Default case: move forward one character
+               (t (forward-char 1)))))
           
           ;; If we found a proper ending, create the overlays
           (when found-end
+            ;; Back up to get content-end position
+            (backward-char 2)
             (let* ((content-end (point))
                    (full-end (+ content-end 2))
                    (face (cond
@@ -380,12 +453,14 @@ When disabling auto-activation, immediately deactivates org-queue-mode."
               ;; Hide opening marker
               (let ((ov-start (make-overlay start content-start)))
                 (overlay-put ov-start 'display "")
+                (overlay-put ov-start 'invisible t)
                 (overlay-put ov-start 'priority 101)
                 (push ov-start org-custom-overlays))
               
               ;; Hide closing marker
               (let ((ov-end (make-overlay content-end full-end)))
                 (overlay-put ov-end 'display "")
+                (overlay-put ov-end 'invisible t)
                 (overlay-put ov-end 'priority 101)
                 (push ov-end org-custom-overlays))
               
@@ -394,7 +469,7 @@ When disabling auto-activation, immediately deactivates org-queue-mode."
             
             ;; If no end was found, just move forward
             (unless found-end
-              (goto-char content-start)
+              (goto-char search-start-pos)
               (forward-char 1)))))))
   
   (setq org-custom-overlays (delete-dups org-custom-overlays)))
@@ -415,6 +490,18 @@ When disabling auto-activation, immediately deactivates org-queue-mode."
                                  (when (buffer-live-p (current-buffer))
                                    (with-current-buffer (current-buffer)
                                      (org-highlight-custom-syntax))))))))
+
+;; For debugging
+(defun org-print-context-debug-info ()
+  "Print debugging information about the current context."
+  (interactive)
+  (let ((char-at-point (char-after))
+        (next-chars (buffer-substring-no-properties
+                     (point)
+                     (min (+ (point) 10) (point-max)))))
+    (message "Character: %c, Next: %s, Context: looking at citation? %s"
+             char-at-point next-chars
+             (looking-at "\\^{\\[\\["))))
 
 ;; Set up for org-mode
 (add-hook 'org-mode-hook 'org-highlight-custom-syntax)
@@ -447,6 +534,14 @@ When disabling auto-activation, immediately deactivates org-queue-mode."
     (with-current-buffer buf
       (when (eq major-mode 'org-mode)
         (org-highlight-custom-syntax)))))
+
+;; Command to manually refresh the current buffer
+(defun org-refresh-custom-highlighting ()
+  "Refresh custom syntax highlighting in current buffer."
+  (interactive)
+  (when (eq major-mode 'org-mode)
+    (org-highlight-custom-syntax)
+    (message "Custom syntax highlighting refreshed")))
 
 ;; Run initially when loading
 (when (featurep 'org)
