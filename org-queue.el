@@ -54,42 +54,62 @@
 (defvar org-queue-mode-map (make-sparse-keymap)
   "Keymap for org-queue-mode.")
 
+;; Create prefix keymap for Android compatibility
+(defvar org-queue-prefix-map (make-sparse-keymap)
+  "Prefix keymap for org-queue commands.")
+
 (progn
-  ;; Commands
-  (define-key org-queue-mode-map (kbd "t") 'org-queue-toggle-auto-enable)
-  (define-key org-queue-mode-map (kbd ",") #'my-set-priority-with-heuristics)
-  (define-key org-queue-mode-map (kbd "s") #'my-schedule-command)
-  (define-key org-queue-mode-map (kbd "f") #'my-show-next-outstanding-task)
-  (define-key org-queue-mode-map (kbd "b") #'my-show-previous-outstanding-task)
-  (define-key org-queue-mode-map (kbd "c") #'my-show-current-outstanding-task)
-  (define-key org-queue-mode-map (kbd "r") #'my-remove-current-task)
-  (define-key org-queue-mode-map (kbd "R") #'my-reset-and-show-current-outstanding-task)
-  (define-key org-queue-mode-map (kbd "i") #'my-increase-priority-range)
-  (define-key org-queue-mode-map (kbd "d") #'my-decrease-priority-range)
-  (define-key org-queue-mode-map (kbd "D") #'org-demote-subtree)
-  (define-key org-queue-mode-map (kbd "a") #'my-advance-schedule)
-  (define-key org-queue-mode-map (kbd "p") #'my-postpone-schedule)
-  (define-key org-queue-mode-map (kbd "P") #'org-promote-subtree)
-  (define-key org-queue-mode-map (kbd "n") #'org-narrow-to-subtree)
-  (define-key org-queue-mode-map (kbd "w") #'widen-and-recenter)
-  (define-key org-queue-mode-map (kbd "W") #'org-cut-subtree)
-  (define-key org-queue-mode-map (kbd "Y") #'org-paste-subtree)
-  (define-key org-queue-mode-map (kbd "u") #'org-show-parent-heading-cleanly)
-  (define-key org-queue-mode-map (kbd "x") #'org-interactive-extract)
-  (define-key org-queue-mode-map (kbd "X") #'org-remove-all-extract-blocks)    
+  ;; Define all commands in BOTH keymaps (no redundancy - single definition)
+  (dolist (binding '(("t" org-queue-toggle-auto-enable)
+                     ("," my-set-priority-with-heuristics)
+                     ("s" my-schedule-command)
+                     ("f" my-show-next-outstanding-task)
+                     ("b" my-show-previous-outstanding-task)
+                     ("c" my-show-current-outstanding-task)
+                     ("r" my-remove-current-task)
+                     ("R" my-reset-and-show-current-outstanding-task)
+                     ("i" my-increase-priority-range)
+                     ("d" my-decrease-priority-range)
+                     ("D" org-demote-subtree)
+                     ("a" my-advance-schedule)
+                     ("p" my-postpone-schedule)
+                     ("P" org-promote-subtree)
+                     ("n" org-narrow-to-subtree)
+                     ("w" widen-and-recenter)
+                     ("W" org-cut-subtree)
+                     ("Y" org-paste-subtree)
+                     ("u" org-show-parent-heading-cleanly)
+                     ("x" org-interactive-extract)
+                     ("X" org-remove-all-extract-blocks)))
+    (let ((key (car binding))
+          (command (cadr binding)))
+      (define-key org-queue-mode-map (kbd key) command)
+      (define-key org-queue-prefix-map (kbd key) command)))
+  
+  ;; Optional commands (only if packages exist)
   (when (require 'org-web-tools nil t)
     (define-key org-queue-mode-map (kbd "l") #'org-web-tools-insert-link-for-url)
-    (define-key org-queue-mode-map (kbd "I") #'org-web-tools-insert-web-page-as-entry))
+    (define-key org-queue-prefix-map (kbd "l") #'org-web-tools-insert-link-for-url)
+    (define-key org-queue-mode-map (kbd "I") #'org-web-tools-insert-web-page-as-entry)
+    (define-key org-queue-prefix-map (kbd "I") #'org-web-tools-insert-web-page-as-entry))
   (when (require 'gptel nil t)
-    (define-key org-queue-mode-map (kbd "g") #'gptel))
+    (define-key org-queue-mode-map (kbd "g") #'gptel)
+    (define-key org-queue-prefix-map (kbd "g") #'gptel))
   (when (require 'org-srs nil t)
     (define-key org-queue-mode-map (kbd "1") #'org-srs-review-rate-again)
+    (define-key org-queue-prefix-map (kbd "1") #'org-srs-review-rate-again)
     (define-key org-queue-mode-map (kbd "3") #'org-srs-review-rate-good)
-    (define-key org-queue-mode-map (kbd "z") #'org-interactive-cloze))
+    (define-key org-queue-prefix-map (kbd "3") #'org-srs-review-rate-good)
+    (define-key org-queue-mode-map (kbd "z") #'org-interactive-cloze)
+    (define-key org-queue-prefix-map (kbd "z") #'org-interactive-cloze))
   
   ;; Exit key
-  (define-key org-queue-mode-map (kbd "e") 
-		(lambda () (interactive) (org-queue-mode -1))))
+  (let ((exit-cmd (lambda () (interactive) (org-queue-mode -1))))
+    (define-key org-queue-mode-map (kbd "e") exit-cmd)
+    (define-key org-queue-prefix-map (kbd "e") exit-cmd)))
+
+;; Bind the prefix globally to C-;
+(global-set-key (kbd "C-;") org-queue-prefix-map)
 
 ;; Define a simple ignore function - no conditionals
 (defun org-queue-ignore ()
@@ -122,34 +142,34 @@
   (define-key org-queue-mode-map (kbd allowed-key) nil))
 
 ;; State tracking variables
-  (defvar org-queue--original-cursor nil
-    "Persistent cursor state storage")
+(defvar org-queue--original-cursor nil
+  "Persistent cursor state storage")
 
-  ;; Define custom face for the lighter
-  (defface org-queue-mode-line-face
-    '((t :inherit font-lock-builtin-face
-         :weight bold
-         :foreground "#B71C1C"
-         :background "#FFCDD2"))
-    "Face for org-queue mode lighter.")
+;; Define custom face for the lighter
+(defface org-queue-mode-line-face
+  '((t :inherit font-lock-builtin-face
+       :weight bold
+       :foreground "#B71C1C"
+       :background "#FFCDD2"))
+  "Face for org-queue mode lighter.")
 
-  ;; The core minor mode with colored lighter
-  (define-minor-mode org-queue-mode
-    "Global minor mode for task queue management."
-    :init-value nil
-    :global t
-    :keymap org-queue-mode-map
-    :lighter (:propertize " OrgQ" face org-queue-mode-line-face)
-    (if org-queue-mode
-        (progn
-          (setq org-queue--original-cursor cursor-type
-                cursor-type '(box . 3)  ; Thicker box cursor
-                blink-cursor-blinks 0
-                blink-cursor-interval 0.7))
-      ;; Restore cursor on disable
-      (setq cursor-type org-queue--original-cursor
-            blink-cursor-blinks 40
-            blink-cursor-interval 0.5)))
+;; The core minor mode with colored lighter
+(define-minor-mode org-queue-mode
+  "Global minor mode for task queue management."
+  :init-value nil
+  :global t
+  :keymap org-queue-mode-map
+  :lighter (:propertize " OrgQ" face org-queue-mode-line-face)
+  (if org-queue-mode
+      (progn
+        (setq org-queue--original-cursor cursor-type
+              cursor-type '(box . 3)  ; Thicker box cursor
+              blink-cursor-blinks 0
+              blink-cursor-interval 0.7))
+    ;; Restore cursor on disable
+    (setq cursor-type org-queue--original-cursor
+          blink-cursor-blinks 40
+          blink-cursor-interval 0.5)))
 
 (defcustom org-queue-auto-enable nil
   "When non-nil, org-queue-mode will automatically activate after idle time.
@@ -1218,7 +1238,7 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
 ;; Define a customizable variable for the base directory.
 (defcustom org-queue-directory nil
   "Base directory for task files for Org Queue.
-  If nil, a safe default directory will be used and created automatically."
+    If nil, a safe default directory will be used and created automatically."
   :type 'directory
   :group 'org-queue)
 
@@ -1226,7 +1246,7 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
 (defcustom my-outstanding-tasks-cache-file
   (expand-file-name "org-queue-outstanding-tasks.cache" cache-dir)
   "File path to store the cached outstanding tasks list along with its date stamp.
-    By default, this file will be inside the cache directory (cache-dir)."
+      By default, this file will be inside the cache directory (cache-dir)."
   :type 'string
   :group 'org-queue)
 
@@ -1235,7 +1255,7 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
   "List of outstanding tasks, sorted by priority.")
 
 (defun my-save-outstanding-tasks-to-file ()
-  "Save task list to cache, correctly handling plists or markers."
+  "Save task list and current index to cache, correctly handling plists or markers."
   (with-temp-file my-outstanding-tasks-cache-file
     (let* ((today (format-time-string "%Y-%m-%d"))
            (tasks-saved
@@ -1262,16 +1282,19 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
                                           full)))
                              (cons path (marker-position marker)))))))
                    my-outstanding-tasks-list))))
-      (insert (prin1-to-string (list :date today :tasks tasks-saved))))))
+      (insert (prin1-to-string (list :date today 
+                                     :tasks tasks-saved 
+                                     :index my-outstanding-tasks-index))))))
 
 (defun my-load-outstanding-tasks-from-file ()
-  "Load cached tasks, creating proper plist structures."
+  "Load cached tasks and index, creating proper plist structures."
   (if (file-exists-p my-outstanding-tasks-cache-file)
       (let* ((data (with-temp-buffer
                      (insert-file-contents my-outstanding-tasks-cache-file)
                      (read (buffer-string))))
              (saved-date (plist-get data :date))
              (saved-tasks (plist-get data :tasks))
+             (saved-index (plist-get data :index))
              (today (format-time-string "%Y-%m-%d")))
         (if (string= saved-date today)
             (progn
@@ -1299,6 +1322,7 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
                                      :flag flag
                                      :file file))))))
                      saved-tasks))
+              (setq my-outstanding-tasks-index (or saved-index 0))
               t)
           nil))
     nil))
@@ -1369,7 +1393,6 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
 							 as the basis for linear interpolation. The calculated `months` is passed to
 							 `my-random-schedule` for randomness. Save all modified files before and after processing."
   (interactive)
-  (my-reset-outstanding-tasks-index)
   ;; Save all modified buffers before processing
   (save-some-buffers t) ;; Save all modified buffers without prompting
   (let* ((highest-priority org-priority-highest)  ; Highest priority value (e.g., 1)
@@ -1557,28 +1580,40 @@ Saves buffers and regenerates the task list for consistency."
                  (- original-count (length my-outstanding-tasks-list))))))
   (my-reset-outstanding-tasks-index))
 
+(defvar my-android-p 
+  (eq system-type 'android)
+  "Non-nil if running on Android.")
+
 (defun my-launch-anki ()
   "Launch Anki application if it exists. Works on Windows and macOS. On error or Android, show message and call `my-show-current-flag-status`."
   (interactive)
-  (let ((anki-path
-         (cond
-          ;; Windows
-          ((eq system-type 'windows-nt)
-           (expand-file-name "AppData/Local/Programs/Anki/anki.exe" (getenv "USERPROFILE")))
-          ;; macOS (default install location)
-          ((eq system-type 'darwin)
-           "/Applications/Anki.app/Contents/MacOS/Anki")
-          ;; Else nil (e.g. Android/GNU/Linux)
-          (t nil))))
-    (if (and anki-path (file-exists-p anki-path))
-        (condition-case err
-            (start-process "Anki" nil anki-path)
-          (error
-           (message "Failed to launch Anki: %s" (error-message-string err))
-           (my-show-current-flag-status)))
-      (message "Anki executable not found%s"
-               (if anki-path (format " at: %s" anki-path) " on this OS."))
-      (my-show-current-flag-status))))
+  (cond
+   ;; Android: Just show flag status and message
+   (my-android-p
+    (message "📱 Please open Anki app manually for reviews")
+    (my-show-current-flag-status))
+   
+   ;; Desktop systems
+   (t
+    (let ((anki-path
+           (cond
+            ;; Windows
+            ((eq system-type 'windows-nt)
+             (expand-file-name "AppData/Local/Programs/Anki/anki.exe" (getenv "USERPROFILE")))
+            ;; macOS (default install location)
+            ((eq system-type 'darwin)
+             "/Applications/Anki.app/Contents/MacOS/Anki")
+            ;; Else nil (e.g. GNU/Linux)
+            (t nil))))
+      (if (and anki-path (file-exists-p anki-path))
+          (condition-case err
+              (start-process "Anki" nil anki-path)
+            (error
+             (message "Failed to launch Anki: %s" (error-message-string err))
+             (my-show-current-flag-status)))
+        (message "Anki executable not found%s"
+                 (if anki-path (format " at: %s" anki-path) " on this OS."))
+        (my-show-current-flag-status))))))
 
 (defconst my-priority-flag-table
   '((1 . "Flag:1")          ; 1
@@ -1762,7 +1797,13 @@ Defaults to 0.2 seconds."
 (defun my-show-next-outstanding-task ()
   "Show the next outstanding task in priority order with proper SRS handling."
   (interactive)
-  
+
+  ;; Always try to load from file first for multi-device sync
+  (unless (my-load-outstanding-tasks-from-file)
+    ;; If file load fails, generate fresh list
+    (my-get-outstanding-tasks)
+    (setq my-outstanding-tasks-index 0))
+
   ;; First check if SRS session just ended (detect message)
   (when (and (current-message)
              (string-match-p "No more cards to review" (current-message)))
@@ -1787,6 +1828,9 @@ Defaults to 0.2 seconds."
     (when (>= my-outstanding-tasks-index (length my-outstanding-tasks-list))
       (setq my-outstanding-tasks-index 0)))
   
+  ;; Save the updated index to file for multi-device sync
+  (my-save-outstanding-tasks-to-file)
+  
   ;; Now show the task at the current index
   (if (and my-outstanding-tasks-list
            (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
@@ -1795,21 +1839,32 @@ Defaults to 0.2 seconds."
         (my-display-task-at-marker task-or-marker)
         (my-pulse-highlight-current-line)
         
-        ;; Handle SRS reviews
-	(if (not my-srs-reviews-exhausted)
-	    (progn
-	      (my-srs-quit-reviews)
-	      (condition-case nil
-		  (my-srs-start-reviews)
-		(error (setq my-srs-reviews-exhausted t))))
-	  (my-launch-anki))
+	;; Handle SRS reviews
+	(if my-android-p
+	    ;; On Android: skip SRS, just launch Anki
+	    (my-launch-anki)
+	  ;; On desktop: use SRS integration
+	  (if (not my-srs-reviews-exhausted)
+	      (progn
+		(my-srs-quit-reviews)
+		(condition-case nil
+		    (my-srs-start-reviews)
+		  (error (setq my-srs-reviews-exhausted t))))
+	    (my-launch-anki)))
 
-  	(my-show-current-flag-status))
+    	(my-show-current-flag-status))
     (message "No outstanding tasks found.")))
 
 (defun my-show-previous-outstanding-task ()
   "Show the previous outstanding task in priority order, cycling if needed."
   (interactive)
+
+  ;; Always try to load from file first for multi-device sync
+  (unless (my-load-outstanding-tasks-from-file)
+    ;; If file load fails, generate fresh list
+    (my-get-outstanding-tasks)
+    (setq my-outstanding-tasks-index 0))
+
   ;; Ensure the list exists
   (unless my-outstanding-tasks-list (my-get-outstanding-tasks))
   
@@ -1820,6 +1875,9 @@ Defaults to 0.2 seconds."
             (setq my-outstanding-tasks-index (1- (length my-outstanding-tasks-list)))
           (setq my-outstanding-tasks-index (1- my-outstanding-tasks-index)))
         
+        ;; Save the updated index to file for multi-device sync
+        (my-save-outstanding-tasks-to-file)
+        
         (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
           (my-display-task-at-marker task-or-marker)
           (my-pulse-highlight-current-line)
@@ -1829,6 +1887,13 @@ Defaults to 0.2 seconds."
 (defun my-show-current-outstanding-task ()
   "Show the current outstanding task, or get a new list and show the first task if not valid."
   (interactive)
+
+  ;; Always try to load from file first for multi-device sync
+  (unless (my-load-outstanding-tasks-from-file)
+    ;; If file load fails, generate fresh list
+    (my-get-outstanding-tasks)
+    (setq my-outstanding-tasks-index 0))
+
   ;; If no list or index invalid, get/reset the list
   (when (or (not my-outstanding-tasks-list)
            (< my-outstanding-tasks-index 0)
@@ -1883,7 +1948,6 @@ Defaults to 0.2 seconds."
                 (message "Step 2A: Cache exists, processing...")
                 (when (boundp 'my-srs-reviews-exhausted)
                   (setq my-srs-reviews-exhausted nil))
-                (setq my-outstanding-tasks-index 0)
                 (message "Step 2A complete: About to schedule task display"))
             
             (progn
