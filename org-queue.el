@@ -1879,15 +1879,15 @@ Defaults to 0.2 seconds."
         (my-display-task-at-marker task-or-marker)
         (my-pulse-highlight-current-line)
         
-        ;; Handle SRS reviews
-        (if my-android-p
+	;; Handle SRS reviews
+	(if my-android-p
             ;; On Android: skip SRS, just launch Anki
             (my-launch-anki)
           ;; On desktop: use SRS integration
           (if (not my-srs-reviews-exhausted)
               (progn
-                (my-srs-quit-reviews)
-                (condition-case nil
+		(my-srs-quit-reviews)
+		(condition-case nil
                     (my-srs-start-reviews)
                   (error (setq my-srs-reviews-exhausted t))))
             (my-launch-anki)))
