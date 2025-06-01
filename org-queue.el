@@ -1838,11 +1838,15 @@ Defaults to 0.2 seconds."
   "Show the next outstanding task in priority order with proper SRS handling."
   (interactive)
 
-  ;; Always try to load from file first for multi-device sync
-  (unless (my-load-outstanding-tasks-from-file)
-    ;; If file load fails, generate fresh list
-    (my-get-outstanding-tasks)
-    (setq my-outstanding-tasks-index 0))
+  ;; Only load index from file for multi-device sync (not the full task list)
+  (unless my-outstanding-tasks-list
+    ;; If no task list exists, load from file OR generate fresh
+    (unless (my-load-outstanding-tasks-from-file)
+      (my-get-outstanding-tasks)
+      (setq my-outstanding-tasks-index 0)))
+  
+  ;; Load just the index for device sync
+  (my-load-index-from-file)
 
   ;; First check if SRS session just ended (detect message)
   (when (and (current-message)
@@ -1868,7 +1872,7 @@ Defaults to 0.2 seconds."
     (when (>= my-outstanding-tasks-index (length my-outstanding-tasks-list))
       (setq my-outstanding-tasks-index 0)))
   
-  ;; Save the updated index to separate file for device-specific persistence
+  ;; Save only the updated index (not the full task list)
   (my-save-index-to-file)
   
   ;; Now show the task at the current index
@@ -1880,17 +1884,13 @@ Defaults to 0.2 seconds."
         (my-pulse-highlight-current-line)
         
 	;; Handle SRS reviews
-	(if my-android-p
-            ;; On Android: skip SRS, just launch Anki
-            (my-launch-anki)
-          ;; On desktop: use SRS integration
-          (if (not my-srs-reviews-exhausted)
-              (progn
-		(my-srs-quit-reviews)
-		(condition-case nil
-                    (my-srs-start-reviews)
-                  (error (setq my-srs-reviews-exhausted t))))
-            (my-launch-anki)))
+        (if (not my-srs-reviews-exhausted)
+            (progn
+	      (my-srs-quit-reviews)
+	      (condition-case nil
+                  (my-srs-start-reviews)
+                (error (setq my-srs-reviews-exhausted t))))
+          (my-launch-anki))
 
         (my-show-current-flag-status))
     (message "No outstanding tasks found.")))
@@ -1899,11 +1899,15 @@ Defaults to 0.2 seconds."
   "Show the previous outstanding task in priority order, cycling if needed."
   (interactive)
 
-  ;; Always try to load from file first for multi-device sync
-  (unless (my-load-outstanding-tasks-from-file)
-    ;; If file load fails, generate fresh list
-    (my-get-outstanding-tasks)
-    (setq my-outstanding-tasks-index 0))
+  ;; Only load index from file for multi-device sync (not the full task list)
+  (unless my-outstanding-tasks-list
+    ;; If no task list exists, load from file OR generate fresh
+    (unless (my-load-outstanding-tasks-from-file)
+      (my-get-outstanding-tasks)
+      (setq my-outstanding-tasks-index 0)))
+  
+  ;; Load just the index for device sync
+  (my-load-index-from-file)
 
   ;; Ensure the list exists
   (unless my-outstanding-tasks-list (my-get-outstanding-tasks))
@@ -1915,7 +1919,7 @@ Defaults to 0.2 seconds."
             (setq my-outstanding-tasks-index (1- (length my-outstanding-tasks-list)))
           (setq my-outstanding-tasks-index (1- my-outstanding-tasks-index)))
         
-        ;; Save the updated index to separate file for device-specific persistence
+        ;; Save only the updated index (not the full task list)
         (my-save-index-to-file)
         
         (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
@@ -1928,11 +1932,15 @@ Defaults to 0.2 seconds."
   "Show the current outstanding task, or get a new list and show the first task if not valid."
   (interactive)
 
-  ;; Always try to load from file first for multi-device sync
-  (unless (my-load-outstanding-tasks-from-file)
-    ;; If file load fails, generate fresh list
-    (my-get-outstanding-tasks)
-    (setq my-outstanding-tasks-index 0))
+  ;; Only load index from file for multi-device sync (not the full task list)
+  (unless my-outstanding-tasks-list
+    ;; If no task list exists, load from file OR generate fresh
+    (unless (my-load-outstanding-tasks-from-file)
+      (my-get-outstanding-tasks)
+      (setq my-outstanding-tasks-index 0)))
+  
+  ;; Load just the index for device sync
+  (my-load-index-from-file)
 
   ;; If no list or index invalid, get/reset the list
   (when (or (not my-outstanding-tasks-list)
@@ -2030,22 +2038,37 @@ Defaults to 0.2 seconds."
         
         (message "Step 3: Enabling org-queue-mode...")
         (org-queue-mode 1)
-        (message "✓ Automatic task setup completed successfully.")
+
+	;; Step 4: Initialize SRS system for faster future access
+	(message "Step 4: Pre-initializing SRS system...")
+        (if (not my-srs-reviews-exhausted)
+            (progn
+	      (my-srs-quit-reviews)
+	      (condition-case nil
+                  (progn
+                    (my-srs-start-reviews)
+                    (my-srs-quit-reviews)
+                    ;; Switch to scratch buffer to hide SRS initialization from user
+                    (switch-to-buffer "*scratch*"))
+                (error (setq my-srs-reviews-exhausted t))))
+          (my-launch-anki))
+	
+	(message "✓ Automatic task setup completed successfully.")
         
         ;; Schedule task display - this is done whether cache exists or not
         (run-with-idle-timer 1.5 nil
-                           (lambda ()
-                             (condition-case err
-                                 (if (and my-outstanding-tasks-list
-                                          (> (length my-outstanding-tasks-list) 0)
-                                          (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
-                                     (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
-                                       ;; Use safe display function
-                                       (my-display-task-at-marker task-or-marker)
-                                       (my-show-current-flag-status))
-                                   (message "Task list empty or invalid index"))
-                               (error
-                                (message "Error preparing task display: %s" (error-message-string err))))))
+                             (lambda ()
+                               (condition-case err
+                                   (if (and my-outstanding-tasks-list
+                                            (> (length my-outstanding-tasks-list) 0)
+                                            (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+                                       (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
+					 ;; Use safe display function
+					 (my-display-task-at-marker task-or-marker)
+					 (my-show-current-flag-status))
+                                     (message "Task list empty or invalid index"))
+				 (error
+                                  (message "Error preparing task display: %s" (error-message-string err))))))
         (message "Task display scheduled.")
 
         ;; Disable debug mode after successful setup
