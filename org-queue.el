@@ -1,6 +1,11 @@
 (require 'org-agenda)
 (require 'cl-lib)  ;; Required for cl-find-if and cl-remove-if-not
 
+(defgroup org-queue nil
+  "Task queue management for Org mode."
+  :group 'org
+  :prefix "org-queue-")
+
 ;; Disable large file warning
 (setq large-file-warning-threshold nil)
 
@@ -26,8 +31,8 @@
     (8 . (45 . 58))
     (9 . (58 . 64)))
   "Global priority ranges for setting random priorities.
-									    Each entry is a cons cell where the car is the range identifier
-									    and the cdr is a cons cell representing the minimum and maximum priority values."
+Each entry is a cons cell where the car is the range identifier
+and the cdr is a cons cell representing the minimum and maximum priority values."
   :type '(alist :key-type integer :value-type (cons integer integer))
   :group 'org-queue)
 
