@@ -1243,7 +1243,7 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
 ;; Define a customizable variable for the base directory.
 (defcustom org-queue-directory nil
   "Base directory for task files for Org Queue.
-        If nil, a safe default directory will be used and created automatically."
+          If nil, a safe default directory will be used and created automatically."
   :type 'directory
   :group 'org-queue)
 
@@ -1251,13 +1251,13 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
 (defcustom my-outstanding-tasks-cache-file
   (expand-file-name "org-queue-outstanding-tasks.cache" cache-dir)
   "File path to store the cached outstanding tasks list along with its date stamp.
-          By default, this file will be inside the cache directory (cache-dir)."
+            By default, this file will be inside the cache directory (cache-dir)."
   :type 'string
   :group 'org-queue)
 
 (defcustom my-outstanding-tasks-index-file
-  (expand-file-name (format "org-queue-index-%s.cache" (system-name)) cache-dir)
-  "File path to store the current task index, specific to this device/session."
+  (expand-file-name "org-queue-index.cache" cache-dir)
+  "File path to store the current task index."
   :type 'string
   :group 'org-queue)
 
@@ -1338,7 +1338,7 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
                        (let* ((stored-path (car task-pair))
                               (position (cdr task-pair))
                               (abs-path (if (or (file-name-absolute-p stored-path)
-						(string-match-p "^[A-Za-z]:[/\\\\]" stored-path))
+  						(string-match-p "^[A-Za-z]:[/\\\\]" stored-path))
                                             stored-path
                                           (expand-file-name stored-path 
                                                             (or org-queue-directory default-directory)))))
@@ -2039,21 +2039,23 @@ Defaults to 0.2 seconds."
         (message "Step 3: Enabling org-queue-mode...")
         (org-queue-mode 1)
 
-	;; Step 4: Initialize SRS system for faster future access
-	(message "Step 4: Pre-initializing SRS system...")
+        ;; Step 4: Initialize SRS system for faster future access
+        (message "Step 4: Pre-initializing SRS system...")
         (if (not my-srs-reviews-exhausted)
             (progn
-	      (my-srs-quit-reviews)
-	      (condition-case nil
+              (my-srs-quit-reviews)
+              (condition-case nil
                   (progn
-                    (my-srs-start-reviews)
-                    (my-srs-quit-reviews)
-                    ;; Switch to scratch buffer to hide SRS initialization from user
-                    (switch-to-buffer "*scratch*"))
+		    (let ((temp-frame (make-frame '((visibility . nil) (width . 80) (height . 24)))))
+		      (with-selected-frame temp-frame
+			(cl-letf (((symbol-function 'read-key) (lambda (&rest _) 32)))
+			  (my-srs-start-reviews))
+			(my-srs-quit-reviews))
+		      (delete-frame temp-frame)))
                 (error (setq my-srs-reviews-exhausted t))))
           (my-launch-anki))
-	
-	(message "✓ Automatic task setup completed successfully.")
+        
+        (message "✓ Automatic task setup completed successfully.")
         
         ;; Schedule task display - this is done whether cache exists or not
         (run-with-idle-timer 1.5 nil
@@ -2063,11 +2065,11 @@ Defaults to 0.2 seconds."
                                             (> (length my-outstanding-tasks-list) 0)
                                             (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
                                        (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
-					 ;; Use safe display function
-					 (my-display-task-at-marker task-or-marker)
-					 (my-show-current-flag-status))
+                			 ;; Use safe display function
+                			 (my-display-task-at-marker task-or-marker)
+                			 (my-show-current-flag-status))
                                      (message "Task list empty or invalid index"))
-				 (error
+                		 (error
                                   (message "Error preparing task display: %s" (error-message-string err))))))
         (message "Task display scheduled.")
 
