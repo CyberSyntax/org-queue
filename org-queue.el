@@ -56,6 +56,10 @@ and the cdr is a cons cell representing the minimum and maximum priority values.
 	(let ((priority-value (string-to-number current-priority)))
 	  (my-find-priority-range priority-value)))))
 
+(defvar my-android-p 
+  (eq system-type 'android)
+  "Non-nil if running on Android.")
+
 (defvar org-queue-mode-map (make-sparse-keymap)
   "Keymap for org-queue-mode.")
 
@@ -116,35 +120,37 @@ and the cdr is a cons cell representing the minimum and maximum priority values.
 ;; Bind the prefix globally to C-;
 (global-set-key (kbd "C-;") org-queue-prefix-map)
 
-;; Define a simple ignore function - no conditionals
-(defun org-queue-ignore ()
-  "Ignore key presses unconditionally."
-  (interactive)
-  (message "Key blocked by org-queue-mode (press e to exit)")
-  (ignore))
+;; Only block keys if NOT on Android
+(unless my-android-p
+  ;; Define a simple ignore function - no conditionals
+  (defun org-queue-ignore ()
+    "Ignore key presses unconditionally."
+    (interactive)
+    (message "Key blocked by org-queue-mode (press e to exit)")
+    (ignore))
 
-;; Block standard typing keys (ASCII 32-126)
-(dolist (char (number-sequence 32 126))
-  (let ((key (char-to-string char)))
-    (unless (lookup-key org-queue-mode-map (kbd key))
-      (define-key org-queue-mode-map (kbd key) #'org-queue-ignore))))
+  ;; Block standard typing keys (ASCII 32-126)
+  (dolist (char (number-sequence 32 126))
+    (let ((key (char-to-string char)))
+      (unless (lookup-key org-queue-mode-map (kbd key))
+        (define-key org-queue-mode-map (kbd key) #'org-queue-ignore))))
 
-;; Block common editing keys
-(dolist (key-binding '("<backspace>" "<delete>" "<deletechar>"
-                      "<return>" "RET" "DEL"))
-  (unless (lookup-key org-queue-mode-map (kbd key-binding))
-    (define-key org-queue-mode-map (kbd key-binding) #'org-queue-ignore)))
+  ;; Block common editing keys
+  (dolist (key-binding '("<backspace>" "<delete>" "<deletechar>"
+                        "<return>" "RET" "DEL"))
+    (unless (lookup-key org-queue-mode-map (kbd key-binding))
+      (define-key org-queue-mode-map (kbd key-binding) #'org-queue-ignore)))
 
-;; Block pasting and other input-adding commands
-(dolist (input-key '("C-y" "C-d" "C-k" "C-o" "C-j" "C-m"))
-  (define-key org-queue-mode-map (kbd input-key) #'org-queue-ignore))
+  ;; Block pasting and other input-adding commands
+  (dolist (input-key '("C-y" "C-d" "C-k" "C-o" "C-j" "C-m"))
+    (define-key org-queue-mode-map (kbd input-key) #'org-queue-ignore))
 
-;; Explicitly allow navigation keys and copy operations
-(dolist (allowed-key '("<tab>" "TAB" "<up>" "<down>" "<left>" "<right>"
-                      "<prior>" "<next>" "<home>" "<end>" 
-                      "C-v" "M-v" "C-l" "C-n" "C-p"
-                      "C-c" "M-w" "C-w"))  ;; allow copying and cutting
-  (define-key org-queue-mode-map (kbd allowed-key) nil))
+  ;; Explicitly allow navigation keys and copy operations
+  (dolist (allowed-key '("<tab>" "TAB" "<up>" "<down>" "<left>" "<right>"
+                        "<prior>" "<next>" "<home>" "<end>" 
+                        "C-v" "M-v" "C-l" "C-n" "C-p"
+                        "C-c" "M-w" "C-w"))  ;; allow copying and cutting
+    (define-key org-queue-mode-map (kbd allowed-key) nil)))
 
 ;; State tracking variables
 (defvar org-queue--original-cursor nil
@@ -184,7 +190,6 @@ Set this to nil to prevent automatic activation."
 
 ;; Auto-enable timer (if needed)
 (defvar org-queue--auto-timer nil)
-(defvar org-queue-auto-enable t)
 
 (defun org-queue-setup-auto-timer ()
   (when org-queue--auto-timer
@@ -1630,10 +1635,6 @@ Saves buffers and regenerates the task list for consistency."
         (message "%d consecutive task(s) postponed, list regenerated."
                  (- original-count (length my-outstanding-tasks-list))))))
   (my-reset-outstanding-tasks-index))
-
-(defvar my-android-p 
-  (eq system-type 'android)
-  "Non-nil if running on Android.")
 
 (defun my-launch-anki ()
   "Launch Anki application if it exists. Works on Windows and macOS. On error or Android, show message and call `my-show-current-flag-status`."
