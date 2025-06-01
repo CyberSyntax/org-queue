@@ -1883,14 +1883,18 @@ Defaults to 0.2 seconds."
         (my-display-task-at-marker task-or-marker)
         (my-pulse-highlight-current-line)
         
-	;; Handle SRS reviews
-        (if (not my-srs-reviews-exhausted)
-            (progn
-	      (my-srs-quit-reviews)
-	      (condition-case nil
-                  (my-srs-start-reviews)
-                (error (setq my-srs-reviews-exhausted t))))
-          (my-launch-anki))
+  	;; Handle SRS reviews
+  	(if my-android-p
+            ;; On Android: skip SRS, just launch Anki
+            (my-launch-anki)
+          ;; On desktop: use SRS integration
+          (if (not my-srs-reviews-exhausted)
+              (progn
+  		(my-srs-quit-reviews)
+  		(condition-case nil
+                    (my-srs-start-reviews)
+                  (error (setq my-srs-reviews-exhausted t))))
+            (my-launch-anki)))
 
         (my-show-current-flag-status))
     (message "No outstanding tasks found.")))
@@ -2038,22 +2042,23 @@ Defaults to 0.2 seconds."
         
         (message "Step 3: Enabling org-queue-mode...")
         (org-queue-mode 1)
-
+      	
         ;; Step 4: Initialize SRS system for faster future access
         (message "Step 4: Pre-initializing SRS system...")
-        (if (not my-srs-reviews-exhausted)
-            (progn
-              (my-srs-quit-reviews)
-              (condition-case nil
-                  (progn
-		    (let ((temp-frame (make-frame '((visibility . nil) (width . 80) (height . 24)))))
+	(unless my-android-p
+	  (if (not my-srs-reviews-exhausted)
+	      (progn
+		(my-srs-quit-reviews)
+		(let ((temp-frame (make-frame '((visibility . nil) (width . 80) (height . 24)))))
+		  (unwind-protect
 		      (with-selected-frame temp-frame
 			(cl-letf (((symbol-function 'read-key) (lambda (&rest _) 32)))
-			  (my-srs-start-reviews))
+			  (condition-case nil
+			      (my-srs-start-reviews)
+			    (error (setq my-srs-reviews-exhausted t))))
 			(my-srs-quit-reviews))
-		      (delete-frame temp-frame)))
-                (error (setq my-srs-reviews-exhausted t))))
-          (my-launch-anki))
+		    (delete-frame temp-frame))))
+	    (my-launch-anki)))
         
         (message "✓ Automatic task setup completed successfully.")
         
@@ -2065,11 +2070,11 @@ Defaults to 0.2 seconds."
                                             (> (length my-outstanding-tasks-list) 0)
                                             (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
                                        (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
-                			 ;; Use safe display function
-                			 (my-display-task-at-marker task-or-marker)
-                			 (my-show-current-flag-status))
+                              		 ;; Use safe display function
+                              		 (my-display-task-at-marker task-or-marker)
+                              		 (my-show-current-flag-status))
                                      (message "Task list empty or invalid index"))
-                		 (error
+                              	 (error
                                   (message "Error preparing task display: %s" (error-message-string err))))))
         (message "Task display scheduled.")
 
