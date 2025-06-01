@@ -1238,7 +1238,7 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
 ;; Define a customizable variable for the base directory.
 (defcustom org-queue-directory nil
   "Base directory for task files for Org Queue.
-    If nil, a safe default directory will be used and created automatically."
+        If nil, a safe default directory will be used and created automatically."
   :type 'directory
   :group 'org-queue)
 
@@ -1246,7 +1246,13 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
 (defcustom my-outstanding-tasks-cache-file
   (expand-file-name "org-queue-outstanding-tasks.cache" cache-dir)
   "File path to store the cached outstanding tasks list along with its date stamp.
-      By default, this file will be inside the cache directory (cache-dir)."
+          By default, this file will be inside the cache directory (cache-dir)."
+  :type 'string
+  :group 'org-queue)
+
+(defcustom my-outstanding-tasks-index-file
+  (expand-file-name (format "org-queue-index-%s.cache" (system-name)) cache-dir)
+  "File path to store the current task index, specific to this device/session."
   :type 'string
   :group 'org-queue)
 
@@ -1255,7 +1261,7 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
   "List of outstanding tasks, sorted by priority.")
 
 (defun my-save-outstanding-tasks-to-file ()
-  "Save task list and current index to cache, correctly handling plists or markers."
+  "Save task list to cache, correctly handling plists or markers. Index stored separately."
   (with-temp-file my-outstanding-tasks-cache-file
     (let* ((today (format-time-string "%Y-%m-%d"))
            (tasks-saved
@@ -1282,19 +1288,42 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
                                           full)))
                              (cons path (marker-position marker)))))))
                    my-outstanding-tasks-list))))
-      (insert (prin1-to-string (list :date today 
-                                     :tasks tasks-saved 
-                                     :index my-outstanding-tasks-index))))))
+      ;; Only save date and tasks, no index
+      (insert (prin1-to-string (list :date today :tasks tasks-saved)))))
+  
+  ;; Save index separately
+  (my-save-index-to-file))
 
+;; New function to save index separately
+(defun my-save-index-to-file ()
+  "Save the current task index to a device-specific file."
+  (with-temp-file my-outstanding-tasks-index-file
+    (insert (prin1-to-string (list :index my-outstanding-tasks-index
+                                   :timestamp (current-time))))))
+
+;; New function to load index separately
+(defun my-load-index-from-file ()
+  "Load the task index from device-specific file."
+  (when (file-exists-p my-outstanding-tasks-index-file)
+    (condition-case nil
+        (let* ((data (with-temp-buffer
+                       (insert-file-contents my-outstanding-tasks-index-file)
+                       (read (buffer-string))))
+               (saved-index (plist-get data :index)))
+          (when (and saved-index (numberp saved-index) (>= saved-index 0))
+            (setq my-outstanding-tasks-index saved-index)
+            t))
+      (error nil))))
+
+;; Modified load function - only load tasks, not index
 (defun my-load-outstanding-tasks-from-file ()
-  "Load cached tasks and index, creating proper plist structures."
+  "Load cached tasks, creating proper plist structures. Index loaded separately."
   (if (file-exists-p my-outstanding-tasks-cache-file)
       (let* ((data (with-temp-buffer
                      (insert-file-contents my-outstanding-tasks-cache-file)
                      (read (buffer-string))))
              (saved-date (plist-get data :date))
              (saved-tasks (plist-get data :tasks))
-             (saved-index (plist-get data :index))
              (today (format-time-string "%Y-%m-%d")))
         (if (string= saved-date today)
             (progn
@@ -1322,7 +1351,12 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
                                      :flag flag
                                      :file file))))))
                      saved-tasks))
-              (setq my-outstanding-tasks-index (or saved-index 0))
+              ;; Load index separately, fallback to 0 if not found
+              (unless (my-load-index-from-file)
+                (setq my-outstanding-tasks-index 0))
+              ;; Validate index bounds
+              (when (>= my-outstanding-tasks-index (length my-outstanding-tasks-list))
+                (setq my-outstanding-tasks-index 0))
               t)
           nil))
     nil))
@@ -1375,7 +1409,7 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
       (setq my-outstanding-tasks-index (1- (length my-outstanding-tasks-list)))
     (setq my-outstanding-tasks-index (1- my-outstanding-tasks-index)))
   
-  ;; Update cache file
+  ;; Update cache file (this will also save the updated index separately)
   (my-save-outstanding-tasks-to-file)
   
   ;; Show feedback
@@ -1770,6 +1804,7 @@ Defaults to 0.2 seconds."
 
 (defun my-display-task-at-marker (task-or-marker)
   "Display the task at TASK-OR-MARKER with appropriate visibility settings."
+  (widen-and-recenter)
   (let* ((marker (my-extract-marker task-or-marker))
          (buf (and marker (marker-buffer marker)))
          (pos (and marker (marker-position marker))))
@@ -1777,20 +1812,20 @@ Defaults to 0.2 seconds."
       (condition-case err
           (progn
             (switch-to-buffer buf)
-            (revert-buffer t t t) ;; Safe revert without confirmation
-            (widen)
-            (org-fold-show-all)
-            (org-cycle '(4)) ;; Like pressing shift-TAB once
+	    (widen-and-recenter)
             (goto-char pos)
-            (org-show-entry)
-            ;; Only recenter if buffer is in current window
-            (when (eq buf (window-buffer (selected-window)))
-              (recenter))
+            (widen-and-recenter)
+            
+            ;; Now do your intended display operations
             (org-narrow-to-subtree)
             (org-overview)
             (org-reveal t)
             (org-show-entry)
-            (show-children))
+            (show-children)
+            
+            ;; Final recenter
+            (when (eq buf (window-buffer (selected-window)))
+              (recenter)))
         (error
          (message "Error displaying task: %s" (error-message-string err)))))))
 
@@ -1828,8 +1863,8 @@ Defaults to 0.2 seconds."
     (when (>= my-outstanding-tasks-index (length my-outstanding-tasks-list))
       (setq my-outstanding-tasks-index 0)))
   
-  ;; Save the updated index to file for multi-device sync
-  (my-save-outstanding-tasks-to-file)
+  ;; Save the updated index to separate file for device-specific persistence
+  (my-save-index-to-file)
   
   ;; Now show the task at the current index
   (if (and my-outstanding-tasks-list
@@ -1839,20 +1874,20 @@ Defaults to 0.2 seconds."
         (my-display-task-at-marker task-or-marker)
         (my-pulse-highlight-current-line)
         
-	;; Handle SRS reviews
-	(if my-android-p
-	    ;; On Android: skip SRS, just launch Anki
-	    (my-launch-anki)
-	  ;; On desktop: use SRS integration
-	  (if (not my-srs-reviews-exhausted)
-	      (progn
-		(my-srs-quit-reviews)
-		(condition-case nil
-		    (my-srs-start-reviews)
-		  (error (setq my-srs-reviews-exhausted t))))
-	    (my-launch-anki)))
+        ;; Handle SRS reviews
+        (if my-android-p
+            ;; On Android: skip SRS, just launch Anki
+            (my-launch-anki)
+          ;; On desktop: use SRS integration
+          (if (not my-srs-reviews-exhausted)
+              (progn
+                (my-srs-quit-reviews)
+                (condition-case nil
+                    (my-srs-start-reviews)
+                  (error (setq my-srs-reviews-exhausted t))))
+            (my-launch-anki)))
 
-    	(my-show-current-flag-status))
+        (my-show-current-flag-status))
     (message "No outstanding tasks found.")))
 
 (defun my-show-previous-outstanding-task ()
@@ -1875,8 +1910,8 @@ Defaults to 0.2 seconds."
             (setq my-outstanding-tasks-index (1- (length my-outstanding-tasks-list)))
           (setq my-outstanding-tasks-index (1- my-outstanding-tasks-index)))
         
-        ;; Save the updated index to file for multi-device sync
-        (my-save-outstanding-tasks-to-file)
+        ;; Save the updated index to separate file for device-specific persistence
+        (my-save-index-to-file)
         
         (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
           (my-display-task-at-marker task-or-marker)
@@ -1916,7 +1951,7 @@ Defaults to 0.2 seconds."
   (interactive)
   (my-get-outstanding-tasks)
   (setq my-outstanding-tasks-index 0)
-  (my-save-outstanding-tasks-to-file)
+  (my-save-outstanding-tasks-to-file)  ;; This will save both tasks and index
   (message "Outstanding tasks index reset."))
 
 (defun my-reset-and-show-current-outstanding-task ()
