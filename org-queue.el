@@ -1859,6 +1859,8 @@ Defaults to 0.2 seconds."
   "Show the next outstanding task in priority order with proper SRS handling."
   (interactive)
 
+  (widen-and-recenter)
+
   ;; Ensure we have synchronized data
   (my-ensure-synchronized-task-list)
 
@@ -1917,6 +1919,8 @@ Defaults to 0.2 seconds."
   "Show the previous outstanding task in priority order, cycling if needed."
   (interactive)
 
+  (widen-and-recenter)
+  
   ;; Ensure we have synchronized data
   (my-ensure-synchronized-task-list)
   
@@ -1940,6 +1944,8 @@ Defaults to 0.2 seconds."
   "Show the current outstanding task, or get a new list and show the first task if not valid."
   (interactive)
 
+  (widen-and-recenter)
+  
   ;; Ensure we have synchronized data
   (my-ensure-synchronized-task-list)
     
