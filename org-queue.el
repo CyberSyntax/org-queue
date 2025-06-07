@@ -1777,15 +1777,19 @@ Saves buffers and regenerates the task list for consistency."
                (flag-num (plist-get data :flag-num))
                (fidx (plist-get data :flag-pos))
                (ftotal (plist-get data :flag-count))
-               (fleft (plist-get data :flag-left)))
-          (message "%s (%d of %d, %d left) | Task %s/%s"
+               (fleft (plist-get data :flag-left))
+               (tleft (if (and idx tasks) (- tasks idx) nil)))
+          (message "%s (%d of %d, %d left) | Task %d/%d, %d left"
                    (or flag-name (format "Flag %s" (or flag-num "?")))
                    fidx ftotal fleft
-                   (or idx "?")
-                   (or tasks 0)))
-      (message "No current flag info. Task %s/%s"
-               (or idx "?")
-               (or tasks 0)))))
+                   (or idx 0)
+                   (or tasks 0)
+                   (or tleft 0)))
+      (let ((tleft (if (and idx tasks) (- tasks idx) nil)))
+        (message "No current flag info. Task %d/%d, %d left"
+                 (or idx 0)
+                 (or tasks 0)
+                 (or tleft 0))))))
 
 (defun my-pulse-highlight-current-line (&optional time)
   "Temporarily pulse-highlight the current line.
