@@ -1311,59 +1311,56 @@ Skips scheduling if the current heading or its parent is an SRS entry
 (defun my-postpone-schedule ()
   "Postpone the current Org heading by a mathematically adjusted number of months.
 Uses priority-based factor multiplied with existing mathematical logic.
-- High priority tasks: reduced postponement via priority factor
-- Low priority tasks: full postponement as calculated
-- Already distant tasks: diminishing additional postponement (existing logic)
+- For overdue tasks: Allows scheduling for today (more urgent rescheduling)
+- For future tasks: Ensures minimum of tomorrow (true postponement)
 Skip postponing if the current entry or its parent contains an SRS drawer."
   (interactive)
   (when (and (not noninteractive)
              (eq major-mode 'org-mode))
-    ;; Check if this is an SRS entry (has SRS drawer in current or parent heading)
     (let ((srs-status (org-srs-entry-p (point))))
-      ;; Only proceed if not an SRS entry (i.e., org-srs-entry-p returns nil)
       (unless srs-status
-        (let* ((e (exp 1))  ; e ≈ 2.71828
-               (current-weight (max 0 (my-find-schedule-weight)))  ; Ensure non-negative value
+        (let* ((e (exp 1))
+               (current-weight (max 0 (my-find-schedule-weight)))
+               (is-overdue (my-is-overdue-task))  ; ← 자동 감지
                
-               ;; Get priority and calculate priority factor
+               ;; Priority calculations (unchanged)
                (priority-str (org-entry-get nil "PRIORITY"))
                (priority (if priority-str 
                             (string-to-number priority-str)
                           org-priority-default))
-               ;; Priority factor: 1.0 for lowest priority, approaches 0.1 for highest priority
                (priority-ratio (/ (float (- priority org-priority-highest))
                                  (float (- org-priority-lowest org-priority-highest))))
-               (priority-factor (+ 0.1 (* 0.9 priority-ratio)))  ; Range: 0.1 to 1.0
+               (priority-factor (+ 0.1 (* 0.9 priority-ratio)))
                
-               ;; EXISTING mathematical logic: f(x) = x + 1 / ln(x + e)
+               ;; Mathematical logic (unchanged)
                (base-adjusted-months (+ current-weight
                                        (/ 1 (log (+ current-weight e)))))
-               
-               ;; Apply priority factor to the mathematical result
                (priority-adjusted-months (* base-adjusted-months priority-factor))
-               
-               ;; Generate a random value between current-weight and priority-adjusted-months
                (min-months (min current-weight priority-adjusted-months))
                (max-months (max current-weight priority-adjusted-months))
                (random-months (random-float min-months max-months))
-               ;; Convert random-months to days
                (adjusted-days (* random-months 30.4375))
                (now (current-time))
                (proposed-new-time (time-add now (days-to-time adjusted-days)))
-               ;; Calculate tomorrow's midnight
-               (now-decoded (decode-time now))
-               (year (nth 5 now-decoded))
-               (month (nth 4 now-decoded))
-               (day (nth 3 now-decoded))
-               (tomorrow-midnight (encode-time 0 0 0 (1+ day) month year))
-               ;; Ensure new-time is at least tomorrow-midnight
-               (new-time (if (time-less-p proposed-new-time tomorrow-midnight)
-                             tomorrow-midnight
+               
+               ;; Smart minimum time based on overdue status
+               (minimum-time (if is-overdue
+                                now  ; Overdue: allow today
+                              ;; Future: tomorrow minimum
+                              (let* ((now-decoded (decode-time now))
+                                     (year (nth 5 now-decoded))
+                                     (month (nth 4 now-decoded))
+                                     (day (nth 3 now-decoded)))
+                                (encode-time 0 0 0 (1+ day) month year))))
+               
+               (new-time (if (time-less-p proposed-new-time minimum-time)
+                             minimum-time
                            proposed-new-time)))
-          ;; Schedule the task to the adjusted date
+          
           (org-schedule nil (format-time-string "%Y-%m-%d" new-time))
-          (message "Postponed: Priority %d (factor %.2f) → %.2f months" 
-                   priority priority-factor random-months))))))
+          (message "Postponed: Priority %d (factor %.2f) → %.2f months%s" 
+                   priority priority-factor random-months
+                   (if is-overdue " (overdue→today allowed)" "")))))))
 
 (defun my-custom-shuffle (list)
   "Fisher-Yates shuffle implementation for Emacs Lisp."
