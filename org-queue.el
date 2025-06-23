@@ -232,6 +232,339 @@ When disabling auto-activation, immediately deactivates org-queue-mode."
 ;; Bind <escape> to enable org-queue-mode
 (global-set-key (kbd "<escape>") 'my-enable-org-queue-mode)
 
+(defvar org-queue-menu-map (make-sparse-keymap "Org Queue")
+  "Menu map for org-queue commands.")
+
+;; Main menu definition with detailed categorization
+(define-key org-queue-menu-map [separator-8] '("--"))
+(define-key org-queue-menu-map [system-submenu]
+	    (cons "System" (make-sparse-keymap "System")))
+(define-key org-queue-menu-map [separator-7] '("--"))
+(define-key org-queue-menu-map [ai-integration-submenu]
+	    (cons "AI Integration" (make-sparse-keymap "AI Integration")))
+(define-key org-queue-menu-map [web-integration-submenu]
+	    (cons "Web Integration" (make-sparse-keymap "Web Integration")))
+(define-key org-queue-menu-map [separator-6] '("--"))
+(define-key org-queue-menu-map [schedule-control-submenu]
+	    (cons "Schedule Control" (make-sparse-keymap "Schedule Control")))
+(define-key org-queue-menu-map [priority-control-submenu]
+	    (cons "Priority Control" (make-sparse-keymap "Priority Control")))
+(define-key org-queue-menu-map [separator-5] '("--"))
+(define-key org-queue-menu-map [srs-review-submenu]
+	    (cons "SRS & Review" (make-sparse-keymap "SRS & Review")))
+(define-key org-queue-menu-map [content-creation-submenu]
+	    (cons "Content Creation" (make-sparse-keymap "Content Creation")))
+(define-key org-queue-menu-map [separator-4] '("--"))
+(define-key org-queue-menu-map [structure-editing-submenu]
+	    (cons "Structure Editing" (make-sparse-keymap "Structure Editing")))
+(define-key org-queue-menu-map [task-operations-submenu]
+	    (cons "Task Operations" (make-sparse-keymap "Task Operations")))
+(define-key org-queue-menu-map [separator-3] '("--"))
+(define-key org-queue-menu-map [view-control-submenu]
+	    (cons "View Control" (make-sparse-keymap "View Control")))
+(define-key org-queue-menu-map [navigation-submenu]
+	    (cons "Navigation" (make-sparse-keymap "Navigation")))
+
+;; Navigation submenu - task movement commands
+(define-key org-queue-menu-map [navigation-submenu next-task]
+	    '(menu-item "Next Outstanding Task" my-show-next-outstanding-task
+			:help "Move to the next outstanding task in priority order"
+			:keys "f"))
+(define-key org-queue-menu-map [navigation-submenu previous-task]
+	    '(menu-item "Previous Outstanding Task" my-show-previous-outstanding-task
+			:help "Move to the previous outstanding task in priority order"
+			:keys "b"))
+(define-key org-queue-menu-map [navigation-submenu current-task]
+	    '(menu-item "Current Outstanding Task" my-show-current-outstanding-task
+			:help "Jump to the current outstanding task"
+			:keys "c"))
+(define-key org-queue-menu-map [navigation-submenu separator-nav] '("--"))
+(define-key org-queue-menu-map [navigation-submenu show-parent]
+	    '(menu-item "Show Parent Heading" org-show-parent-heading-cleanly
+			:help "Navigate up to parent heading and show context"
+			:keys "u"))
+
+;; View Control submenu - display and visibility
+(define-key org-queue-menu-map [view-control-submenu widen-recenter]
+	    '(menu-item "Widen and Recenter" widen-and-recenter
+			:help "Widen buffer view and recenter on current position"
+			:keys "w"))
+(define-key org-queue-menu-map [view-control-submenu narrow-subtree]
+	    '(menu-item "Narrow to Subtree" org-narrow-to-subtree
+			:help "Narrow buffer view to current subtree only"
+			:keys "n"))
+
+;; Task Operations submenu - core task management
+(define-key org-queue-menu-map [task-operations-submenu remove-task]
+	    '(menu-item "Remove Current Task" my-remove-current-task
+			:help "Remove the current task from outstanding tasks list"
+			:keys "r"))
+(define-key org-queue-menu-map [task-operations-submenu reset-and-show]
+	    '(menu-item "Reset and Show Current Task" my-reset-and-show-current-outstanding-task
+			:help "Reset task index and display current task"
+			:keys "R"))
+
+;; Structure Editing submenu - hierarchical operations
+(define-key org-queue-menu-map [structure-editing-submenu cut-subtree]
+	    '(menu-item "Cut Subtree" org-cut-subtree
+			:help "Cut the current subtree to clipboard"
+			:keys "W"))
+(define-key org-queue-menu-map [structure-editing-submenu paste-subtree]
+	    '(menu-item "Paste Subtree" org-paste-subtree
+			:help "Paste subtree from clipboard"
+			:keys "Y"))
+(define-key org-queue-menu-map [structure-editing-submenu separator-struct] '("--"))
+(define-key org-queue-menu-map [structure-editing-submenu demote-subtree]
+	    '(menu-item "Demote Subtree" org-demote-subtree
+			:help "Demote the current subtree (increase level)"
+			:keys "D"))
+(define-key org-queue-menu-map [structure-editing-submenu promote-subtree]
+	    '(menu-item "Promote Subtree" org-promote-subtree
+			:help "Promote the current subtree (decrease level)"
+			:keys "P"))
+
+;; Content Creation submenu - text generation and formatting
+(define-key org-queue-menu-map [content-creation-submenu extract-text]
+	    '(menu-item "Create Extract Block" org-interactive-extract
+			:help "Create a SuperMemo-style extract from selected text"
+			:keys "x"))
+(define-key org-queue-menu-map [content-creation-submenu remove-extracts]
+	    '(menu-item "Remove All Extract Blocks" org-remove-all-extract-blocks
+			:help "Remove all {{extract:...}} blocks from current buffer"
+			:keys "X"))
+
+;; Priority Control submenu - priority management
+(define-key org-queue-menu-map [priority-control-submenu set-priority]
+	    '(menu-item "Set Priority with Heuristics" my-set-priority-with-heuristics
+			:help "Set a random priority within a user-defined heuristic range"
+			:keys ","))
+(define-key org-queue-menu-map [priority-control-submenu separator-priority] '("--"))
+(define-key org-queue-menu-map [priority-control-submenu increase-priority]
+	    '(menu-item "Increase Priority Range" my-increase-priority-range
+			:help "Increase the priority range (move to lower numbers)"
+			:keys "i"))
+(define-key org-queue-menu-map [priority-control-submenu decrease-priority]
+	    '(menu-item "Decrease Priority Range" my-decrease-priority-range
+			:help "Decrease the priority range (move to higher numbers)"
+			:keys "d"))
+
+;; Schedule Control submenu - time management
+(define-key org-queue-menu-map [schedule-control-submenu schedule-task]
+	    '(menu-item "Schedule Task" my-schedule-command
+			:help "Schedule task with automatic priority setting"
+			:keys "s"))
+(define-key org-queue-menu-map [schedule-control-submenu separator-schedule] '("--"))
+(define-key org-queue-menu-map [schedule-control-submenu advance-schedule]
+	    '(menu-item "Advance Schedule" my-advance-schedule
+			:help "Move the current task schedule forward"
+			:keys "a"))
+(define-key org-queue-menu-map [schedule-control-submenu postpone-schedule]
+	    '(menu-item "Postpone Schedule" my-postpone-schedule
+			:help "Move the current task schedule backward"
+			:keys "p"))
+
+;; System submenu - mode configuration
+(define-key org-queue-menu-map [system-submenu toggle-auto]
+	    '(menu-item "Toggle Auto-Enable" org-queue-toggle-auto-enable
+			:help "Toggle automatic activation of org-queue-mode"
+			:keys "t"))
+(define-key org-queue-menu-map [system-submenu separator-system] '("--"))
+(define-key org-queue-menu-map [system-submenu show-help]
+	    '(menu-item "Show Help" org-queue-show-help
+			:help "Display comprehensive help documentation"
+			:keys "?"))
+(define-key org-queue-menu-map [system-submenu separator-system-2] '("--"))
+(define-key org-queue-menu-map [system-submenu exit-mode]
+	    '(menu-item "Exit Org Queue Mode" (lambda () (interactive) (org-queue-mode -1))
+			:help "Deactivate org-queue-mode"
+			:keys "e"))
+
+;; Add optional Web Integration if org-web-tools is available
+(when (require 'org-web-tools nil t)
+  (define-key org-queue-menu-map [web-integration-submenu insert-web-page]
+	      '(menu-item "Insert Web Page as Entry" org-web-tools-insert-web-page-as-entry
+			  :help "Insert web page content as org entry"
+			  :keys "I"))
+  (define-key org-queue-menu-map [web-integration-submenu insert-link]
+	      '(menu-item "Insert Link for URL" org-web-tools-insert-link-for-url
+			  :help "Insert a formatted link for the given URL"
+			  :keys "l")))
+
+;; Add AI Integration if gptel is available
+(when (require 'gptel nil t)
+  (define-key org-queue-menu-map [ai-integration-submenu gptel-chat]
+	      '(menu-item "Start GPT Chat" gptel
+			  :help "Start GPT chat session for AI assistance"
+			  :keys "g"))
+  ;; Add more AI tools if available
+  (when (fboundp 'gptel-send-region)
+    (define-key org-queue-menu-map [ai-integration-submenu gptel-region]
+		'(menu-item "Send Region to GPT" gptel-send-region
+			    :help "Send selected region to GPT for processing"))))
+
+;; Add SRS & Review features if org-srs is available
+(when (require 'org-srs nil t)
+  (define-key org-queue-menu-map [srs-review-submenu create-cloze]
+	      '(menu-item "Create Cloze Deletion" org-interactive-cloze
+			  :help "Create a cloze deletion from selected text"
+			  :keys "z"))
+  (define-key org-queue-menu-map [srs-review-submenu separator-srs] '("--"))
+  (define-key org-queue-menu-map [srs-review-submenu srs-rate-again]
+	      '(menu-item "Rate Again (Difficult)" org-srs-review-rate-again
+			  :help "Rate SRS card as difficult - review again soon"
+			  :keys "1"))
+  (define-key org-queue-menu-map [srs-review-submenu srs-rate-good]
+	      '(menu-item "Rate Good (Easy)" org-srs-review-rate-good
+			  :help "Rate SRS card as easy - longer review interval"
+			  :keys "3"))
+  (when (fboundp 'org-srs-review-rate-hard)
+    (define-key org-queue-menu-map [srs-review-submenu srs-rate-hard]
+		'(menu-item "Rate Hard" org-srs-review-rate-hard
+			    :help "Rate SRS card as hard - shorter review interval"
+			    :keys "2"))))
+
+;; Enhanced minor mode definition with improved menu integration
+(define-minor-mode org-queue-mode
+  "Global minor mode for task queue management with comprehensive menu support."
+  :init-value nil
+  :global t
+  :keymap org-queue-mode-map
+  :lighter (:propertize " OrgQ" face org-queue-mode-line-face)
+  (if org-queue-mode
+      (progn
+        ;; Add menu to menu bar after Edit menu for optimal positioning
+        (define-key-after (current-global-map) [menu-bar org-queue]
+          (cons "Org Queue" org-queue-menu-map) 'edit)
+        ;; Configure enhanced cursor for better visual feedback
+        (setq org-queue--original-cursor cursor-type
+              cursor-type '(box . 3)  ; Enhanced box cursor for better visibility
+              blink-cursor-blinks 0
+              blink-cursor-interval 0.7))
+    ;; Clean up: remove menu and restore original cursor settings
+    (define-key (current-global-map) [menu-bar org-queue] nil)
+    (setq cursor-type org-queue--original-cursor
+          blink-cursor-blinks 40
+          blink-cursor-interval 0.5)))
+
+(defun org-queue-context-menu (menu click)
+   "Add org-queue commands to context menu when org-queue-mode is active.
+Provides convenient right-click access to all org-queue functionality."
+   (when org-queue-mode
+     (define-key menu [separator-org-queue] menu-bar-separator)
+     (define-key menu [org-queue-submenu]
+       (cons "Org Queue" org-queue-menu-map)))
+   menu)
+
+ ;; Register context menu handler for seamless integration
+ (add-hook 'context-menu-functions #'org-queue-context-menu)
+
+(defvar org-queue-toolbar-map
+    (let ((map (make-sparse-keymap)))
+      ;; Primary navigation tools with visual icons
+      (define-key map [org-queue-next]
+        (list 'menu-item "Next Task" 'my-show-next-outstanding-task
+              :image '(find-image '((:type xpm :file "right-arrow.xpm")))
+              :help "Navigate to next outstanding task"))
+      (define-key map [org-queue-prev]
+        (list 'menu-item "Previous Task" 'my-show-previous-outstanding-task
+              :image '(find-image '((:type xpm :file "left-arrow.xpm")))
+              :help "Navigate to previous outstanding task"))
+      (define-key map [org-queue-current]
+        (list 'menu-item "Current Task" 'my-show-current-outstanding-task
+              :image '(find-image '((:type xpm :file "index.xpm")))
+              :help "Show current outstanding task"))
+      map)
+    "Toolbar map for frequently used org-queue navigation commands.")
+
+  ;; Integrate toolbar with minor mode for GUI environments
+(add-to-list 'minor-mode-map-alist (cons 'org-queue-mode org-queue-toolbar-map))
+
+(defun org-queue-show-help ()
+  "Display comprehensive help documentation for org-queue-mode.
+Includes all commands, access methods, and usage examples."
+  (interactive)
+  (with-help-window "*Org Queue Help*"
+    (princ "Org Queue Mode - Comprehensive Help\n")
+    (princ "====================================\n\n")
+    (princ "Org Queue is a comprehensive task management system for Org mode.\n")
+    (princ "It provides intelligent task navigation, priority management, and learning tools.\n\n")
+    
+    (princ "Navigation Commands:\n")
+    (princ "  f - Next outstanding task\n")
+    (princ "  b - Previous outstanding task\n")
+    (princ "  c - Show current outstanding task\n")
+    (princ "  u - Show parent heading context\n\n")
+    
+    (princ "View Control:\n")
+    (princ "  w - Widen and recenter view\n")
+    (princ "  n - Narrow to current subtree\n\n")
+    
+    (princ "Task Operations:\n")
+    (princ "  r - Remove current task from queue\n")
+    (princ "  R - Reset and show current task\n\n")
+    
+    (princ "Structure Editing:\n")
+    (princ "  W - Cut subtree\n")
+    (princ "  Y - Paste subtree\n")
+    (princ "  D - Demote subtree level\n")
+    (princ "  P - Promote subtree level\n\n")
+    
+    (princ "Content Creation:\n")
+    (princ "  x - Create extract block (SuperMemo-style)\n")
+    (princ "  X - Remove all extract blocks\n\n")
+    
+    (when (featurep 'org-srs)
+      (princ "SRS & Review:\n")
+      (princ "  z - Create cloze deletion\n")
+      (princ "  1 - Rate again (difficult)\n")
+      (princ "  2 - Rate hard (if available)\n")
+      (princ "  3 - Rate good (easy)\n\n"))
+    
+    (princ "Priority Control:\n")
+    (princ "  , - Set priority with heuristics\n")
+    (princ "  i - Increase priority range (lower numbers)\n")
+    (princ "  d - Decrease priority range (higher numbers)\n\n")
+    
+    (princ "Schedule Control:\n")
+    (princ "  s - Schedule task with priority\n")
+    (princ "  a - Advance current schedule\n")
+    (princ "  p - Postpone current schedule\n\n")
+    
+    (when (featurep 'org-web-tools)
+      (princ "Web Integration:\n")
+      (princ "  I - Insert web page as org entry\n")
+      (princ "  l - Insert link for URL\n\n"))
+    
+    (when (featurep 'gptel)
+      (princ "AI Integration:\n")
+      (princ "  g - Start GPT chat session\n\n"))
+    
+    (princ "System Commands:\n")
+    (princ "  t - Toggle auto-enable mode\n")
+    (princ "  e - Exit org-queue-mode\n")
+    (princ "  ? - Show this help\n\n")
+    
+    (princ "Access Methods:\n")
+    (princ "  • Direct keys: Use commands directly in org buffers\n")
+    (princ "  • Prefix key: C-; followed by command key\n")
+    (princ "  • Menu Bar: 'Org Queue' menu when mode is active\n")
+    (princ "  • Context menu: Right-click in org-mode buffers\n")
+    (princ "  • Toolbar: GUI navigation buttons (if available)\n\n")
+    
+    (princ "Usage Tips:\n")
+    (princ "  • Use heuristic priority setting for smart task ordering\n")
+    (princ "  • Extract blocks help with incremental reading workflows\n")
+    (princ "  • Schedule management supports spaced repetition patterns\n")
+    (princ "  • All features integrate seamlessly with standard org-mode\n")
+    (princ "  • Detailed categorization in menu helps discover features\n\n")
+    
+    (princ "For detailed information about specific commands:\n")
+    (princ "  M-x describe-function RET <command-name> RET\n")))
+
+;; Bind help to both direct and prefix key access
+(define-key org-queue-mode-map (kbd "?") #'org-queue-show-help)
+(define-key org-queue-prefix-map (kbd "?") #'org-queue-show-help)
+
 (require 'my-srs-integration)
 
 (defun org-interactive-cloze ()
