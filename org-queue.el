@@ -1208,6 +1208,9 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
 
 (defun my-random-schedule (months &optional n)
   "Schedules an Org heading MONTHS months in the future using a mathematically elegant distribution.
+Enhanced with priority-based bias while maintaining existing power-law distribution.
+- Existing logic: Uses power-law distribution with exponent n
+- Priority enhancement: High priority tasks get bias toward earlier dates
 If N is provided, use that as the exponent. If it's not provided, fallback to `my-random-schedule-exponent'.
 Skips scheduling if the current heading or its parent has an SRS drawer."
   (when (and (not noninteractive)
@@ -1220,14 +1223,31 @@ Skips scheduling if the current heading or its parent has an SRS drawer."
         ;; Otherwise, proceed with normal scheduling
         (let* ((today (current-time))
                (total-days (* months 30))
+               
+               ;; Get priority for bias calculation
+               (priority-str (org-entry-get nil "PRIORITY"))
+               (priority (if priority-str 
+                            (string-to-number priority-str)
+                          org-priority-default))
+               
+               ;; Priority-based bias: high priority increases exponent for earlier bias
+               (priority-ratio (/ (float (- org-priority-lowest priority))
+                                 (float (- org-priority-lowest org-priority-highest))))
+               (priority-bias (+ 1.0 (* 2.0 priority-ratio)))  ; Range: 1.0 to 3.0
+               
+               ;; EXISTING mathematical logic with priority enhancement
                ;; If `n` is not passed in, use our existing defcustom value
-               (n (or n my-random-schedule-exponent))
+               (base-n (or n my-random-schedule-exponent))
+               (enhanced-n (* base-n priority-bias))  ; Priority enhances the exponent
+               
                (u (/ (float (random 1000000)) 1000000.0))
-               (exponent (/ 1.0 (+ n 1)))  ; compute 1/(n+1)
+               (exponent (/ 1.0 (+ enhanced-n 1)))  ; compute 1/(enhanced_n+1)
                (x (expt u exponent))
                (days-ahead (floor (* total-days x)))
                (random-date (time-add today (days-to-time days-ahead))))
-          (org-schedule nil (format-time-string "%Y-%m-%d" random-date)))))))
+          (org-schedule nil (format-time-string "%Y-%m-%d" random-date))
+          (message "Scheduled: Priority %d (bias %.2fx) → %d days" 
+                   priority priority-bias days-ahead))))))
 
 (defun my-random-schedule-command (&optional months)
   "Interactive command to schedule MONTHS months in the future.
@@ -1242,8 +1262,10 @@ Skips scheduling if the current heading or its parent has an SRS drawer."
 
 (defun my-advance-schedule ()
   "Advance the current Org heading by a mathematically adjusted number of months.
-Uses a function that decreases with increasing current schedule weight,
-ensuring that tasks scheduled further in the future are advanced less.
+Uses priority-based factor multiplied with existing mathematical logic.
+- High priority tasks: enhanced advancement via priority factor
+- Low priority tasks: minimal advancement
+- Already near tasks: diminishing advancement (existing logic)
 Does not schedule tasks to dates before today.
 Skips scheduling if the current heading or its parent is an SRS entry
 (contains the org-srs-log-drawer-name drawer)."
@@ -1255,24 +1277,43 @@ Skips scheduling if the current heading or its parent is an SRS entry
       (let* ((e (exp 1))  ; e ≈ 2.71828
              ;; Get the current scheduled months ahead
              (current-weight (max 0 (my-find-schedule-weight)))  ; Ensure non-negative value
-             ;; Calculate the adjustment using f(x) = x - 1 / ln(x + e)
-             (adjusted-months (max 0 (- current-weight
-                                        (/ 1 (log (+ current-weight e))))))
-             ;; Generate a random value between current-weight and adjusted-months
-             (min-months (min current-weight adjusted-months))
-             (max-months (max current-weight adjusted-months))
+             
+             ;; Get priority and calculate priority factor
+             (priority-str (org-entry-get nil "PRIORITY"))
+             (priority (if priority-str 
+                          (string-to-number priority-str)
+                        org-priority-default))
+             ;; Priority factor: 1.0 for highest priority, approaches 0.1 for lowest priority
+             (priority-ratio (/ (float (- org-priority-lowest priority))
+                               (float (- org-priority-lowest org-priority-highest))))
+             (priority-factor (+ 0.1 (* 0.9 priority-ratio)))  ; Range: 0.1 to 1.0
+             
+             ;; EXISTING mathematical logic: f(x) = x - 1 / ln(x + e)
+             (base-adjusted-months (max 0 (- current-weight
+                                             (/ 1 (log (+ current-weight e))))))
+             
+             ;; Apply priority factor to enhance advancement for high priority
+             (priority-adjusted-months (* base-adjusted-months priority-factor))
+             
+             ;; Generate a random value between current-weight and priority-adjusted-months
+             (min-months (min current-weight priority-adjusted-months))
+             (max-months (max current-weight priority-adjusted-months))
              (random-months (random-float min-months max-months))
              ;; Convert random-months to days
-             (adjusted-days (* random-months 30)))
+             (adjusted-days (* random-months 30.4375)))
         ;; Schedule the task to the adjusted date, ensuring it is not before today
         (org-schedule nil (format-time-string "%Y-%m-%d"
                                              (time-add (current-time)
-                                                       (days-to-time adjusted-days))))))))
+                                                       (days-to-time adjusted-days))))
+        (message "Advanced: Priority %d (factor %.2f) → %.2f months" 
+                 priority priority-factor random-months)))))
 
 (defun my-postpone-schedule ()
   "Postpone the current Org heading by a mathematically adjusted number of months.
-Calculates the postponement using a function that increases while its derivative decreases,
-to ensure that tasks with larger weights are postponed by relatively smaller amounts.
+Uses priority-based factor multiplied with existing mathematical logic.
+- High priority tasks: reduced postponement via priority factor
+- Low priority tasks: full postponement as calculated
+- Already distant tasks: diminishing additional postponement (existing logic)
 Skip postponing if the current entry or its parent contains an SRS drawer."
   (interactive)
   (when (and (not noninteractive)
@@ -1283,15 +1324,30 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
       (unless srs-status
         (let* ((e (exp 1))  ; e ≈ 2.71828
                (current-weight (max 0 (my-find-schedule-weight)))  ; Ensure non-negative value
-               ;; Adjusted months using f(x) = x + 1 / ln(x + e)
-               (adjusted-months (+ current-weight
-                                   (/ 1 (log (+ current-weight e)))))
-               ;; Generate a random value between current-weight and adjusted-months
-               (min-months (min current-weight adjusted-months))
-               (max-months (max current-weight adjusted-months))
+               
+               ;; Get priority and calculate priority factor
+               (priority-str (org-entry-get nil "PRIORITY"))
+               (priority (if priority-str 
+                            (string-to-number priority-str)
+                          org-priority-default))
+               ;; Priority factor: 1.0 for lowest priority, approaches 0.1 for highest priority
+               (priority-ratio (/ (float (- priority org-priority-highest))
+                                 (float (- org-priority-lowest org-priority-highest))))
+               (priority-factor (+ 0.1 (* 0.9 priority-ratio)))  ; Range: 0.1 to 1.0
+               
+               ;; EXISTING mathematical logic: f(x) = x + 1 / ln(x + e)
+               (base-adjusted-months (+ current-weight
+                                       (/ 1 (log (+ current-weight e)))))
+               
+               ;; Apply priority factor to the mathematical result
+               (priority-adjusted-months (* base-adjusted-months priority-factor))
+               
+               ;; Generate a random value between current-weight and priority-adjusted-months
+               (min-months (min current-weight priority-adjusted-months))
+               (max-months (max current-weight priority-adjusted-months))
                (random-months (random-float min-months max-months))
                ;; Convert random-months to days
-               (adjusted-days (* random-months 30))
+               (adjusted-days (* random-months 30.4375))
                (now (current-time))
                (proposed-new-time (time-add now (days-to-time adjusted-days)))
                ;; Calculate tomorrow's midnight
@@ -1305,7 +1361,9 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
                              tomorrow-midnight
                            proposed-new-time)))
           ;; Schedule the task to the adjusted date
-          (org-schedule nil (format-time-string "%Y-%m-%d" new-time)))))))
+          (org-schedule nil (format-time-string "%Y-%m-%d" new-time))
+          (message "Postponed: Priority %d (factor %.2f) → %.2f months" 
+                   priority priority-factor random-months))))))
 
 (defun my-custom-shuffle (list)
   "Fisher-Yates shuffle implementation for Emacs Lisp."
@@ -1777,39 +1835,48 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
     (my-save-outstanding-tasks-to-file)))
 
 (defun my-auto-postpone-overdue-tasks ()
-  "Auto-postpone all overdue tasks using linear interpolation for priorities.
-							 If a task's priority is not set, use `org-priority-default` to `org-priority-lowest`
-							 as the basis for linear interpolation. The calculated `months` is passed to
-							 `my-random-schedule` for randomness. Save all modified files before and after processing."
+  "Auto-postpone all overdue tasks using unified priority-based logic.
+Uses the same postponement logic as individual task postponement (my-postpone-schedule).
+Ensures consistent priority-based behavior across all scheduling operations.
+Save all modified files before and after processing."
   (interactive)
   ;; Save all modified buffers before processing
-  (save-some-buffers t) ;; Save all modified buffers without prompting
-  (let* ((highest-priority org-priority-highest)  ; Highest priority value (e.g., 1)
-	   (lowest-priority org-priority-lowest)    ; Lowest priority value (e.g., 64)
-	   (default-priority org-priority-default)  ; Default priority value (e.g., 32)
-	   (max-months (my-find-schedule-weight))) ; Max months for scheduling
-    ;; Iterate over all headings in the agenda files
+  (save-some-buffers t)
+  
+  (let ((processed-count 0)
+        (total-overdue 0))
+    
+    ;; First pass: count total overdue tasks
     (org-map-entries
      (lambda ()
-	 (when (my-is-overdue-task)
-	   ;; Ensure priority is set
-	   (my-ensure-priority-set)
-	   ;; Get the priority value or fallback to the default range
-	   (let* ((priority-string (org-entry-get nil "PRIORITY"))
-		  (priority (if priority-string
-				(string-to-number priority-string)
-			      ;; Fallback: Use default to lowest priority range
-			      (random (+ 1 (- lowest-priority default-priority)))))
-		  ;; Linearly interpolate months based on priority
-		  (months (* max-months
-			     (/ (float (- priority highest-priority))
-				(float (- lowest-priority highest-priority))))))
-	     ;; Use `my-random-schedule` to schedule the task
-	     (my-random-schedule months)
-	     (message "Task postponed with priority %d (months: %.2f)." priority months))))
-     nil 'agenda))
-  ;; Save all modified buffers after processing
-  (save-some-buffers t)) ;; Save all modified buffers without prompting
+       (when (my-is-overdue-task)
+         (setq total-overdue (1+ total-overdue))))
+     nil 'agenda)
+    
+    ;; Second pass: process overdue tasks
+    (org-map-entries
+     (lambda ()
+       (when (my-is-overdue-task)
+         ;; Ensure priority is set first
+         (my-ensure-priority-set)
+         
+         ;; Get priority for logging
+         (let* ((priority-str (org-entry-get nil "PRIORITY"))
+                (priority (if priority-str 
+                             (string-to-number priority-str)
+                           org-priority-default)))
+           
+           ;; Use unified postponement logic
+           (my-postpone-schedule)
+           (setq processed-count (1+ processed-count))
+           
+           (when (= (mod processed-count 10) 0)  ; Progress every 10 tasks
+             (message "Processed %d/%d overdue tasks..." processed-count total-overdue)))))
+     nil 'agenda)
+    
+    ;; Save all modified buffers after processing
+    (save-some-buffers t)
+    (message "✓ Auto-postponed %d overdue tasks using unified priority logic." processed-count)))
 
 (defun my-postpone-duplicate-priority-tasks ()
   "Postpone duplicate outstanding tasks within the same file that share the same priority.
