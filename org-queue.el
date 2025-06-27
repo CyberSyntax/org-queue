@@ -1321,7 +1321,7 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
       (unless srs-status
         (let* ((e (exp 1))
                (current-weight (max 0 (my-find-schedule-weight)))
-               (is-overdue (my-is-overdue-task))  ; ← 자동 감지
+               (is-overdue (my-is-overdue-task))
                
                ;; Priority calculations (unchanged)
                (priority-str (org-entry-get nil "PRIORITY"))
