@@ -60,6 +60,75 @@ and the cdr is a cons cell representing the minimum and maximum priority values.
   (eq system-type 'android)
   "Non-nil if running on Android.")
 
+(defun my-is-todo-task ()
+  "Return non-nil if the current task is in a TODO state (not DONE)."
+  (let ((todo-state (org-get-todo-state)))
+    (and todo-state 
+         (not (member todo-state org-done-keywords)))))
+
+(defun my-is-done-task ()
+  "Return non-nil if the current task is in a DONE state."
+  (let ((todo-state (org-get-todo-state)))
+    (and todo-state 
+         (member todo-state org-done-keywords))))
+
+(defun my-cleanup-done-task ()
+  "Remove SCHEDULED and PRIORITY properties from DONE tasks."
+  (when (my-is-done-task)
+    (let ((had-schedule (org-get-scheduled-time nil))
+          (had-priority (org-entry-get nil "PRIORITY"))
+          (cleaned nil))
+      ;; Remove SCHEDULED
+      (when had-schedule
+        (org-schedule '(4))  ; C-u C-c C-s (remove schedule)
+        (setq cleaned t))
+      ;; Remove PRIORITY - correct method
+      (when (and had-priority (not (string= had-priority " ")))
+        (org-priority ?\ )  ; Set priority to space (removes it)
+        (setq cleaned t))
+      ;; Return t if we cleaned anything
+      cleaned)))
+
+(defun my-cleanup-all-done-tasks ()
+  "Remove SCHEDULED and PRIORITY properties from all DONE tasks across agenda files."
+  (interactive)
+  (let ((cleaned-count 0)
+        (total-done 0))
+    
+    (save-some-buffers t)
+    
+    (org-map-entries
+     (lambda ()
+       (when (my-is-done-task)
+         (setq total-done (1+ total-done))
+         (when (my-cleanup-done-task)
+           (setq cleaned-count (1+ cleaned-count)))))
+     nil 'agenda)
+    
+    (save-some-buffers t)
+    (message "✓ Cleaned %d of %d DONE tasks (removed SCHEDULED/PRIORITY)" 
+             cleaned-count total-done)))
+
+(defun my-cleanup-all-done-tasks ()
+  "Remove SCHEDULED and PRIORITY properties from all DONE tasks across agenda files."
+  (interactive)
+  (let ((cleaned-count 0)
+        (total-done 0))
+    
+    (save-some-buffers t)
+    
+    (org-map-entries
+     (lambda ()
+       (when (my-is-done-task)
+         (setq total-done (1+ total-done))
+         (when (my-cleanup-done-task)
+           (setq cleaned-count (1+ cleaned-count)))))
+     nil 'agenda)
+    
+    (save-some-buffers t)
+    (message "✓ Cleaned %d of %d DONE tasks (removed SCHEDULED/PRIORITY)" 
+             cleaned-count total-done)))
+
 (defvar org-queue-mode-map (make-sparse-keymap)
   "Keymap for org-queue-mode.")
 
@@ -1428,6 +1497,7 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
 (defun my-ensure-priorities-and-schedules-for-all-headings (&optional max-attempts)
   "Ensure priorities and schedules are set for all headings across Org agenda files.
 Repeatedly processes headings until all have priorities and schedules, or max-attempts is reached.
+Skip DONE tasks entirely.
 MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
   (interactive)
   (let ((max-attempts (or max-attempts 15))
@@ -1445,81 +1515,85 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
         (org-map-entries
          (lambda ()
            (setq total-entries (1+ total-entries))
-           ;; First check if entry has missing priority or schedule
-           (when (or (not (org-entry-get nil "PRIORITY"))
-                     (string= (org-entry-get nil "PRIORITY") " ")
-                     (not (org-entry-get nil "SCHEDULED")))
-             ;; Only now check if it's an SRS entry (more expensive operation)
-             (let* ((marker (point-marker))
-                    (file (buffer-file-name))
-                    (position (point))
-                    (heading-id (concat file ":" (number-to-string position)))
-                    (srs-status (or (gethash heading-id processed-headings)
-                                    (puthash heading-id (org-srs-entry-p (point)) processed-headings))))
-               
-               ;; Count as incomplete based on SRS status:
-               ;; - 'parent: skip both priority and schedule (never incomplete)
-               ;; - 'current: only incomplete if missing priority (we skip scheduling)
-               ;; - nil: incomplete if missing either priority or schedule
-               (cond
-                ((eq srs-status 'parent)
-                 nil) ; Skip entirely
-                ((eq srs-status 'current)
-                 ;; Only check priority for 'current entries
-                 (when (or (not (org-entry-get nil "PRIORITY"))
-                           (string= (org-entry-get nil "PRIORITY") " "))
-                   (setq incomplete-entries (1+ incomplete-entries))))
-                (t
-                 ;; For non-SRS entries, count if missing either
-                 (setq incomplete-entries (1+ incomplete-entries)))))))
+           ;; Skip DONE tasks entirely
+           (unless (my-is-done-task)
+             ;; First check if entry has missing priority or schedule
+             (when (or (not (org-entry-get nil "PRIORITY"))
+                       (string= (org-entry-get nil "PRIORITY") " ")
+                       (not (org-entry-get nil "SCHEDULED")))
+               ;; Only now check if it's an SRS entry (more expensive operation)
+               (let* ((marker (point-marker))
+                      (file (buffer-file-name))
+                      (position (point))
+                      (heading-id (concat file ":" (number-to-string position)))
+                      (srs-status (or (gethash heading-id processed-headings)
+                                      (puthash heading-id (org-srs-entry-p (point)) processed-headings))))
+                 
+                 ;; Count as incomplete based on SRS status:
+                 ;; - 'parent: skip both priority and schedule (never incomplete)
+                 ;; - 'current: only incomplete if missing priority (we skip scheduling)
+                 ;; - nil: incomplete if missing either priority or schedule
+                 (cond
+                  ((eq srs-status 'parent)
+                   nil) ; Skip entirely
+                  ((eq srs-status 'current)
+                   ;; Only check priority for 'current entries
+                   (when (or (not (org-entry-get nil "PRIORITY"))
+                             (string= (org-entry-get nil "PRIORITY") " "))
+                     (setq incomplete-entries (1+ incomplete-entries))))
+                  (t
+                   ;; For non-SRS entries, count if missing either
+                   (setq incomplete-entries (1+ incomplete-entries))))))))
          nil 'agenda)
 
         ;; Process entries if there are incomplete ones
         (when (> incomplete-entries 0)
           (org-map-entries
            (lambda ()
-             ;; First check if entry has missing priority or schedule
-             (when (or (not (org-entry-get nil "PRIORITY"))
-                       (string= (org-entry-get nil "PRIORITY") " ")
-                       (not (org-entry-get nil "SCHEDULED")))
-               ;; Only check SRS status if needed
-               (let* ((file (buffer-file-name))
-                      (position (point))
-                      (heading-id (concat file ":" (number-to-string position)))
-                      (srs-status (or (gethash heading-id processed-headings)
-                                      (puthash heading-id (org-srs-entry-p (point)) processed-headings))))
-                 
-                 (cond
-                  ;; For 'parent entries, skip entirely
-                  ((eq srs-status 'parent)
-                   nil)
-                  
-                  ;; For 'current entries, only set priority if needed
-                  ((eq srs-status 'current)
-                   (condition-case err
-                       (let ((current-priority (org-entry-get nil "PRIORITY")))
-                         (when (or (not current-priority) 
-                                   (string= current-priority " "))
-                           (my-ensure-priority-set)))
-                     (error
-                      (message "Error processing priority for 'current entry: %s" 
-                               (error-message-string err)))))
-                  
-                  ;; For non-SRS entries, process both priority and schedule
-                  (t
-                   (condition-case err
-                       (progn
-                         ;; Ensure priority is set only if missing
+             ;; Skip DONE tasks entirely
+             (unless (my-is-done-task)
+               ;; First check if entry has missing priority or schedule
+               (when (or (not (org-entry-get nil "PRIORITY"))
+                         (string= (org-entry-get nil "PRIORITY") " ")
+                         (not (org-entry-get nil "SCHEDULED")))
+                 ;; Only check SRS status if needed
+                 (let* ((file (buffer-file-name))
+                        (position (point))
+                        (heading-id (concat file ":" (number-to-string position)))
+                        (srs-status (or (gethash heading-id processed-headings)
+                                        (puthash heading-id (org-srs-entry-p (point)) processed-headings))))
+                   
+                   (cond
+                    ;; For 'parent entries, skip entirely
+                    ((eq srs-status 'parent)
+                     nil)
+                    
+                    ;; For 'current entries, only set priority if needed
+                    ((eq srs-status 'current)
+                     (condition-case err
                          (let ((current-priority (org-entry-get nil "PRIORITY")))
                            (when (or (not current-priority) 
                                      (string= current-priority " "))
                              (my-ensure-priority-set)))
-                         ;; Ensure schedule is set only if missing
-                         (unless (org-entry-get nil "SCHEDULED")
-                           (my-random-schedule (my-find-schedule-weight) 0)))
-                     (error
-                      (message "Error processing entry: %s" 
-                               (error-message-string err)))))))))
+                       (error
+                        (message "Error processing priority for 'current entry: %s" 
+                                 (error-message-string err)))))
+                    
+                    ;; For non-SRS entries, process both priority and schedule
+                    (t
+                     (condition-case err
+                         (progn
+                           ;; Ensure priority is set only if missing
+                           (let ((current-priority (org-entry-get nil "PRIORITY")))
+                             (when (or (not current-priority) 
+                                       (string= current-priority " "))
+                               (my-ensure-priority-set)))
+                           ;; Ensure schedule is set only if missing
+                           (unless (org-entry-get nil "SCHEDULED")
+                             (my-random-schedule (my-find-schedule-weight) 0)))
+                       (error
+                        (message "Error processing entry: %s" 
+                                 (error-message-string err))))))))))
            nil 'agenda))
 
         ;; Set all-complete if no incomplete entries found
@@ -1556,9 +1630,14 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
 
 (defun my-is-outstanding-task ()
   "Return non-nil if the current task is overdue or due today."
-  (let ((scheduled-time (org-get-scheduled-time nil)))
-    (and scheduled-time
-	   (<= (time-to-days scheduled-time) (time-to-days (current-time))))))
+  (let ((scheduled-time (org-get-scheduled-time nil))
+        (heading (org-get-heading t t t t)))
+    (let ((result (and scheduled-time
+                       (<= (time-to-days scheduled-time) (time-to-days (current-time))))))
+      (when scheduled-time
+        (message "DEBUG outstanding check: %s | Scheduled: %s | Outstanding: %s" 
+                 heading scheduled-time result))
+      result)))
 
 (defun my-org-agenda-skip-non-outstanding-tasks ()
   "Skip tasks that are not outstanding."
@@ -1775,27 +1854,58 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
   "Current index in the outstanding tasks list.")
 
 (defun my-get-outstanding-tasks ()
-  "Populate task list with metadata for stable tracking."
+  "Populate task list with metadata for stable tracking.
+  Orders tasks with TODO items first (by priority), then non-TODO items (by priority)."
   (setq my-outstanding-tasks-list nil)
   (org-map-entries
    (lambda ()
      (when (and (my-is-outstanding-task)
+                (not (my-is-done-task))              ; Exclude DONE tasks - FIXED
                 (not (org-srs-entry-p (point))))
        (let* ((marker (point-marker))
               (priority (my-get-raw-priority-value))
               (flag (my-priority-flag priority))
               (file (buffer-file-name))
+              (heading (org-get-heading t t t t))    ; DEBUG: Get heading
+              (todo-state (org-get-todo-state))      ; DEBUG: Get TODO state
+              (is-todo (my-is-todo-task))            ; Check if it's TODO
               (task-data (list :marker marker
                               :priority priority
                               :flag flag
-                              :file file)))
-         (push (cons priority task-data) my-outstanding-tasks-list))))
+                              :file file
+                              :is-todo is-todo)))     ; Store TODO status
+         
+         ;; DEBUG: Log each task being processed
+         (message "QUEUE BUILD: %s | TODO-state: %s | is-todo: %s | priority: %s" 
+                  heading todo-state is-todo priority)
+         
+         ;; Create sorting key: (todo-status, priority)
+         ;; TODO items get 0 (higher priority), non-TODO get 1 (lower priority)
+         (let ((sort-key (list (if is-todo 0 1) priority)))
+           (push (cons sort-key task-data) my-outstanding-tasks-list)))))
    nil 'agenda)
   
-  ;; Sort by priority and extract only the task data
+  ;; Sort by two-tier system: TODO status first, then priority
   (setq my-outstanding-tasks-list
         (mapcar #'cdr
-                (sort my-outstanding-tasks-list (lambda (a b) (< (car a) (car b))))))
+                (sort my-outstanding-tasks-list 
+                      (lambda (a b) 
+                        (let ((key-a (car a))
+                              (key-b (car b)))
+                          ;; Compare first by TODO status (0 vs 1)
+                          (if (= (car key-a) (car key-b))
+                              ;; If same TODO status, compare by priority
+                              (< (cadr key-a) (cadr key-b))
+                            ;; Different TODO status, TODO (0) comes first
+                            (< (car key-a) (car key-b))))))))
+  
+  ;; DEBUG: Final summary
+  (let ((todo-count (length (cl-remove-if-not (lambda (task) (plist-get task :is-todo)) my-outstanding-tasks-list)))
+        (total-count (length my-outstanding-tasks-list)))
+    (message "=== QUEUE BUILT ===")
+    (message "Total tasks in queue: %d" total-count)
+    (message "TODO tasks in queue: %d" todo-count))
+  
   (setq my-outstanding-tasks-index 0))
 
 (defun my-remove-current-task ()
@@ -1832,48 +1942,34 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
     (my-save-outstanding-tasks-to-file)))
 
 (defun my-auto-postpone-overdue-tasks ()
-  "Auto-postpone all overdue tasks using unified priority-based logic.
-Uses the same postponement logic as individual task postponement (my-postpone-schedule).
-Ensures consistent priority-based behavior across all scheduling operations.
-Save all modified files before and after processing."
+  "Auto-postpone all overdue TODO tasks (excluding DONE tasks)."
   (interactive)
-  ;; Save all modified buffers before processing
   (save-some-buffers t)
   
   (let ((processed-count 0)
         (total-overdue 0))
     
-    ;; First pass: count total overdue tasks
+    ;; First pass: count total overdue TODO tasks
     (org-map-entries
      (lambda ()
-       (when (my-is-overdue-task)
+       (when (and (my-is-overdue-task) (my-is-todo-task))  ; Add TODO check
          (setq total-overdue (1+ total-overdue))))
      nil 'agenda)
     
-    ;; Second pass: process overdue tasks
+    ;; Second pass: process overdue TODO tasks
     (org-map-entries
      (lambda ()
-       (when (my-is-overdue-task)
-         ;; Ensure priority is set first
+       (when (and (my-is-overdue-task) (my-is-todo-task))  ; Add TODO check
          (my-ensure-priority-set)
+         (my-postpone-schedule)
+         (setq processed-count (1+ processed-count))
          
-         ;; Get priority for logging
-         (let* ((priority-str (org-entry-get nil "PRIORITY"))
-                (priority (if priority-str 
-                             (string-to-number priority-str)
-                           org-priority-default)))
-           
-           ;; Use unified postponement logic
-           (my-postpone-schedule)
-           (setq processed-count (1+ processed-count))
-           
-           (when (= (mod processed-count 10) 0)  ; Progress every 10 tasks
-             (message "Processed %d/%d overdue tasks..." processed-count total-overdue)))))
+         (when (= (mod processed-count 10) 0)
+           (message "Processed %d/%d overdue TODO tasks..." processed-count total-overdue))))
      nil 'agenda)
     
-    ;; Save all modified buffers after processing
     (save-some-buffers t)
-    (message "✓ Auto-postponed %d overdue tasks using unified priority logic." processed-count)))
+    (message "✓ Auto-postponed %d overdue TODO tasks." processed-count)))
 
 (defun my-postpone-duplicate-priority-tasks ()
   "Postpone duplicate outstanding tasks within the same file that share the same priority.
@@ -1948,50 +2044,54 @@ Processes priorities in descending order (priority 1 → 64) using FIFO task pos
 	    (current-max nil)
 	    highest-processed)
 
-	;; ==== PHASE 3: Constraint Processing ====
-	;; Process highest (1 → 64) priorities first
-	(dolist (prio sorted-priorities)
-	  ;; No reverse needed since (sort '<) returns 1,2,...,64
-	  (let ((count (gethash prio priority-counts 0))
-		(tasks (gethash prio tasks-by-priority '())))
-	    (cond
-	      ((zerop count) ; Skip empty priorities
-	      nil)
+	;; Check if there are any priorities to process
+	(if (zerop (length sorted-priorities))
+	    (message "[COMPLETE] No outstanding tasks found - no constraints to enforce")
+	  
+	  ;; ==== PHASE 3: Constraint Processing ====
+	  ;; Process highest (1 → 64) priorities first
+	  (dolist (prio sorted-priorities)
+	    ;; No reverse needed since (sort '<) returns 1,2,...,64
+	    (let ((count (gethash prio priority-counts 0))
+		  (tasks (gethash prio tasks-by-priority '())))
+	      (cond
+		((zerop count) ; Skip empty priorities
+		nil)
 
-	      ;; Set initial constraint from highest priority with tasks
-	      ((null current-max)
-	      (setq current-max count
-		    highest-processed prio)
-	      (message "[CONSTRAINT] Priority %d = new global max: %d" 
-		      prio current-max))
+		;; Set initial constraint from highest priority with tasks
+		((null current-max)
+		(setq current-max count
+		      highest-processed prio)
+		(message "[CONSTRAINT] Priority %d = new global max: %d" 
+			prio current-max))
 
-	      ;; Enforce constraints for lower priorities
-	      ((> count current-max)
-	      (let ((excess (- count current-max)))
-		(message "[ENFORCE] Priority %d overflow (%d > max %d). Postponing %d tasks..."
-			prio count current-max excess)
-		;; Process oldest tasks first (FIFO through list order)
-		(dotimes (_ excess)
-		  (when-let ((task (pop tasks))) 
-		    (let ((file (car task))
-			  (pos (cdr task)))
-		      ;; Postpone logic
-		      (with-current-buffer (find-file-noselect file)
-			(goto-char pos)
-			(my-postpone-schedule)
-			(message "Postponed priority %d task: %s" prio 
-				(file-name-nondirectory file))))))
-		(puthash prio tasks tasks-by-priority)))
-          
-	      ;; Update current-max for subsequent priorities
-	      (t
-	      (setq current-max (min current-max count))))))
+		;; Enforce constraints for lower priorities
+		((> count current-max)
+		(let ((excess (- count current-max)))
+		  (message "[ENFORCE] Priority %d overflow (%d > max %d). Postponing %d tasks..."
+			  prio count current-max excess)
+		  ;; Process oldest tasks first (FIFO through list order)
+		  (dotimes (_ excess)
+		    (when-let ((task (pop tasks))) 
+		      (let ((file (car task))
+			    (pos (cdr task)))
+			;; Postpone logic
+			(with-current-buffer (find-file-noselect file)
+			  (goto-char pos)
+			  (my-postpone-schedule)
+			  (message "Postponed priority %d task: %s" prio 
+				  (file-name-nondirectory file))))))
+		  (puthash prio tasks tasks-by-priority)))
+		
+		;; Update current-max for subsequent priorities
+		(t
+		(setq current-max (min current-max count))))))
 
-	;; ==== PHASE 4: Cleanup ====
-	(save-some-buffers t)
-	(message "[COMPLETE] Constrained %d priorities. Final max: %d"
-		(hash-table-count priority-counts)
-		current-max))))
+	  ;; ==== PHASE 4: Cleanup ====
+	  (save-some-buffers t)
+	  (message "[COMPLETE] Constrained %d priorities. Final max: %d"
+		  (hash-table-count priority-counts)
+		  (or current-max 0))))))
 
 (defun my-postpone-consecutive-same-file-tasks ()
   "Postpone consecutive tasks from the same file, keeping only the first.
@@ -2158,7 +2258,7 @@ Saves buffers and regenerates the task list for consistency."
    (t nil)))
 
 (defun my-show-current-flag-status ()
-  "Show flag info and current outstanding task index (1-based) and total."
+  "Show flag info, TODO status, and current outstanding task index."
   (interactive)
   (let ((data (my-current-flag-counts))
         (tasks (if (boundp 'my-outstanding-tasks-list)
@@ -2168,22 +2268,36 @@ Saves buffers and regenerates the task list for consistency."
                       (boundp 'my-outstanding-tasks-list)
                       my-outstanding-tasks-list)
                  (1+ my-outstanding-tasks-index)
-               nil)))
+               nil))
+        (todo-status (when (and (boundp 'my-outstanding-tasks-list)
+                               (boundp 'my-outstanding-tasks-index)
+                               my-outstanding-tasks-list
+                               (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+                       (let ((current-task (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
+                         (plist-get current-task :is-todo)))))
     (if data
         (let* ((flag-name (plist-get data :flag-name))
                (flag-num (plist-get data :flag-num))
                (fidx (plist-get data :flag-pos))
                (ftotal (plist-get data :flag-count))
                (fleft (plist-get data :flag-left))
-               (tleft (if (and idx tasks) (- tasks idx) nil)))
-          (message "%s (%d of %d, %d left) | Task %d/%d, %d left"
-                   (or flag-name (format "Flag %s" (or flag-num "?")))
-                   fidx ftotal fleft
+               (tleft (if (and idx tasks) (- tasks idx) nil))
+               (todo-indicator (cond ((eq todo-status t) "TODO")
+                                   ((eq todo-status nil) "OTHER")
+                                   (t "UNKNOWN"))))  ; Changed from "?" to "UNKNOWN"
+          (message "%s (%d of %d, %d left) | %s Task %d/%d, %d left"
+                   (or flag-name (format "Flag %s" (or flag-num "UNKNOWN")))  ; Safe string
+                   (or fidx 0) (or ftotal 0) (or fleft 0)  ; Ensure numbers
+                   todo-indicator
                    (or idx 0)
                    (or tasks 0)
                    (or tleft 0)))
-      (let ((tleft (if (and idx tasks) (- tasks idx) nil)))
-        (message "No current flag info. Task %d/%d, %d left"
+      (let ((tleft (if (and idx tasks) (- tasks idx) nil))
+            (todo-indicator (cond ((eq todo-status t) "TODO")
+                                ((eq todo-status nil) "OTHER")
+                                (t "UNKNOWN"))))  ; Changed from "?" to "UNKNOWN"
+        (message "No current flag info. %s Task %d/%d, %d left"
+                 todo-indicator
                  (or idx 0)
                  (or tasks 0)
                  (or tleft 0))))))
@@ -2428,7 +2542,10 @@ Defaults to 0.2 seconds."
               
               (message "Step 2B.2.7: Postponing consecutive same-file tasks...")
               (my-postpone-consecutive-same-file-tasks)
-              
+
+	      (message "Step 2B.2.8: Cleaning up DONE tasks...")
+	      (my-cleanup-all-done-tasks)
+
               (message "Step 2B.3: Getting outstanding tasks...")
               (my-get-outstanding-tasks)
               (setq my-outstanding-tasks-index 0)
@@ -2439,23 +2556,23 @@ Defaults to 0.2 seconds."
         
         (message "Step 3: Enabling org-queue-mode...")
         (org-queue-mode 1)
-      	
+        
         ;; Step 4: Initialize SRS system for faster future access
         (message "Step 4: Pre-initializing SRS system...")
-	(unless my-android-p
-	  (if (not my-srs-reviews-exhausted)
-	      (progn
-		(my-srs-quit-reviews)
-		(let ((temp-frame (make-frame '((visibility . nil) (width . 80) (height . 24)))))
-		  (unwind-protect
-		      (with-selected-frame temp-frame
-			(cl-letf (((symbol-function 'read-key) (lambda (&rest _) 32)))
-			  (condition-case nil
-			      (my-srs-start-reviews)
-			    (error (setq my-srs-reviews-exhausted t))))
-			(my-srs-quit-reviews))
-		    (delete-frame temp-frame))))
-	    (my-launch-anki)))
+  	(unless my-android-p
+  	  (if (not my-srs-reviews-exhausted)
+  	      (progn
+  		(my-srs-quit-reviews)
+  		(let ((temp-frame (make-frame '((visibility . nil) (width . 80) (height . 24)))))
+  		  (unwind-protect
+  		      (with-selected-frame temp-frame
+  			(cl-letf (((symbol-function 'read-key) (lambda (&rest _) 32)))
+  			  (condition-case nil
+  			      (my-srs-start-reviews)
+  			    (error (setq my-srs-reviews-exhausted t))))
+  			(my-srs-quit-reviews))
+  		    (delete-frame temp-frame))))
+  	    (my-launch-anki)))
         
         (message "✓ Automatic task setup completed successfully.")
         
@@ -2467,11 +2584,11 @@ Defaults to 0.2 seconds."
                                             (> (length my-outstanding-tasks-list) 0)
                                             (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
                                        (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
-                              		 ;; Use safe display function
-                              		 (my-display-task-at-marker task-or-marker)
-                              		 (my-show-current-flag-status))
+                                	 ;; Use safe display function
+                                	 (my-display-task-at-marker task-or-marker)
+                                	 (my-show-current-flag-status))
                                      (message "Task list empty or invalid index"))
-                              	 (error
+                                 (error
                                   (message "Error preparing task display: %s" (error-message-string err))))))
         (message "Task display scheduled.")
 
