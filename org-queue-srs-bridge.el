@@ -1,10 +1,11 @@
-;;; my-srs-integration.el --- Integration between tasks and SRS reviews -*- lexical-binding: t -*-
+;;; org-queue-srs-bridge.el --- Integration between org-queue tasks and org-srs reviews -*- lexical-binding: t -*-
 
 ;; This package provides seamless integration between tasks and spaced repetition.
 
             ;;; Code:
 
 (require 'org)
+(require 'cl-lib)
 
 ;; State variables
 (defvar my-srs-reviews-exhausted nil
@@ -164,5 +165,107 @@
 ;; Reset exhausted flag at midnight
 (run-at-time "00:00" 86400 #'my-srs-reset-exhausted-flag)
 
-(provide 'my-srs-integration)
-            ;;; my-srs-integration.el ends here
+;; SRS entry detection function
+(defun org-srs-entry-p (pos)
+  "Determine if and where the Org entry at POS or its immediate parent contains
+the specified log drawer (org-srs-log-drawer-name).
+
+Returns:
+- 'current : If the drawer is found directly under the current entry.
+- 'parent  : If the drawer is found directly under the immediate parent entry 
+            (and not under the current entry).
+- nil      : If the drawer is not found in either location."
+  (interactive (list (point)))
+
+  ;; Try to load org-srs if not already loaded to get org-srs-log-drawer-name
+  (unless (boundp 'org-srs-log-drawer-name)
+    (if (require 'org-srs-log nil t)
+        (message "Loaded org-srs-log for drawer name")
+      ;; Fallback to known default if org-srs is not available
+      (defvar org-srs-log-drawer-name "SRSITEMS"
+        "Default SRS log drawer name when org-srs is not available.")))
+  
+  ;; Ensure the required variable is defined and not empty
+  (unless (boundp 'org-srs-log-drawer-name)
+    (error "Variable 'org-srs-log-drawer-name' is not defined. Set it to your drawer name"))
+  (when (string-empty-p org-srs-log-drawer-name)
+    (error "Variable 'org-srs-log-drawer-name' is empty. Set it to your drawer name"))
+
+  ;; Save current buffer state
+  (save-excursion
+    ;; Ensure we're at a heading
+    (goto-char pos)
+    (when (or (org-at-heading-p) (org-back-to-heading t))
+      (let* ((drawer-regexp (concat "^[ \t]*:" 
+                                   (regexp-quote org-srs-log-drawer-name)
+                                   ":[ \t]*$"))
+             (location nil)
+             (current-heading-pos (point))
+             (current-level (org-outline-level)))
+        
+        ;; Check current entry first
+        (let ((next-heading-pos (save-excursion
+                                 (outline-next-heading)
+                                 (point))))
+          (save-excursion
+            (forward-line 1) ;; Move past the heading
+            (when (re-search-forward drawer-regexp next-heading-pos t)
+              (setq location 'current))))
+        
+        ;; If not found in current entry and not at top level, check parent
+        (unless location
+          (when (> current-level 1)
+            (save-excursion
+              (goto-char current-heading-pos)
+              (when (org-up-heading-safe)
+                (let ((parent-pos (point))
+                      (next-heading-pos (save-excursion
+                                         (outline-next-heading)
+                                         (point))))
+                  (forward-line 1) ;; Move past the parent heading
+                  (when (re-search-forward drawer-regexp next-heading-pos t)
+                    (setq location 'parent)))))))
+        
+        (message "org-srs-entry-p: Result (for drawer '%s') = %s" 
+                 org-srs-log-drawer-name location)
+        location))))
+
+;; Modern SRS rating functions for use outside review sessions
+;; Based on your suggested org-srs-review-rate-entry function
+(defun org-srs-review-rate-entry (rating)
+  "Rate entry at point using modern org-srs API."
+  (org-srs-property-let ((org-srs-review-cache-p nil))
+    (apply
+     #'org-srs-review-rate
+     rating
+     (save-excursion
+       (org-srs-log-beginning-of-drawer)
+       (forward-line)
+       (org-srs-item-at-point)))))
+
+(defun org-queue-srs-rate-again ()
+  "Rate current entry as 'again' using org-srs-review-rate-entry."
+  (interactive)
+  (if (not (require 'org-srs nil t))
+      (message "org-srs package not available")
+    (condition-case err
+        (progn
+          (org-srs-review-rate-entry :again)
+          (message "Rated as 'again'"))
+      (error 
+       (message "Error rating entry: %s" (error-message-string err))))))
+
+(defun org-queue-srs-rate-good ()
+  "Rate current entry as 'good' using org-srs-review-rate-entry."
+  (interactive)
+  (if (not (require 'org-srs nil t))
+      (message "org-srs package not available")
+    (condition-case err
+        (progn
+          (org-srs-review-rate-entry :good)
+          (message "Rated as 'good'"))
+      (error 
+       (message "Error rating entry: %s" (error-message-string err))))))
+
+(provide 'org-queue-srs-bridge)
+;;; org-queue-srs-bridge.el ends here

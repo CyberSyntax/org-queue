@@ -1,0 +1,76 @@
+;;; org-queue-utils.el --- Task utilities for org-queue -*- lexical-binding: t -*-
+
+;;; Code:
+
+(require 'org-queue-config)
+
+;;; Task State Functions
+
+(defun my-is-todo-task ()
+  "Return non-nil if the current task is in a TODO state (not DONE)."
+  (let ((todo-state (org-get-todo-state)))
+    (and todo-state 
+         (not (member todo-state org-done-keywords)))))
+
+(defun my-is-done-task ()
+  "Return non-nil if the current task is in a DONE state."
+  (let ((todo-state (org-get-todo-state)))
+    (and todo-state 
+         (member todo-state org-done-keywords))))
+
+(defun my-cleanup-done-task ()
+  "Remove SCHEDULED and PRIORITY properties from DONE tasks."
+  (when (my-is-done-task)
+    (let ((had-schedule (org-get-scheduled-time nil))
+          (had-priority (org-entry-get nil "PRIORITY"))
+          (cleaned nil))
+      ;; Remove SCHEDULED
+      (when had-schedule
+        (org-schedule '(4))  ; C-u C-c C-s (remove schedule)
+        (setq cleaned t))
+      ;; Remove PRIORITY - correct method
+      (when (and had-priority (not (string= had-priority " ")))
+        (org-priority ?\ )  ; Set priority to space (removes it)
+        (setq cleaned t))
+      ;; Return t if we cleaned anything
+      cleaned)))
+
+(defun my-cleanup-all-done-tasks ()
+  "Remove SCHEDULED and PRIORITY properties from all DONE tasks across agenda files."
+  (interactive)
+  (let ((cleaned-count 0)
+        (total-done 0))
+    
+    (save-some-buffers t)
+    
+    (org-map-entries
+     (lambda ()
+       (when (my-is-done-task)
+         (setq total-done (1+ total-done))
+         (when (my-cleanup-done-task)
+           (setq cleaned-count (1+ cleaned-count)))))
+     nil 'agenda)
+    
+    (save-some-buffers t)
+    (message "✓ Cleaned %d of %d DONE tasks (removed SCHEDULED/PRIORITY)" 
+             cleaned-count total-done)))
+
+;;; Mathematical Utilities
+
+(defun my-round-to-decimals (number decimals)
+  "Round NUMBER to DECIMALS decimal places."
+  (/ (float (round (* number (expt 10 decimals))))
+     (expt 10 decimals)))
+
+(defun my-custom-shuffle (list)
+  "Fisher-Yates shuffle implementation for Emacs Lisp."
+  (let ((vec (vconcat list)) (i (length list)))
+    (while (> i 1)
+	(let* ((j (random i))
+	       (temp (aref vec (setq i (1- i)))))
+	  (aset vec i (aref vec j))
+	  (aset vec j temp)))
+    (append vec nil)))
+
+(provide 'org-queue-utils)
+;;; org-queue-utils.el ends here
