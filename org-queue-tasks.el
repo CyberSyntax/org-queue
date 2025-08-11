@@ -8,6 +8,44 @@
 (require 'org-queue-utils)
 (require 'org-queue-srs-bridge)
 
+(defcustom my-queue-visible-buffer-count 8
+  "How many distinct queue buffers to keep readily visible (not buried).
+The set is centered on the current queue index, scanning forward with wrap."
+  :type 'integer
+  :group 'org-queue)
+
+(defun my-queue--buffer-at-index (idx)
+  "Return the buffer of the queue entry at IDX or nil."
+  (when (and my-outstanding-tasks-list
+             (>= idx 0)
+             (< idx (length my-outstanding-tasks-list)))
+    (my-safe-marker-buffer (nth idx my-outstanding-tasks-list))))
+
+(defun my-queue-limit-visible-buffers (&optional n)
+  "Bury all queue buffers except the next N distinct ones from current index.
+N defaults to `my-queue-visible-buffer-count'. This does not reorder buffers,
+only buries the ones that should not be in the immediate working set."
+  (let* ((count (or n my-queue-visible-buffer-count))
+         (len (length my-outstanding-tasks-list)))
+    (when (and (> len 0) (> count 0))
+      ;; Collect allowed buffers: starting at current index, scan forward with wrap,
+      ;; collecting distinct buffers until we have COUNT of them (or we exhaust).
+      (let ((allowed (make-hash-table :test 'eq))
+            (collected 0)
+            (i 0))
+        (while (and (< collected count) (< i len))
+          (let* ((idx (mod (+ my-outstanding-tasks-index i) len))
+                 (buf (my-queue--buffer-at-index idx)))
+            (when (and buf (buffer-live-p buf) (not (gethash buf allowed)))
+              (puthash buf t allowed)
+              (setq collected (1+ collected))))
+          (setq i (1+ i)))
+        ;; Now bury all queue buffers that are not allowed
+        (dotimes (j len)
+          (let ((buf (my-queue--buffer-at-index j)))
+            (when (and buf (buffer-live-p buf) (not (gethash buf allowed)))
+              (bury-buffer buf))))))))
+
 ;; Variables for task list management
 (defvar my-outstanding-tasks-list nil
   "List of outstanding tasks, sorted by priority.")
@@ -265,38 +303,35 @@ logs unresolved IDs, and skips entries that cannot be resolved."
   (when (or (>= my-outstanding-tasks-index (length my-outstanding-tasks-list))
             (< my-outstanding-tasks-index 0))
     (setq my-outstanding-tasks-index 0)
-    (my-save-index-to-file)))
+    (my-save-index-to-file))
+
+  ;; Limit visible buffers to a small, focused set
+  (my-queue-limit-visible-buffers))
 
 (defun my-get-outstanding-tasks ()
-  "Populate task list with metadata for stable tracking.
-  Orders tasks with TODO items first (by priority), then non-TODO items (by priority)."
+  "Populate task list with metadata for stable tracking."
   (setq my-outstanding-tasks-list nil)
   (org-map-entries
    (lambda ()
      (when (and (my-is-outstanding-task)
-                (not (my-is-done-task))              ; Exclude DONE tasks - FIXED
+                (not (my-is-done-task))
                 (not (org-srs-entry-p (point))))
        (let* ((marker (point-marker))
               (id (org-entry-get nil "ID"))
               (priority (my-get-raw-priority-value))
               (flag (my-priority-flag priority))
               (file (buffer-file-name))
-              (heading (org-get-heading t t t t))    ; DEBUG: Get heading
-              (todo-state (org-get-todo-state))      ; DEBUG: Get TODO state
-              (is-todo (my-is-todo-task))            ; Check if it's TODO
+              (heading (org-get-heading t t t t))
+              (todo-state (org-get-todo-state))
+              (is-todo (my-is-todo-task))
               (task-data (list :id id
-                              :marker marker
-                              :priority priority
-                              :flag flag
-                              :file file
-                              :is-todo is-todo)))     ; Store TODO status
-         
-         ;; DEBUG: Log each task being processed
-         (message "QUEUE BUILD: %s | TODO-state: %s | is-todo: %s | priority: %s" 
+                               :marker marker
+                               :priority priority
+                               :flag flag
+                               :file file
+                               :is-todo is-todo)))
+         (message "QUEUE BUILD: %s | TODO-state: %s | is-todo: %s | priority: %s"
                   heading todo-state is-todo priority)
-         
-         ;; Create sorting key: (todo-status, priority)
-         ;; TODO items get 0 (higher priority), non-TODO get 1 (lower priority)
          (let ((sort-key (list (if is-todo 0 1) priority)))
            (push (cons sort-key task-data) my-outstanding-tasks-list)))))
    nil 'agenda)
@@ -304,58 +339,127 @@ logs unresolved IDs, and skips entries that cannot be resolved."
   ;; Sort by two-tier system: TODO status first, then priority
   (setq my-outstanding-tasks-list
         (mapcar #'cdr
-                (sort my-outstanding-tasks-list 
-                      (lambda (a b) 
+                (sort my-outstanding-tasks-list
+                      (lambda (a b)
                         (let ((key-a (car a))
                               (key-b (car b)))
-                          ;; Compare first by TODO status (0 vs 1)
                           (if (= (car key-a) (car key-b))
-                              ;; If same TODO status, compare by priority
                               (< (cadr key-a) (cadr key-b))
-                            ;; Different TODO status, TODO (0) comes first
                             (< (car key-a) (car key-b))))))))
   
-  ;; DEBUG: Final summary
-  (let ((todo-count (length (cl-remove-if-not (lambda (task) (plist-get task :is-todo)) my-outstanding-tasks-list)))
+  ;; Summary
+  (let ((todo-count (length (cl-remove-if-not (lambda (task) (plist-get task :is-todo))
+                                              my-outstanding-tasks-list)))
         (total-count (length my-outstanding-tasks-list)))
     (message "=== QUEUE BUILT ===")
     (message "Total tasks in queue: %d" total-count)
     (message "TODO tasks in queue: %d" todo-count))
   
-  (setq my-outstanding-tasks-index 0))
+  (setq my-outstanding-tasks-index 0)
+
+  ;; Keep only a focused set of queue buffers around current position
+  (my-queue-limit-visible-buffers))
 
 (defun my-remove-current-task ()
-  "Remove the task at current index from outstanding tasks list and update cache file."
+  "Remove the task at the current index from the queue and keep buffers tidy.
+
+Behavior:
+- Removes the current task from `my-outstanding-tasks-list`.
+- Keeps the index pointing to the next task (or last task if you removed the last).
+- Buries the removed task's buffer.
+- Limits visible queue buffers to `my-queue-visible-buffer-count`.
+- Saves the cache and index.
+- Shows the new current task if any."
   (interactive)
-  
-  ;; Validate the task list
-  (unless (and my-outstanding-tasks-list 
+  ;; Ensure we have synchronized data
+  (my-ensure-synchronized-task-list)
+
+  ;; Validate
+  (unless (and my-outstanding-tasks-list
                (> (length my-outstanding-tasks-list) 0)
+               (>= my-outstanding-tasks-index 0)
                (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
-    (message "No valid task at current index to remove")
-    (cl-return-from my-remove-current-task nil))
+    (user-error "No valid task at current index to remove"))
+
+  (let* ((old-index my-outstanding-tasks-index)
+         (old-list my-outstanding-tasks-list)
+         (removed-task (nth old-index old-list))
+         (removed-buffer (my-safe-marker-buffer removed-task)))
+    ;; Remove from list
+    (setq my-outstanding-tasks-list
+          (append (seq-take old-list old-index)
+                  (seq-drop old-list (1+ old-index))))
+
+    (cond
+     ;; If the queue became empty, finalize and rebuild.
+     ((zerop (length my-outstanding-tasks-list))
+      (when (buffer-live-p removed-buffer)
+        (bury-buffer removed-buffer))
+      (setq my-outstanding-tasks-index 0)
+      (my-save-outstanding-tasks-to-file)
+      (message "Task removed. Queue is now empty.")
+      ;; Optionally rebuild right away
+      (my-get-outstanding-tasks)
+      (setq my-outstanding-tasks-index 0)
+      (my-save-outstanding-tasks-to-file))
+
+     ;; Otherwise, keep index pointing to the next item (or clamp to last).
+     (t
+      (let ((new-length (length my-outstanding-tasks-list)))
+        (when (>= my-outstanding-tasks-index new-length)
+          (setq my-outstanding-tasks-index (1- new-length))))
+      (when (buffer-live-p removed-buffer)
+        (bury-buffer removed-buffer))
+      ;; Limit visible queue buffers (no global MRU reordering)
+      (my-queue-limit-visible-buffers)
+      ;; Save
+      (my-save-outstanding-tasks-to-file)
+      (message "Task removed. Now at %d/%d"
+               (1+ my-outstanding-tasks-index)
+               (length my-outstanding-tasks-list))
+      (my-show-current-outstanding-task)))))
+
+(defun my-move-current-task-to-position (target-pos)
+  "Move current task to TARGET-POS in the queue (1-based).
+Does not attempt to globally reorder buffers. Instead, limits visible
+queue buffers around the new position."
+  (interactive "nMove to queue position (1-based): ")
   
-  ;; Remove the task
-  (setq my-outstanding-tasks-list
-        (append (seq-take my-outstanding-tasks-list my-outstanding-tasks-index)
-                (seq-drop my-outstanding-tasks-list (1+ my-outstanding-tasks-index))))
+  ;; Validate
+  (unless (and my-outstanding-tasks-list
+               (>= my-outstanding-tasks-index 0)
+               (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+    (error "No valid current task"))
   
-  ;; Set index using your exact logic
-  (if (<= my-outstanding-tasks-index 0)
-      (setq my-outstanding-tasks-index (1- (length my-outstanding-tasks-list)))
-    (setq my-outstanding-tasks-index (1- my-outstanding-tasks-index)))
-  
-  ;; Update cache file (this will also save the updated index separately)
-  (my-save-outstanding-tasks-to-file)
-  
-  ;; Show feedback
-  (message "Task removed. %d tasks remaining." (length my-outstanding-tasks-list))
-  
-  ;; Regenerate list if it became empty
-  (when (zerop (length my-outstanding-tasks-list))
-    (my-get-outstanding-tasks)
-    (setq my-outstanding-tasks-index 0)
-    (my-save-outstanding-tasks-to-file)))
+  (let* ((target-index (1- target-pos))  ; Convert to 0-based
+         (max-index (1- (length my-outstanding-tasks-list)))
+         (clamped-index (max 0 (min target-index max-index)))
+         (current-task (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
+    
+    ;; Remove from current position
+    (setq my-outstanding-tasks-list
+          (append (seq-take my-outstanding-tasks-list my-outstanding-tasks-index)
+                  (seq-drop my-outstanding-tasks-list (1+ my-outstanding-tasks-index))))
+    
+    ;; Insert at new position
+    (setq my-outstanding-tasks-list
+          (append (seq-take my-outstanding-tasks-list clamped-index)
+                  (list current-task)
+                  (seq-drop my-outstanding-tasks-list clamped-index)))
+    
+    ;; Update index to new position
+    (setq my-outstanding-tasks-index clamped-index)
+    
+    ;; Limit visible queue buffers around the new index
+    (my-queue-limit-visible-buffers)
+    
+    ;; Save state
+    (my-save-outstanding-tasks-to-file)
+    
+    (message "Moved to position %d/%d"
+             (1+ clamped-index)
+             (length my-outstanding-tasks-list))
+    (my-show-current-outstanding-task)))
 
 ;; Task management functions
 (defun my-auto-postpone-overdue-tasks ()
@@ -566,7 +670,8 @@ Saves buffers and regenerates the task list for consistency."
   (my-show-current-outstanding-task))  ;; Call function to show the first/current task
 
 (defun my-show-next-outstanding-task ()
-  "Show the next outstanding task in priority order with proper SRS handling."
+  "Show the next outstanding task with proper SRS handling.
+Also limits visible queue buffers around the new current task."
   (interactive)
 
   (widen-and-recenter)
@@ -574,46 +679,43 @@ Saves buffers and regenerates the task list for consistency."
   ;; Ensure we have synchronized data
   (my-ensure-synchronized-task-list)
 
-  ;; First check if SRS session just ended (detect message)
+  ;; Detect end of SRS session
   (when (and (current-message)
              (string-match-p "No more cards to review" (current-message)))
     (message "Review session complete - continuing with tasks")
-    (sit-for 1)  ;; Brief pause for user to see the message
+    (sit-for 1)
     (setq my-srs-reviews-exhausted t))
   
-  ;; If no list exists or we're at the end, get/refresh the list
+  ;; If no list exists or we're at the end, refresh
   (when (or (not my-outstanding-tasks-list)
             (>= my-outstanding-tasks-index (length my-outstanding-tasks-list)))
     (if my-outstanding-tasks-list
-        ;; If we have a list but reached the end, reset index to 0
         (setq my-outstanding-tasks-index 0)
-      ;; If no list, get it
       (my-get-outstanding-tasks)))
   
-  ;; Increment index for next task
-  (when (and my-outstanding-tasks-list 
+  ;; Advance index with wrap
+  (when (and my-outstanding-tasks-list
              (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
     (setq my-outstanding-tasks-index (1+ my-outstanding-tasks-index))
-    ;; Handle wraparound if we go past the end
     (when (>= my-outstanding-tasks-index (length my-outstanding-tasks-list))
       (setq my-outstanding-tasks-index 0)))
   
   ;; Save the updated index
   (my-save-index-to-file)
   
-  ;; Now show the task at the current index
+  ;; Show the task
   (if (and my-outstanding-tasks-list
            (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
       (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
-        ;; Display operations
         (my-display-task-at-marker task-or-marker)
         (my-pulse-highlight-current-line)
+
+        ;; Limit visible queue buffers now that we have moved
+        (my-queue-limit-visible-buffers)
         
-        ;; Handle SRS reviews
+        ;; SRS handling
         (if my-android-p
-            ;; On Android: skip SRS, just launch Anki
             (my-launch-anki)
-          ;; On desktop: use SRS integration
           (if (not my-srs-reviews-exhausted)
               (progn
                 (my-srs-quit-reviews)
@@ -626,47 +728,49 @@ Saves buffers and regenerates the task list for consistency."
     (message "No outstanding tasks found.")))
 
 (defun my-show-previous-outstanding-task ()
-  "Show the previous outstanding task in priority order, cycling if needed."
+  "Show the previous outstanding task, cycling if needed.
+Also limits visible queue buffers around the new current task."
   (interactive)
 
   (widen-and-recenter)
-  
-  ;; Ensure we have synchronized data
   (my-ensure-synchronized-task-list)
   
   (if my-outstanding-tasks-list
       (progn
-        ;; Update index BEFORE showing the task for consistency
         (if (<= my-outstanding-tasks-index 0)
             (setq my-outstanding-tasks-index (1- (length my-outstanding-tasks-list)))
           (setq my-outstanding-tasks-index (1- my-outstanding-tasks-index)))
         
-        ;; Save the updated index
         (my-save-index-to-file)
         
         (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
           (my-display-task-at-marker task-or-marker)
           (my-pulse-highlight-current-line)
+
+          ;; Limit visible queue buffers now that we have moved
+          (my-queue-limit-visible-buffers)
+
           (my-show-current-flag-status)))
     (message "No outstanding tasks to navigate.")))
 
 (defun my-show-current-outstanding-task ()
-  "Show the current outstanding task, or get a new list and show the first task if not valid."
+  "Show the current outstanding task, or get a new list and show the first task if not valid.
+Also limits visible queue buffers around the current task."
   (interactive)
 
-  (widen-and-recenter)  ;; This will only work if already in org-mode
-  
-  ;; Ensure we have synchronized data
+  (widen-and-recenter)
   (my-ensure-synchronized-task-list)
     
-  (if (and my-outstanding-tasks-list 
+  (if (and my-outstanding-tasks-list
            (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
       (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
-        ;; Display operations (will switch to proper org buffer)
         (my-display-task-at-marker task-or-marker)
         (my-pulse-highlight-current-line)
+
+        ;; Limit visible queue buffers for current position
+        (my-queue-limit-visible-buffers)
+
         (my-show-current-flag-status))
-    ;; Truly no tasks - unlikely after synchronization above
     (message "No outstanding tasks found.")))
 
 ;; Utility functions for task management

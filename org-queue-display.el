@@ -2,10 +2,61 @@
 
 ;;; Code:
 
+(require 'pulse)
+(require 'seq)
 (require 'org-queue-config)
 (require 'org-queue-utils)
 (require 'org-queue-srs-bridge)
-(require 'pulse)
+(require 'org-queue-tasks)
+
+(defun my--queue-task-candidates ()
+  "Return an ordered list of (display . index) for the current queue.
+Display shows \"NN. Title — file\". Titles may be \"(untitled)\"."
+  (let ((cands nil)
+        (len (length my-outstanding-tasks-list)))
+    (dotimes (i len)
+      (let* ((task (nth i my-outstanding-tasks-list))
+             (buf (my-safe-marker-buffer task))
+             (head (with-current-buffer (or buf (current-buffer))
+                     (save-excursion
+                       (let ((m (my-extract-marker task)))
+                         (when (markerp m)
+                           (goto-char (marker-position m))
+                           (or (org-get-heading t t t t) ""))))))
+             (title (if (and head (> (length head) 0)) head "(untitled)"))
+             (file (plist-get task :file))
+             (file-short (and file (file-name-nondirectory file)))
+             (disp (format "%4d. %s — %s"
+                           (1+ i)
+                           title
+                           (or file-short ""))))
+        (push (cons disp i) cands)))
+    (nreverse cands)))
+
+(defun my--completion-table-preserve-order (candidates)
+  "Completion table over CANDIDATES that preserves their order."
+  (lambda (string pred action)
+    (if (eq action 'metadata)
+        '(metadata (display-sort-function . identity)
+                   (cycle-sort-function . identity))
+      (complete-with-action action candidates string pred))))
+
+(defun my-queue-switch-to-task ()
+  "Choose a task from the queue in queue order and jump to it.
+Updates `my-outstanding-tasks-index` and shows the task."
+  (interactive)
+  (my-ensure-synchronized-task-list)
+  (if (null my-outstanding-tasks-list)
+      (message "Queue is empty.")
+    (let* ((pairs (my--queue-task-candidates))
+           (table (my--completion-table-preserve-order (mapcar #'car pairs)))
+           (default (caar pairs))
+           (choice (completing-read "Switch to task: " table nil t nil nil default))
+           (idx (cdr (assoc choice pairs))))
+      (when (numberp idx)
+        (setq my-outstanding-tasks-index idx)
+        (my-save-index-to-file)
+        (my-show-current-outstanding-task)))))
 
 ;; Display and UI faces
 (defface org-clozed-face
@@ -236,10 +287,15 @@ Defaults to 0.2 seconds."
 ;; Add this to your Emacs config - never ask about reverting
 (setq revert-without-query '(".*"))
 
+(defun my-queue-register-visit (_buf)
+  "No-op. Keep native C-x b behavior."
+  nil)
+
 (defun my-display-task-at-marker (task-or-marker)
   "Display the task at TASK-OR-MARKER with appropriate visibility settings.
 Always resolves the live position by :id if available (lazy and per-ID).
-Falls back to the existing marker only when ID cannot be resolved."
+Falls back to the existing marker only when ID cannot be resolved.
+Also registers the displayed buffer as a recent queue buffer."
   (let* ((id   (and (listp task-or-marker) (plist-get task-or-marker :id)))
          (file (and (listp task-or-marker) (plist-get task-or-marker :file)))
          ;; Start with whatever we have, but we will prefer resolving by ID below.
@@ -682,6 +738,424 @@ Includes all commands, access methods, and usage examples."
                    (not org-syntax-markers-visible))))
   (message "Syntax markers now %s" 
            (if org-syntax-markers-visible "visible" "hidden")))
+
+;; Queue chooser (tabulated-list-mode version, 1:1 with tasks)
+(require 'tabulated-list)
+(require 'org)                 ;; for org-get-heading etc.
+
+(defgroup org-queue-chooser nil
+  "Chooser UI for org-queue."
+  :group 'org-queue)
+
+(defcustom org-queue-chooser-buffer-name "*Org Queue*"
+  "Name of the queue chooser buffer."
+  :type 'string
+  :group 'org-queue-chooser)
+
+(defcustom org-queue-chooser-open-in-tab nil
+  "If non-nil, open the chooser in a dedicated tab-bar tab."
+  :type 'boolean
+  :group 'org-queue-chooser)
+
+(defcustom org-queue-chooser-title-width 50
+  "Width of the Title column."
+  :type 'integer
+  :group 'org-queue-chooser)
+
+(defcustom org-queue-chooser-file-width 28
+  "Width of the File column."
+  :type 'integer
+  :group 'org-queue-chooser)
+
+(defcustom org-queue-chooser-preview-width 50
+  "Width of the Preview column (only used when title is empty)."
+  :type 'integer
+  :group 'org-queue-chooser)
+
+(defcustom org-queue-chooser-preview-max-chars 140
+  "Max characters to display in the Preview column."
+  :type 'integer
+  :group 'org-queue-chooser)
+
+(defface org-queue-chooser-index-face
+  '((t (:inherit shadow)))
+  "Face for the index column in the chooser."
+  :group 'org-queue-chooser)
+
+(defface org-queue-chooser-title-face
+  '((t (:inherit org-level-1)))
+  "Face for the title column in the chooser."
+  :group 'org-queue-chooser)
+
+(defface org-queue-chooser-file-face
+  '((t (:inherit org-link)))
+  "Face for the file column in the chooser."
+  :group 'org-queue-chooser)
+
+(defface org-queue-chooser-preview-face
+  '((t (:slant italic :inherit shadow)))
+  "Face for the preview column in the chooser."
+  :group 'org-queue-chooser)
+
+(defvar org-queue-chooser-mode-map
+  (let ((map (make-sparse-keymap)))
+    ;; Movement (Emacs-like)
+    (define-key map (kbd "n") #'next-line)
+    (define-key map (kbd "p") #'previous-line)
+    ;; Row-wise movement (skip wrapped lines)
+    (define-key map (kbd "j") #'org-queue-chooser-next-row)
+    (define-key map (kbd "k") #'org-queue-chooser-previous-row)
+    ;; Visit current selection
+    (define-key map (kbd "RET") #'org-queue-chooser-visit)  ;; same-window
+    (define-key map (kbd "f")   #'org-queue-chooser-visit)  ;; same-window (Dired-ish)
+    (define-key map (kbd "o")   #'org-queue-chooser-visit-other-window) ;; other window
+    ;; Tabs
+    (define-key map (kbd "t")     #'org-queue-chooser-visit-in-new-tab)            ;; new tab (background)
+    (define-key map (kbd "C-c t") #'org-queue-chooser-visit-in-new-tab-foreground) ;; new tab (foreground)
+    ;; Refresh
+    (define-key map (kbd "g") #'org-queue-chooser-refresh)
+    ;; Open chooser in its own tab (foreground)
+    (define-key map (kbd "C-c T") #'org-queue-chooser-open-in-tab)
+    ;; Reorder tasks
+    (define-key map (kbd "M-n")     #'org-queue-chooser-move-down)
+    (define-key map (kbd "M-p")     #'org-queue-chooser-move-up)
+    (define-key map (kbd "M-<down>") #'org-queue-chooser-move-down)
+    (define-key map (kbd "M-<up>")   #'org-queue-chooser-move-up)
+    (define-key map (kbd "M-g M-g") #'org-queue-chooser-move-to-position)
+    ;; Quit
+    (define-key map (kbd "q") #'quit-window)
+    map)
+  "Keymap for org-queue-chooser-mode.")
+
+(define-derived-mode org-queue-chooser-mode tabulated-list-mode "Org-Queue-Chooser"
+  "Major mode to browse and jump to queue tasks (1:1 with the queue).
+n/p move by visual lines; j/k move by rows. RET/f visit; o visit in other window.
+t opens a new tab in the background (keep chooser focused). C-c t opens a new tab and selects it.
+M-n/M-p/M-g M-g move tasks; g refresh; q quit."
+  (setq tabulated-list-format
+        (vector
+         (list "#" 4 nil :right-align t :pad-right 1)
+         (list "Title" org-queue-chooser-title-width t)
+         (list "File"  org-queue-chooser-file-width t)
+         (list "Preview" org-queue-chooser-preview-width nil)))
+  (setq tabulated-list-padding 1)
+  (setq tabulated-list-sort-key nil)
+  (tabulated-list-init-header))
+
+(defun org-queue-chooser--truncate (s max-len)
+  "Truncate string S to MAX-LEN with ellipsis."
+  (if (and s (> (length s) max-len))
+      (concat (substring s 0 (max 0 (- max-len 1))) "…")
+    (or s "")))
+
+(defun org-queue-chooser--format-title (s)
+  "Format an Org heading title S for display in chooser.
+Show link descriptions instead of raw [[link][desc]]."
+  (let ((out (or s "")))
+    (setq out (replace-regexp-in-string "\\[\\[\\([^]]+\\)\\]\\[\\([^]]+\\)\\]\\]" "\\2" out)) ;; [[link][desc]] -> desc
+    (setq out (replace-regexp-in-string "\\[\\[\\([^]]+\\)\\]\\]" "\\1" out))                  ;; [[link]] -> link
+    out))
+
+(defun org-queue-chooser--gather-preview (task)
+  "Return a one-line preview string for TASK's body if title is empty."
+  (let* ((m (my-extract-marker task))
+         (buf (and (markerp m) (marker-buffer m))))
+    (when (and (markerp m) buf (buffer-live-p buf))
+      (with-current-buffer buf
+        (save-excursion
+          (goto-char (marker-position m))
+          (org-back-to-heading t)
+          (let ((start (save-excursion
+                         (org-back-to-heading t)
+                         (forward-line 1)
+                         (point)))
+                (end (save-excursion
+                       (org-end-of-subtree t t))))
+            (goto-char start)
+            (when (fboundp 'org-end-of-meta-data)
+              (org-end-of-meta-data t))
+            (let* ((real-start (point))
+                   (raw (buffer-substring-no-properties real-start (min end (+ real-start org-queue-chooser-preview-max-chars)))))
+              (setq raw (replace-regexp-in-string "[ \t\n\r]+" " " raw))
+              (org-queue-chooser--truncate raw org-queue-chooser-preview-max-chars))))))))
+
+(defun org-queue-chooser--current-index ()
+  "Return queue index at point or nil."
+  (tabulated-list-get-id))
+
+(defun org-queue-chooser--goto-next-row ()
+  "Move point to the start of the next row (row-aware, skips wrapped lines)."
+  (let ((cur (org-queue-chooser--current-index)))
+    (forward-line 1)
+    (while (and (not (eobp))
+                (equal (org-queue-chooser--current-index) cur))
+      (forward-line 1))
+    (when (and (eobp) (not (org-queue-chooser--current-index)))
+      (forward-line -1))))
+
+(defun org-queue-chooser--goto-previous-row ()
+  "Move point to the start of the previous row (row-aware, skips wrapped lines)."
+  (let ((cur (org-queue-chooser--current-index)))
+    (forward-line -1)
+    (while (and (not (bobp))
+                (or (not (org-queue-chooser--current-index))
+                    (equal (org-queue-chooser--current-index) cur)))
+      (forward-line -1))
+    (unless (org-queue-chooser--current-index)
+      (goto-char (point-min))
+      (forward-line 1))))
+
+(defun org-queue-chooser-next-row ()
+  "Move selection to the next task row without visiting."
+  (interactive)
+  (org-queue-chooser--goto-next-row))
+
+(defun org-queue-chooser-previous-row ()
+  "Move selection to the previous task row without visiting."
+  (interactive)
+  (org-queue-chooser--goto-previous-row))
+
+(defun org-queue-chooser--entries ()
+  "Build `tabulated-list-entries' from the current queue."
+  (let ((entries nil)
+        (len (length my-outstanding-tasks-list)))
+    (dotimes (i len)
+      (let* ((task (nth i my-outstanding-tasks-list))
+             (m (my-extract-marker task))
+             (buf (and (markerp m) (marker-buffer m)))
+             (title-raw (with-current-buffer (or buf (current-buffer))
+                          (save-excursion
+                            (when (markerp m)
+                              (goto-char (marker-position m))
+                              (org-get-heading t t t t)))))
+             (title (org-queue-chooser--format-title title-raw))
+             (has-title (and title (> (length title) 0)))
+             (file (plist-get task :file))
+             (file-short (and file (file-name-nondirectory file)))
+             (index-str (propertize (format "%d" (1+ i)) 'face 'org-queue-chooser-index-face))
+             (title-str (propertize (if has-title title "(untitled)") 'face 'org-queue-chooser-title-face))
+             (file-str (propertize (or file-short "") 'face 'org-queue-chooser-file-face))
+             (preview (unless has-title (org-queue-chooser--gather-preview task)))
+             (preview-str (propertize (or preview "") 'face 'org-queue-chooser-preview-face))
+             (vec (vector
+                   index-str
+                   (org-queue-chooser--truncate title-str org-queue-chooser-title-width)
+                   (org-queue-chooser--truncate file-str org-queue-chooser-file-width)
+                   (org-queue-chooser--truncate preview-str org-queue-chooser-preview-width))))
+        (push (list i vec) entries)))
+    (nreverse entries)))
+
+(defun org-queue-chooser-refresh ()
+  "Refresh the chooser buffer."
+  (interactive)
+  (my-ensure-synchronized-task-list)
+  (let ((inhibit-read-only t))
+    (setq tabulated-list-entries (org-queue-chooser--entries))
+    (tabulated-list-print t)
+    (org-queue-chooser--goto-index my-outstanding-tasks-index)))
+
+(defun org-queue-chooser--goto-index (idx)
+  "Place point on the row with queue index IDX."
+  (when (and (numberp idx) (>= idx 0) (< idx (length my-outstanding-tasks-list)))
+    (goto-char (point-min))
+    (forward-line) ;; skip header
+    (let ((done nil))
+      (while (and (not done) (not (eobp)))
+        (let ((row-id (tabulated-list-get-id)))
+          (if (and (numberp row-id) (= row-id idx))
+              (setq done t)
+            (forward-line 1)))))))
+
+(defun org-queue-open-chooser ()
+  "Open the queue chooser buffer. If `org-queue-chooser-open-in-tab' is non-nil, open in a tab."
+  (interactive)
+  (my-ensure-synchronized-task-list)
+  (if (and org-queue-chooser-open-in-tab (fboundp 'tab-bar-new-tab))
+      (org-queue-chooser-open-in-tab)
+    (let ((buf (get-buffer-create org-queue-chooser-buffer-name)))
+      (pop-to-buffer buf)
+      (org-queue-chooser-mode)
+      (org-queue-chooser-refresh))))
+
+(defun org-queue-chooser-open-in-tab ()
+  "Open the queue chooser in a dedicated tab-bar tab named \"Queue\"."
+  (interactive)
+  (if (not (fboundp 'tab-bar-new-tab))
+      (progn (message "tab-bar-mode not available in this Emacs") (org-queue-open-chooser))
+    (tab-bar-mode 1)
+    (let ((tab-name "Queue"))
+      (condition-case _
+          (tab-bar-select-tab-by-name tab-name)
+        (error
+         (tab-bar-new-tab)
+         (tab-bar-rename-tab tab-name)))
+      (let ((buf (get-buffer-create org-queue-chooser-buffer-name)))
+        (switch-to-buffer buf)
+        (org-queue-chooser-mode)
+        (org-queue-chooser-refresh)))))
+
+(defun org-queue-chooser-visit ()
+  "Visit the task on the current row and update `my-outstanding-tasks-index' (same window)."
+  (interactive)
+  (let ((idx (tabulated-list-get-id)))
+    (if (not (numberp idx))
+        (message "No task on this row")
+      (setq my-outstanding-tasks-index idx)
+      (my-save-index-to-file)
+      (my-show-current-outstanding-task))))
+
+(defun org-queue-chooser-visit-other-window ()
+  "Visit the task on the current row in other window (keep chooser selected)."
+  (interactive)
+  (let ((idx (tabulated-list-get-id)))
+    (if (not (numberp idx))
+        (message "No task on this row")
+      (let* ((task (nth idx my-outstanding-tasks-list))
+             (m (my-extract-marker task))
+             (buf (and (markerp m) (marker-buffer m)))
+             (pos (and (markerp m) (marker-position m))))
+        (unless (and buf pos)
+          (user-error "Cannot display this task"))
+        (let ((win (display-buffer buf '((display-buffer-pop-up-window)
+                                         (inhibit-same-window . t)))))
+          (when (window-live-p win)
+            (with-selected-window win
+              (goto-char pos)
+              (when (derived-mode-p 'org-mode)
+                (org-back-to-heading t)
+                (org-narrow-to-subtree)
+                (org-overview)
+                (org-reveal t)
+                (org-show-entry)
+                (org-show-children))
+              (recenter))))))))
+
+(defun org-queue-chooser--tab-name-for-index (idx)
+  "Return a meaningful tab name for queue index IDX."
+  (let* ((task (and (numberp idx) (nth idx my-outstanding-tasks-list)))
+         (m (and task (my-extract-marker task)))
+         (buf (and (markerp m) (marker-buffer m)))
+         (title (when (and (markerp m) buf (buffer-live-p buf))
+                  (with-current-buffer buf
+                    (save-excursion
+                      (goto-char (marker-position m))
+                      (org-get-heading t t t t)))))
+         (file (and task (plist-get task :file)))
+         (base (cond
+                ((and title (> (length title) 0)) title)
+                (file (file-name-nondirectory file))
+                (t "Untitled"))))
+    (format "#%d %s" (1+ idx) (if (> (length base) 40)
+                                  (concat (substring base 0 39) "…")
+                                base))))
+
+(defun org-queue-chooser-visit-in-new-tab ()
+  "Open current row task in a new tab, then return to chooser (background)."
+  (interactive)
+  (let ((idx (tabulated-list-get-id)))
+    (if (not (numberp idx))
+        (message "No task on this row")
+      (setq my-outstanding-tasks-index idx)
+      (my-save-index-to-file)
+      (if (fboundp 'tab-bar-new-tab)
+          (progn
+            (tab-bar-mode 1)
+            (tab-bar-new-tab)
+            (tab-bar-rename-tab (org-queue-chooser--tab-name-for-index idx))
+            (my-show-current-outstanding-task)
+            (ignore-errors (tab-bar-switch-to-prev-tab))) ;; return to chooser
+        (my-show-current-outstanding-task)))))
+
+(defun org-queue-chooser-visit-in-new-tab-foreground ()
+  "Open current row task in a new tab and select it (foreground)."
+  (interactive)
+  (let ((idx (tabulated-list-get-id)))
+    (if (not (numberp idx))
+        (message "No task on this row")
+      (setq my-outstanding-tasks-index idx)
+      (my-save-index-to-file)
+      (if (fboundp 'tab-bar-new-tab)
+          (progn
+            (tab-bar-mode 1)
+            (tab-bar-new-tab)
+            (tab-bar-rename-tab (org-queue-chooser--tab-name-for-index idx))
+            (my-show-current-outstanding-task))
+        (my-show-current-outstanding-task)))))
+
+(defun org-queue-chooser--move-element (list from to)
+  "Return a new LIST where element at index FROM is moved to index TO."
+  (let* ((len (length list))
+         (from (max 0 (min (1- len) from)))
+         (to   (max 0 (min (1- len) to))))
+    (if (= from to)
+        list
+      (let ((elem (nth from list)))
+        (append (seq-take (append (seq-take list from) (seq-drop list (1+ from))) to)
+                (list elem)
+                (seq-drop (append (seq-take list from) (seq-drop list (1+ from))) to))))))
+
+(defun org-queue-chooser--adjust-index-after-move (old-idx from to)
+  "Compute new current index given OLD-IDX if element moved from FROM to TO."
+  (cond
+   ((= old-idx from) to)
+   ((and (> from old-idx) (>= to old-idx)) old-idx)
+   ((and (< from old-idx) (<= to old-idx)) (1+ old-idx))
+   ((and (> from old-idx) (< to old-idx)) (1- old-idx))
+   (t old-idx)))
+
+(defun org-queue-chooser-move-up ()
+  "Move the selected task up by one in the queue (syncs and refreshes)."
+  (interactive)
+  (let ((from (tabulated-list-get-id)))
+    (unless (and (numberp from) (> from 0))
+      (user-error "Cannot move further up"))
+    (let* ((to (1- from))
+           (old-list my-outstanding-tasks-list))
+      (setq my-outstanding-tasks-list (org-queue-chooser--move-element old-list from to))
+      (setq my-outstanding-tasks-index (org-queue-chooser--adjust-index-after-move
+                                        my-outstanding-tasks-index from to))
+      (my-save-outstanding-tasks-to-file)
+      (my-queue-limit-visible-buffers)
+      (org-queue-chooser-refresh)
+      (org-queue-chooser--goto-index to)
+      (message "Moved to position %d" (1+ to)))))
+
+(defun org-queue-chooser-move-down ()
+  "Move the selected task down by one in the queue (syncs and refreshes)."
+  (interactive)
+  (let ((from (tabulated-list-get-id)))
+    (unless (and (numberp from) (< from (1- (length my-outstanding-tasks-list))))
+      (user-error "Cannot move further down"))
+    (let* ((to (1+ from))
+           (old-list my-outstanding-tasks-list))
+      (setq my-outstanding-tasks-list (org-queue-chooser--move-element old-list from to))
+      (setq my-outstanding-tasks-index (org-queue-chooser--adjust-index-after-move
+                                        my-outstanding-tasks-index from to))
+      (my-save-outstanding-tasks-to-file)
+      (my-queue-limit-visible-buffers)
+      (org-queue-chooser-refresh)
+      (org-queue-chooser--goto-index to)
+      (message "Moved to position %d" (1+ to)))))
+
+(defun org-queue-chooser-move-to-position (pos)
+  "Move the selected task to absolute 1-based POS (syncs and refreshes)."
+  (interactive "nMove to position (1-based): ")
+  (let* ((from (tabulated-list-get-id))
+         (len (length my-outstanding-tasks-list))
+         (to (1- (max 1 (min len pos)))))
+    (unless (numberp from)
+      (user-error "No task selected"))
+    (when (= from to)
+      (message "Already at that position") (cl-return-from org-queue-chooser-move-to-position))
+    (let ((old-list my-outstanding-tasks-list))
+      (setq my-outstanding-tasks-list (org-queue-chooser--move-element old-list from to))
+      (setq my-outstanding-tasks-index (org-queue-chooser--adjust-index-after-move
+                                        my-outstanding-tasks-index from to))
+      (my-save-outstanding-tasks-to-file)
+      (my-queue-limit-visible-buffers)
+      (org-queue-chooser-refresh)
+      (org-queue-chooser--goto-index to)
+      (message "Moved to position %d" (1+ to)))))
 
 (provide 'org-queue-display)
 ;;; org-queue-display.el ends here
