@@ -644,7 +644,6 @@ Here is how you might set up your Emacs configuration file with `org-queue`:
 (setq my-random-schedule-default-months 6)   ;; Default scheduling range of 6 months
 (setq my-random-schedule-exponent 2)         ;; Use cubic distribution for scheduling
 (setq org-queue-preinit-srs t)               ;; Pre-initialize SRS on startup (optional)
-(setq org-queue-preinit-srs t)               ;; Pre-initialize SRS on startup (optional)
 
 ;; Optionally, customize priority ranges (only if you need to adjust defaults)
 ;; (setq my-priority-ranges
