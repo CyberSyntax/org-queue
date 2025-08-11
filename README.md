@@ -9,7 +9,7 @@
 
 ---
 
-> **Note**: Please be advised that this README file is updated after the code itself, and I have made a deliberate choice to focus on the code. It serves merely as a reference and should not be regarded as an entirely dependable source.
+> **Note**: This README is now updated to reflect the current modular architecture and features. The codebase has been restructured into specialized modules for better organization and maintainability.
 
 # Table of Contents
 
@@ -18,8 +18,8 @@
         1.  [**Granular Task Prioritization**:](#orgc1e6db7)
         2.  [**Dynamic and Randomized Scheduling**:](#org11aa33a)
         3.  [**Outstanding Task Tracking**:](#org6694c5d)
-        4.  [**Queue-Based Navigation with Adjustable Anki Integration**:](#org1afffe2)
-        5.  [**Automatic Overdue Task Management**:](#orge859be5)
+        4.  [**Queue-Based Navigation with Intelligent SRS Integration**:](#org1afffe2)
+        5.  [**Comprehensive Task Processing System**:](#orge859be5)
     2.  [Why Choose org-queue?](#org702feff)
     3.  [Installation](#orgaccf879)
         1.  [**Clone the Repository**:](#orgfce2df7)
@@ -27,7 +27,8 @@
         3.  [**Restart Emacs**:](#org620857f)
     4.  [Usage](#org76c3385)
         1.  [Key Commands and Shortcuts](#orgac8b2b7)
-    5.  [Configuration](#org4490433)
+    5.  [Modular Architecture](#org-modular-arch)
+    6.  [Configuration](#org4490433)
         1.  [Customize the Default Scheduling Range](#orgc7c8ede)
         2.  [Adjust the Scheduling Bias](#orgdc89ca4)
         3.  [Setting the Default Anki Launch Ratio](#orgf492064)
@@ -35,14 +36,14 @@
         5.  [Important Notes](#org24ad904)
         6.  [Sample Configuration](#org01ed1d7)
         7.  [Customizing via Emacs Interface vs. Configuration File](#org76d0e25)
-    6.  [License](#org3ef0d00)
+    7.  [License](#org3ef0d00)
 
 
 <a id="org603541a"></a>
 
 # Org-queue
 
-**org-queue** is an Emacs package designed to enhance **org-mode** with advanced incremental task management capabilities. By introducing features such as priority-based task handling, dynamic scheduling, and queue navigation, org-queue helps you stay focused and organized. Drawing inspiration from incremental learning techniques, it allows you to prioritize, defer, and manage tasks effectively.
+**org-queue** is a comprehensive Emacs package that transforms **org-mode** into a sophisticated incremental task management system. Built with a modular architecture, it provides intelligent task prioritization, dynamic scheduling, queue-based navigation, and seamless integration with spaced repetition systems (SRS). Drawing inspiration from SuperMemo and incremental learning methodologies, org-queue enables efficient task processing with advanced content extraction and cloze deletion capabilities.
 
 
 <a id="orgb3454fe"></a>
@@ -73,23 +74,23 @@ Effortlessly monitor overdue tasks and navigate through tasks due today or in th
 
 <a id="org1afffe2"></a>
 
-### **Queue-Based Navigation with Adjustable Anki Integration**:
+### **Queue-Based Navigation with Intelligent SRS Integration**:
 
-Work sequentially through a prioritized task queue, maintaining focus on one task at a time. Adjust the frequency of Anki launches relative to tasks displayed, integrating spaced repetition into your workflow at your preferred pace.
+Work sequentially through a prioritized task queue with seamless integration of spaced repetition systems. Features automatic SRS session management, exhaustion detection, and smart Anki launching based on platform detection (Windows, macOS, Android).
 
 
 <a id="orge859be5"></a>
 
-### **Automatic Overdue Task Management**:
+### **Comprehensive Task Processing System**:
 
-Smart rescheduling of overdue tasks on Emacs startup using priority-based linear interpolation. Higher priority tasks are rescheduled more urgently while lower priority tasks are given more flexible future dates, ensuring optimal workload distribution.
+Automatic startup processing including overdue task rescheduling, priority constraint enforcement, duplicate task management, and DONE task cleanup. Uses sophisticated algorithms for priority-based scheduling and maintains task list persistence across sessions.
 
 
 <a id="org702feff"></a>
 
 ## Why Choose org-queue?
 
-`org-queue` builds upon the powerful foundation of **org-mode** to provide a robust and flexible task management system. By combining features like structured queues, randomization, and progressive scheduling, it enables users to manage tasks efficiently while maintaining flexibility and control.
+`org-queue` transforms **org-mode** into a comprehensive incremental learning and task management system. With its modular architecture, it provides advanced content processing (extracts, cloze deletions), intelligent task prioritization, spaced repetition integration, and sophisticated scheduling algorithms. The system maintains full compatibility with standard org-mode workflows while adding powerful incremental learning capabilities inspired by SuperMemo methodologies.
 
 
 <a id="orgaccf879"></a>
@@ -116,48 +117,45 @@ Add the following lines to your Emacs configuration file (`.emacs` or `init.el`)
 ```emacs-lisp
 ;; 📁 Directory Setup
 (setq cache-dir "path/to/cache")
-
 (setq org-agenda-directory "path/to/org-agenda")
 (setq org-agenda-files (directory-files-recursively org-agenda-directory "\\.org$"))
-
 (setq org-queue-directory org-agenda-directory)
 
-;; 📦 Load FSRS
-(add-to-list 'load-path "path/to/fsrs")
-(require 'fsrs)
+;; 📦 Optional: Load FSRS (if using)
+(when (file-exists-p "path/to/fsrs")
+  (add-to-list 'load-path "path/to/fsrs")
+  (require 'fsrs)
+  (setq my-fsrs-weights
+        [0.2228 1.0368 10.4109 10.4109 7.2805 0.1947 2.1963 0.0092 1.3297
+         0.0077 0.8288 1.6248 0.2235 0.3794 2.0227 0.2315 1.0000 0.3060 0.4473]))
 
-;; ⚖️ FSRS Weights
-(setq my-fsrs-weights
-      [0.2228 1.0368 10.4109 10.4109 7.2805 0.1947 2.1963 0.0092 1.3297
-       0.0077 0.8288 1.6248 0.2235 0.3794 2.0227 0.2315 1.0000 0.3060 0.4473])
+;; 🔁 Optional: Load org-srs (if using spaced repetition)
+(when (file-exists-p "path/to/org-srs")
+  (add-to-list 'load-path "path/to/org-srs")
+  (require 'org-srs)
+  (setq org-srs-review-order-new 'priority)
+  (setq org-srs-review-order-review 'priority)
+  (setq org-srs-review-learn-ahead-limit nil)
 
-;; 🔁 Load org-srs
-(add-to-list 'load-path "path/to/org-srs")
-(require 'org-srs)
+  ;; Optional SRS hooks and keybindings
+  (defun org-srs-review-show-rating-after-rate ()
+    (when-let ((rating (bound-and-true-p org-srs-review-rating)))
+      (message "Rated: %S" rating)
+      (sleep-for 0.5)))
+  
+  (add-hook 'org-srs-review-after-rate-hook 'org-srs-review-show-rating-after-rate)
+  
+  (with-eval-after-load 'org
+    (define-key org-mode-map (kbd "<f6>") #'org-srs-review-rate-good)
+    (define-key org-mode-map (kbd "<f8>") #'org-srs-review-rate-again)))
 
-(setq org-srs-review-order-new 'priority)
-(setq org-srs-review-order-review 'priority)
-(setq org-srs-review-learn-ahead-limit nil)
-
-(defun org-srs-review-show-rating-after-rate ()
-  (when-let ((rating (bound-and-true-p org-srs-review-rating)))
-    (message "Rated: %S" rating)
-    (sleep-for 0.5)))
-
-(add-hook 'org-srs-review-after-rate-hook 'org-srs-review-show-rating-after-rate)
-
-;; ⌨️ Rating Shortcuts (Optional)
-(with-eval-after-load 'org
-  (define-key org-mode-map (kbd "<f6>") #'org-srs-review-rate-good)
-  (define-key org-mode-map (kbd "<f8>") #'org-srs-review-rate-again))
-
-;; 📋 Load org-queue
+;; 📋 Load org-queue (main package)
 (add-to-list 'load-path "path/to/org-queue")
-
-(setq my-anki-task-ratio 4)          ;; Review after 4 tasks
-(setq my-actually-launch-anki nil)   ;; Disable auto-launch
-
 (require 'org-queue)
+
+;; ⚙️ Configuration
+(setq my-random-schedule-default-months 3)     ;; Default scheduling range
+(setq org-queue-preinit-srs nil)               ;; Pre-initialize SRS on startup
 ```
 
 <a id="org620857f"></a>
@@ -178,26 +176,26 @@ Once configured, restart Emacs, and `org-queue` will be ready to use!
 
 ### Key Commands and Shortcuts
 
-1.  **Scheduling and Priority Assignment**
+1.  **Global Prefix Key**
 
-    -   **Shortcut**: `C-RET`
-    -   **Description**: Assigns both a schedule and a priority to a new heading within the default range of three months.
+    -   **Shortcut**: `C-;`
+    -   **Description**: All org-queue commands are accessible via the global prefix key `C-;` followed by the specific command key.
+
+2.  **Scheduling and Priority Assignment**
+
+    -   **Shortcut**: `C-; s`
+    -   **Description**: Assigns both a schedule and a priority to a heading within the default range of three months. Priority is set automatically using the heuristic system after scheduling.
     
-    1.  Task Scheduling and Prioritization
-    
-        When you create a new task using `C-RET`, the task is both scheduled to occur randomly within the next three months and assigned a priority. Upon invocation, the command prompts the user to select a priority group (0–9). Each group corresponds to a specific numerical range for priorities, allowing the user to define the range for the task's priority.
-        
-        Once the user selects the priority group, `org-queue` randomly assigns a numeric priority within that group. Simultaneously, the task is scheduled to occur randomly within the next three months.
 
-2.  **Interactive Task Scheduling with Mathematical Distribution**
+3.  **Interactive Task Scheduling with Mathematical Distribution**
 
-    -   **Shortcut**: `s`
+    -   **Shortcut**: `C-; s`
     -   **Description**: Prompts you to specify an upper limit in months for scheduling the current task. The task is then scheduled within the range of **1 day** to the specified upper limit, using a mathematical model that biases the scheduling towards later dates in the range.
         
-        When you use this command (`<escape> s`), `org-queue`:
+        When you use this command, `org-queue`:
         
-        -   **Prompts for Scheduling**: Asks for the maximum number of months you consider acceptable for postponing the task. It then schedules the task within **1 day** to the specified time frame, following a mathematically elegant distribution that naturally favors later scheduling dates within the range.
-        -   **Prompts for Priority**: Immediately after scheduling, it prompts you to select a priority range (0–9), allowing you to assign a priority to the task interactively.
+        -   **Prompts for Scheduling**: Asks for the maximum number of months you consider acceptable for scheduling the task. It then schedules the task within **1 day** to the specified time frame, following a mathematically elegant distribution that naturally favors later scheduling dates within the range.
+        -   **Automatically Sets Priority**: After scheduling, automatically ensures the task has a priority set using the heuristic system.
     
     1.  How It Works:
     
@@ -286,12 +284,12 @@ Once configured, restart Emacs, and `org-queue` will be ready to use!
         -   **Priority Setting**:
             -   After scheduling, you are prompted to select a priority group (0–9), and the priority is assigned accordingly as described in the **Set Priority with Heuristics** section.
 
-3.  **Set Priority with Heuristics**
+4.  **Set Priority with Heuristics**
 
-    -   **Shortcut**: `,`
+    -   **Shortcut**: `C-; ,`
     -   **Additional Shortcuts**:
-        -   `i`: Increase priority range (move to higher priority group)
-        -   `d`: Decrease priority range (move to lower priority group)
+        -   `C-; i`: Increase priority range (move to higher priority group)
+        -   `C-; d`: Decrease priority range (move to lower priority group)
     -   **Description**: Inspired by a **community proposal discussed in the YouTube video [Priority heuristics in SuperMemo](<https://www.youtube.com/watch?v=OwV5HPKMrbg>)**, this feature builds on the concept of **priorities** already present in SuperMemo. However, it introduces a heuristic-based approach for assigning priorities dynamically, making the process more flexible and adaptable.
     
     1.  How it works:
@@ -313,7 +311,7 @@ Once configured, restart Emacs, and `org-queue` will be ready to use!
     
     2.  Default Behavior:
     
-        -   **If no input is provided when invoking the command (`<escape> ,`):**
+        -   **If no input is provided when invoking the command:**
             -   **If the current heading has a priority set**, the command defaults to that priority's group and assigns a random priority within the same range.
             -   **If the current heading does not have a priority set**, it defaults to **Group 9 (58–64)**, assigning the task a lower priority for less urgent attention.
     
@@ -325,13 +323,14 @@ Once configured, restart Emacs, and `org-queue` will be ready to use!
         
         A special thanks to the **SuperMemo community** for sharing this innovative idea and inspiring this feature in `org-queue`.
 
-4.  **Navigate Outstanding Tasks**
+5.  **Navigate Outstanding Tasks**
 
-    -   **Shortcut**:  
-        -   `f`: Move to the next outstanding task in the queue.
-        -   `b`: Move to the previous outstanding task in the queue.
-        -   `c`: Show the current outstanding task.
-        -   `r`: Reset the task queue to start from the first task.
+    -   **Shortcuts**:  
+        -   `C-; f`: Move to the next outstanding task in the queue.
+        -   `C-; b`: Move to the previous outstanding task in the queue.
+        -   `C-; c`: Show the current outstanding task.
+        -   `C-; r`: Remove current task from queue.
+        -   `C-; R`: Reset the task queue to start from the first task.
     
     -   **Description**: Provides efficient navigation through the queue of overdue or due-today tasks.
     
@@ -339,31 +338,51 @@ Once configured, restart Emacs, and `org-queue` will be ready to use!
     
         While navigating tasks, `org-queue` offers two methods to control how frequently the Anki application is launched: fixed ratio and priority-based interpolation.
         
-        **Priority-Based Interpolation Mode:**
+        **Platform-Adaptive Anki Integration:**
         
-        -   **Enable Dynamic Ratio Adjustment**:
-            -   The launch frequency automatically adjusts based on task priority
-            -   Lower priority tasks trigger Anki more frequently
-            -   The ratio is interpolated between:
-                -   Highest priority (1): Launches at the maximum ratio
-                -   Lowest priority (64): Launches every task
-        
-        **Why Use Priority-Based Interpolation:**
-        
-        -   **Adaptive Learning**: Automatically increases Anki exposure for low-priority tasks
-        -   **Dynamic Workflow**: Adjusts automatically without manual intervention
-        
-        **Fixed Ratio Mode:**
-        
-        -   **Set a Fixed Launch Ratio**:
-            -   Use `M-x my-set-anki-task-ratio` and enter a positive integer.
-            -   This disables priority-based interpolation and uses a fixed ratio.
-                -   **Examples**:
-                    -   Enter `1`: Launch Anki every task
-                    -   Enter `3`: Launch Anki every third task
-                    -   Enter `5`: Launch Anki every fifth task
+        -   **Desktop Systems**: Automatically detects and launches Anki application when available
+        -   **Android/Termux**: Shows message prompting manual Anki launch
+        -   **SRS Integration**: When org-srs is available, seamlessly integrates spaced repetition sessions
+        -   **Exhaustion Detection**: Automatically detects when no more SRS reviews are available
+        -   **Session Management**: Handles SRS session cleanup and buffer saving automatically
 
-5.  **Automatic Postponement of Overdue Tasks**
+6.  **Content Creation and Processing**
+
+    -   **Shortcuts**:
+        -   `C-; x`: Create SuperMemo-style extract from selected text
+        -   `C-; X`: Remove all extract blocks from current buffer
+        -   `C-; z`: Create cloze deletion from selected text (if org-srs available)
+
+7.  **SRS Integration** (if org-srs is available)
+
+    -   **Shortcuts**:
+        -   `C-; 1`: Rate current SRS item as "again" (difficult)
+        -   `C-; 3`: Rate current SRS item as "good" (easy)
+
+8.  **View and Navigation Control**
+
+    -   **Shortcuts**:
+        -   `C-; w`: Widen buffer and recenter
+        -   `C-; n`: Narrow to current subtree
+        -   `C-; u`: Show parent heading context
+
+9.  **Structure Editing**
+
+    -   **Shortcuts**:
+        -   `C-; W`: Cut current subtree
+        -   `C-; Y`: Paste subtree
+        -   `C-; D`: Demote subtree (increase level)
+        -   `C-; P`: Promote subtree (decrease level)
+
+10. **Optional Integrations**
+
+    -   **Web Tools** (if org-web-tools available):
+        -   `C-; l`: Insert link for URL
+        -   `C-; I`: Insert web page as org entry
+    -   **AI Integration** (if gptel available):
+        -   `C-; g`: Start GPT chat session
+
+11. **Automatic Postponement of Overdue Tasks**
 
     -   **Activation**: Automatically runs at Emacs startup
     -   **Manual Override**: `M-x my-auto-postpone-overdue-tasks` (rarely needed)
@@ -412,9 +431,9 @@ Once configured, restart Emacs, and `org-queue` will be ready to use!
         
         The calculated months value is then passed to `my-random-schedule` for final scheduling with added randomness to prevent task clustering.
 
-6.  **Advance Task Schedule with Mathematical Adjustment**
+12. **Advance Task Schedule with Mathematical Adjustment**
 
-    -   **Shortcut**: `a`
+    -   **Shortcut**: `C-; a`
     -   **Description**: Advances the schedule of the current Org heading by a calculated number of months. The adjustment decreases with the increasing current schedule weight, meaning tasks scheduled further in the future will be advanced by a smaller amount.
     
     1.  How It Works:
@@ -425,9 +444,9 @@ Once configured, restart Emacs, and `org-queue` will be ready to use!
         
         This function allows users to prioritize tasks that are scheduled too far into the future by bringing them closer to the present where they might need earlier attention.
 
-7.  **Postpone Task Schedule with Mathematical Adjustment**
+13. **Postpone Task Schedule with Mathematical Adjustment**
 
-    -   **Shortcut**: `p`
+    -   **Shortcut**: `C-; p`
     -   **Description**: Postpones the schedule of the current Org heading by a calculated number of months. The postponement uses an increasing function that makes sure tasks of greater schedule weight are postponed by relatively smaller amounts in comparison to lighter ones.
     
     1.  How It Works:
@@ -438,9 +457,42 @@ Once configured, restart Emacs, and `org-queue` will be ready to use!
         
         This feature helps in balancing workload by ensuring tasks aren't excessively postponed and allows users to manage their timeline efficiently through a mathematical approach.
 
-8.  **Note**
-    - **Lowercase commands ([Persistent])** retain active mode for continuous operations.
-    - **Uppercase commands ([Auto-exit])** trigger mode deactivation after execution.  
+14. **Architecture Notes**
+    - **Modular Design**: The codebase is organized into specialized modules:
+      - `org-queue.el`: Main entry point and keybindings
+      - `org-queue-config.el`: Configuration and core settings
+      - `org-queue-tasks.el`: Task management and navigation
+      - `org-queue-priority.el`: Priority assignment and management
+      - `org-queue-schedule.el`: Scheduling algorithms and functions
+      - `org-queue-display.el`: UI, highlighting, and display functions
+      - `org-queue-utils.el`: Utility functions and task state management
+      - `org-queue-srs-bridge.el`: Integration with spaced repetition systems
+    - **Smart Integration**: Automatically detects and integrates with org-srs when available
+    - **Cross-Platform**: Supports Windows, macOS, and Linux with platform-specific optimizations
+    - **Android Support**: Special handling for Android/Termux environments  
+
+<a id="org4490433"></a>
+
+<a id="org-modular-arch"></a>
+
+## Modular Architecture
+
+Org-queue is built with a modular architecture for maintainability and extensibility:
+
+- **`org-queue.el`** - Main entry point, global keybindings (`C-;`), and module loading
+- **`org-queue-config.el`** - Core configuration, priority ranges, and system detection
+- **`org-queue-tasks.el`** - Task management, navigation, persistence, and automatic processing
+- **`org-queue-priority.el`** - Priority assignment algorithms and heuristic-based selection
+- **`org-queue-schedule.el`** - Scheduling algorithms, mathematical distributions, and date calculations
+- **`org-queue-display.el`** - UI components, syntax highlighting, content extraction, and Anki integration
+- **`org-queue-utils.el`** - Utility functions, task state management, and mathematical helpers
+- **`org-queue-srs-bridge.el`** - Spaced repetition system integration and SRS session management
+
+This modular design allows for:
+- **Easy maintenance** - Each module has a specific responsibility
+- **Optional dependencies** - SRS and web tools are gracefully handled when not available
+- **Platform adaptability** - Android and desktop differences are handled appropriately
+- **Extensibility** - New features can be added without affecting existing functionality
 
 <a id="org4490433"></a>
 
@@ -512,14 +564,14 @@ You can control the bias of the scheduling distribution towards later dates by c
 
 <a id="orgf492064"></a>
 
-### Setting the Default Anki Launch Ratio
+### SRS Integration Settings
 
-By default, `org-queue` launches Anki every time you display a new task. To change the frequency, customize `my-anki-task-ratio`.
+Org-queue provides intelligent integration with spaced repetition systems when available.
 
 1.  Option 1: Using Emacs Customization Interface
 
-    1.  Run `M-x customize-variable RET my-anki-task-ratio RET`.
-    2.  Set the desired ratio.
+    1.  Run `M-x customize-variable RET org-queue-preinit-srs RET`.
+    2.  Enable to pre-initialize SRS on startup.
     3.  Save your changes.
 
 2.  Option 2: Setting in Emacs Configuration File
@@ -527,15 +579,8 @@ By default, `org-queue` launches Anki every time you display a new task. To chan
     Add the following line to your configuration file:
     
     ```emacs-lisp
-    (setq my-anki-task-ratio 1)  ;; Default is 1:1 (Anki launched every task)
+    (setq org-queue-preinit-srs t)  ;; Pre-initialize SRS on startup
     ```
-    
-    -   **Example**:
-        -   To set Anki to launch every third task, add:
-            
-            ```emacs-lisp
-            (setq my-anki-task-ratio 3)
-            ```
 
 
 <a id="org4ad37c4"></a>
@@ -573,7 +618,7 @@ If you wish to adjust how priorities are assigned within `org-queue`, you can cu
         ```
 
 -   **Customizable Variables**:
-    -   Variables like `my-random-schedule-default-months`, `my-random-schedule-exponent`, `my-anki-task-ratio`, and `my-priority-ranges` are defined using `defcustom`. You can customize them via the Emacs customization interface or set them using `setq` in your configuration file.
+    -   Variables like `my-random-schedule-default-months`, `my-random-schedule-exponent`, `org-queue-preinit-srs`, and `my-priority-ranges` are defined using `defcustom`. You can customize them via the Emacs customization interface or set them using `setq` in your configuration file.
 
 -   **Using `setq`**:
     -   To set or change the value of these variables in your configuration file, use `setq`. Avoid using `defvar` or `defcustom` in your configuration file, as they are meant for variable definitions within the package code.
@@ -598,13 +643,17 @@ Here is how you might set up your Emacs configuration file with `org-queue`:
 ;; Customize org-queue variables
 (setq my-random-schedule-default-months 6)   ;; Default scheduling range of 6 months
 (setq my-random-schedule-exponent 2)         ;; Use cubic distribution for scheduling
-(setq my-anki-task-ratio 8)
+(setq org-queue-preinit-srs t)               ;; Pre-initialize SRS on startup (optional)
+(setq org-queue-preinit-srs t)               ;; Pre-initialize SRS on startup (optional)
 
 ;; Optionally, customize priority ranges (only if you need to adjust defaults)
 ;; (setq my-priority-ranges
 ;;       '((0 . (1 . 2))
 ;;         ;; … your custom ranges …
 ;;         (9 . (58 . 64))))
+
+;; Optional: Set up automatic task processing hooks
+;; (add-hook 'org-insert-heading-hook #'my-post-org-insert-heading)
 ```
 
 **Note**: Replace `"*path/to/org-queue*"` with the actual path to where `org-queue` is located on your system.
