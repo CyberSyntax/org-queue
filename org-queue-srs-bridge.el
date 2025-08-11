@@ -7,6 +7,11 @@
 (require 'org)
 (require 'cl-lib)
 
+(defcustom org-queue-preinit-srs nil
+  "If non-nil, attempt to pre-initialize org-srs during startup."
+  :type 'boolean
+  :group 'org-queue)
+
 ;; State variables
 (defvar my-srs-reviews-exhausted nil
   "Flag indicating if org-srs reviews are exhausted for this session.")

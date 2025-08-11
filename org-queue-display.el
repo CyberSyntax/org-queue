@@ -237,11 +237,16 @@ Defaults to 0.2 seconds."
 (setq revert-without-query '(".*"))
 
 (defun my-display-task-at-marker (task-or-marker)
-  "Display the task at TASK-OR-MARKER with appropriate visibility settings."
-  (let* ((marker (my-extract-marker task-or-marker))
-         (buf (and marker (marker-buffer marker)))
-         (pos (and marker (marker-position marker))))
-    (when (and buf pos)
+  "Display the task at TASK-OR-MARKER with appropriate visibility settings.
+Always resolves the live position by :id if available (lazy and per-ID).
+Falls back to the existing marker only when ID cannot be resolved."
+  (let* ((id   (and (listp task-or-marker) (plist-get task-or-marker :id)))
+         (file (and (listp task-or-marker) (plist-get task-or-marker :file)))
+         ;; Start with whatever we have, but we will prefer resolving by ID below.
+         (marker (my-extract-marker task-or-marker))
+         (buf    (and marker (marker-buffer marker)))
+         (pos    (and marker (marker-position marker))))
+    (when (and buf (buffer-live-p buf))
       (condition-case err
           (progn
             (switch-to-buffer buf)
@@ -249,15 +254,37 @@ Defaults to 0.2 seconds."
               (let ((revert-without-query '(".*")))
                 (revert-buffer t t t)))
             (widen-and-recenter)
+
+            ;; Always resolve by ID if we have one (lazy, targeted, per call)
+            (when id
+              (let ((resolved
+                     (or (org-id-find id 'marker)
+                         (progn
+                           (when (or file (buffer-file-name))
+                             (ignore-errors
+                               (org-id-update-id-locations
+                                (list (file-truename (or file (buffer-file-name)))))))
+                           (org-id-find id 'marker)))))
+                (when (markerp resolved)
+                  (setq marker resolved
+                        buf    (marker-buffer resolved)
+                        pos    (marker-position resolved))
+                  (unless (eq (current-buffer) buf)
+                    (switch-to-buffer buf)))))
+
+            ;; Final position fallback if ID was missing or not resolved
+            (setq pos (or pos (and (markerp marker) (marker-position marker)) (point-min)))
             (goto-char pos)
-            (widen-and-recenter)
-            
+            ;; Make sure we are on the heading before narrowing/revealing
+            (when (derived-mode-p 'org-mode)
+              (org-back-to-heading t))
+
             (org-narrow-to-subtree)
             (org-overview)
             (org-reveal t)
             (org-show-entry)
-            (show-children)
-            
+            (org-show-children)
+
             (when (eq buf (window-buffer (selected-window)))
               (recenter)))
         (error

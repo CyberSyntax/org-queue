@@ -2,6 +2,8 @@
 
 ;;; Code:
 
+(require 'cl-lib)
+(require 'org-id)
 (require 'org-queue-config)
 (require 'org-queue-utils)
 (require 'org-queue-srs-bridge)
@@ -33,6 +35,17 @@
   :type 'directory
   :group 'org-queue)
 
+(defvar my-org-id-locations-initialized nil
+  "Whether org-id locations DB has been fully initialized this session.")
+
+(defun my-org-id-initialize-id-locations ()
+  "Scan all agenda files once to build the org-id cache."
+  (unless my-org-id-locations-initialized
+    (setq my-org-id-locations-initialized t)
+    (when (fboundp 'org-id-update-id-locations)
+      (ignore-errors
+        (org-id-update-id-locations (org-agenda-files))))))
+
 ;; Task identification functions
 (defun my-is-overdue-task ()
   "Return non-nil if the current task is overdue."
@@ -46,9 +59,6 @@
         (heading (org-get-heading t t t t)))
     (let ((result (and scheduled-time
                        (<= (time-to-days scheduled-time) (time-to-days (current-time))))))
-      (when scheduled-time
-        (message "DEBUG outstanding check: %s | Scheduled: %s | Outstanding: %s" 
-                 heading scheduled-time result))
       result)))
 
 ;; Org agenda skip functions
@@ -79,10 +89,15 @@
 
 ;; Marker extraction and safety functions
 (defun my-extract-marker (task-or-marker)
-  "Extract marker from TASK-OR-MARKER which can be a marker or a task plist.
-Returns nil if no valid marker could be extracted."
+  "Extract a live marker from TASK-OR-MARKER.
+Prefers resolving from :id (UUID) when present; falls back to :marker."
   (cond
-   ((markerp task-or-marker) task-or-marker)
+   ((markerp task-or-marker)
+    task-or-marker)
+   ((and (listp task-or-marker) (plist-get task-or-marker :id))
+    (or (my-marker-from-uuid (plist-get task-or-marker :id)
+                             (plist-get task-or-marker :file))
+        (plist-get task-or-marker :marker)))
    ((and (listp task-or-marker) (plist-get task-or-marker :marker))
     (plist-get task-or-marker :marker))
    (t nil)))
@@ -107,40 +122,52 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
                (buffer-live-p (marker-buffer marker)))
       (marker-position marker))))
 
+(defun my-marker-from-uuid (uuid &optional file)
+  "Return a live marker for the heading with UUID.
+If not found and FILE is non-nil, refresh IDs only for FILE and retry.
+Returns nil if still not found."
+  (when (and (stringp uuid) (> (length uuid) 0))
+    (or (org-id-find uuid 'marker)
+        (when (and file (file-exists-p file))
+          (ignore-errors
+            (org-id-update-id-locations (list (file-truename file))))
+          (org-id-find uuid 'marker)))))
+
+(defun my-position-from-uuid (uuid)
+  "Return the buffer position (point) of the Org heading with UUID (its :ID:).
+Returns nil if not found."
+  (let ((m (my-marker-from-uuid uuid)))
+    (when (markerp m)
+      (marker-position m))))
+
 ;; Task list persistence functions
 (defun my-save-outstanding-tasks-to-file ()
-  "Save task list to cache, correctly handling plists or markers. Index stored separately."
-  (with-temp-file my-outstanding-tasks-cache-file
-    (let* ((today (format-time-string "%Y-%m-%d"))
-           (tasks-saved
-            (delq nil
-                  (mapcar
-                   (lambda (task-or-marker)
-                     (let ((marker (cond
-                                    ;; If it's already a marker
-                                    ((markerp task-or-marker) task-or-marker)
-                                    ;; If it's a plist with a marker
-                                    ((plist-get task-or-marker :marker)
-                                     (plist-get task-or-marker :marker))
-                                    ;; Otherwise, can't save it
-                                    (t nil))))
-                       (when (and marker
-                                  (marker-buffer marker)
-                                  (buffer-file-name (marker-buffer marker)))
-                         (with-current-buffer (marker-buffer marker)
-                           (let* ((full (file-truename (buffer-file-name)))
-                                  (path (if (and (boundp 'org-queue-directory)
-                                                 org-queue-directory
-                                                 (file-in-directory-p full org-queue-directory))
-                                            (file-relative-name full org-queue-directory)
-                                          full)))
-                             (cons path (marker-position marker)))))))
-                   my-outstanding-tasks-list))))
-      ;; Only save date and tasks, no index
-      (insert (prin1-to-string (list :date today :tasks tasks-saved)))))
-  
-  ;; Save index separately
-  (my-save-index-to-file))
+  "Save task list to cache using (file . id) pairs instead of positions.
+Also saves the index separately."
+  (let* ((today (format-time-string "%Y-%m-%d"))
+         (pairs
+          (cl-loop for entry in my-outstanding-tasks-list
+                   for marker = (my-extract-marker entry)
+                   if (and (markerp marker)
+                           (marker-buffer marker)
+                           (buffer-live-p (marker-buffer marker))
+                           (buffer-file-name (marker-buffer marker)))
+                   collect
+                   (with-current-buffer (marker-buffer marker)
+                     (save-excursion
+                       (goto-char (marker-position marker))
+                       (let* ((id   (org-entry-get nil "ID"))
+                              (full (file-truename (buffer-file-name)))
+                              (path (if (and (boundp 'org-queue-directory)
+                                             org-queue-directory
+                                             (file-in-directory-p full org-queue-directory))
+                                        (file-relative-name full org-queue-directory)
+                                      full)))
+                         (when id (cons path id))))))))
+    (with-temp-file my-outstanding-tasks-cache-file
+      (insert (prin1-to-string (list :date today
+                                     :tasks (delq nil pairs)))))
+    (my-save-index-to-file)))
 
 (defun my-save-index-to-file ()
   "Save the current task index to a device-specific file."
@@ -162,47 +189,68 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
       (error nil))))
 
 (defun my-load-outstanding-tasks-from-file ()
-  "Load cached tasks, creating proper plist structures. Also loads index."
-  (if (file-exists-p my-outstanding-tasks-cache-file)
-      (let* ((data (with-temp-buffer
-                     (insert-file-contents my-outstanding-tasks-cache-file)
-                     (read (buffer-string))))
-             (saved-date (plist-get data :date))
-             (saved-tasks (plist-get data :tasks))
-             (today (format-time-string "%Y-%m-%d")))
-        (if (string= saved-date today)
-            (progn
-              (setq my-outstanding-tasks-list
-                    (mapcar
-                     (lambda (task-pair)
-                       (let* ((stored-path (car task-pair))
-                              (position (cdr task-pair))
-                              (abs-path (if (or (file-name-absolute-p stored-path)
-    						(string-match-p "^[A-Za-z]:[/\\\\]" stored-path))
-                                            stored-path
-                                          (expand-file-name stored-path 
-                                                            (or org-queue-directory default-directory)))))
-                         ;; Open the file and create a marker
-                         (with-current-buffer (find-file-noselect abs-path)
-                           (save-excursion
-                             (goto-char position)
-                             ;; Create the new plist structure
-                             (let* ((marker (point-marker))
-                                    (priority (my-get-raw-priority-value))
-                                    (flag (my-priority-flag priority))
-                                    (file abs-path))
-                               (list :marker marker
-                                     :priority priority
-                                     :flag flag
-                                     :file file))))))
-                     saved-tasks))
-              ;; Load index separately, fallback to 0 if not found or invalid
-              (unless (and (my-load-index-from-file)
-                           (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
-                (setq my-outstanding-tasks-index 0))
-              t)
-          nil))
-    nil))
+  "Load cached tasks stored as (file . id) pairs and rebuild plist tasks with markers.
+This function uses targeted org-id location updates for efficiency,
+logs unresolved IDs, and skips entries that cannot be resolved."
+  (when (file-exists-p my-outstanding-tasks-cache-file)
+    (let* ((data (with-temp-buffer
+                   (insert-file-contents my-outstanding-tasks-cache-file)
+                   (read (buffer-string))))
+           (saved-date (plist-get data :date))
+           (saved-tasks (plist-get data :tasks))
+           (today (format-time-string "%Y-%m-%d")))
+      (when (string= saved-date today)
+        ;; No longer doing agenda-wide update here - moved to per-ID basis
+        (let ((result-list nil)
+              (resolved 0)
+              (unresolved 0))
+          (dolist (task-pair saved-tasks)
+            (let* ((stored-path (car task-pair))
+                   (id (cdr task-pair))
+                   (abs-path (if (or (file-name-absolute-p stored-path)
+                                     (string-match-p "^[A-Za-z]:[/\\\\]" stored-path))
+                                 stored-path
+                               (expand-file-name stored-path
+                                                 (or org-queue-directory default-directory))))
+                   (marker (and id (org-id-find id 'marker))))
+              ;; Targeted refresh only if not found
+              (unless (and marker (markerp marker)
+                           (marker-buffer marker)
+                           (buffer-live-p (marker-buffer marker)))
+                (when (and id abs-path (file-exists-p abs-path))
+                  (ignore-errors
+                    (org-id-update-id-locations (list (file-truename abs-path))))
+                  (setq marker (org-id-find id 'marker))))
+              ;; Now check if we have a valid marker
+              (if (and marker
+                       (markerp marker)
+                       (marker-buffer marker)
+                       (buffer-live-p (marker-buffer marker)))
+                  ;; Build plist for resolved task
+                  (with-current-buffer (marker-buffer marker)
+                    (save-excursion
+                      (goto-char (marker-position marker))
+                      (let* ((priority (my-get-raw-priority-value))
+                             (flag (my-priority-flag priority))
+                             (file abs-path)
+                             (task-plist (list :id id
+                                               :marker marker
+                                               :priority priority
+                                               :flag flag
+                                               :file file)))
+                        (push task-plist result-list)
+                        (setq resolved (1+ resolved)))))
+                ;; Unresolved path
+                (setq unresolved (1+ unresolved))
+                (message "org-queue: could not resolve ID %s (stored path: %s)"
+                         id stored-path))))
+          (setq my-outstanding-tasks-list (nreverse result-list))
+          (message "org-queue: resolved %d IDs, %d unresolved (from cache)" resolved unresolved)
+          ;; Load index; fallback to 0
+          (unless (and (my-load-index-from-file)
+                       (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+            (setq my-outstanding-tasks-index 0))
+          t)))))
 
 (defun my-ensure-synchronized-task-list ()
   "Ensure we have a current, synchronized task list and valid index."
@@ -229,13 +277,15 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
                 (not (my-is-done-task))              ; Exclude DONE tasks - FIXED
                 (not (org-srs-entry-p (point))))
        (let* ((marker (point-marker))
+              (id (org-entry-get nil "ID"))
               (priority (my-get-raw-priority-value))
               (flag (my-priority-flag priority))
               (file (buffer-file-name))
               (heading (org-get-heading t t t t))    ; DEBUG: Get heading
               (todo-state (org-get-todo-state))      ; DEBUG: Get TODO state
               (is-todo (my-is-todo-task))            ; Check if it's TODO
-              (task-data (list :marker marker
+              (task-data (list :id id
+                              :marker marker
                               :priority priority
                               :flag flag
                               :file file
@@ -472,7 +522,7 @@ Saves buffers and regenerates the task list for consistency."
       ;; Iterate over the task PLISTS, not raw markers
       (dolist (entry my-outstanding-tasks-list)
         ;; Extract the real marker from the plist
-        (let* ((marker (plist-get entry :marker))
+        (let* ((marker (my-extract-marker entry))
                (buffer (and (markerp marker)
                             (marker-buffer marker)))
                (file   (and buffer
@@ -623,151 +673,97 @@ Saves buffers and regenerates the task list for consistency."
 (defun my-auto-task-setup ()
   "Initialize and set up automatic task management processes upon Emacs startup."
   (message "Starting automatic task setup...")
-  
-  ;; Enable debug on error to get better backtraces
-  (setq debug-on-error t)
-  
-  ;; Add tracing for each step
-  (condition-case err
-      (progn
-        (message "Step 1: Attempting to load tasks from file...")
-        (let ((cache-loaded (my-load-outstanding-tasks-from-file)))
-          (message "Step 1 complete: Cache loaded? %s" cache-loaded)
-          
-          (message "Checking task format - First task: %S" 
-                   (and my-outstanding-tasks-list 
-                        (car my-outstanding-tasks-list)))
-          
-          (if cache-loaded
-              (progn
-                (message "Step 2A: Cache exists, processing...")
-                (when (boundp 'my-srs-reviews-exhausted)
-                  (setq my-srs-reviews-exhausted nil))
-                (message "Step 2A complete: About to schedule task display"))
-            
-            (progn
-              (message "Step 2B: No cache, running maintenance...")
-              (when (require 'org-roam nil t)
-                (message "Step 2B.1: Setting up org-roam...")
-                ;; Suppress org-roam warnings during database sync
-                (let ((warning-minimum-level :error)) ;; Only show errors, not warnings
-                  (org-roam-db-autosync-mode)
-                  (org-id-update-id-locations (org-agenda-files)))
-                (message "Step 2B.1 complete"))
-              
-              (message "Step 2B.2: Running maintenance operations...")
-              (message "Step 2B.2.1: Ensuring priorities and schedules...")
-              (my-ensure-priorities-and-schedules-for-all-headings)
-              
-              (message "Step 2B.2.2: Advancing schedules...")
-              (my-auto-advance-schedules 8)
-              
-              (message "Step 2B.2.3: Postponing overdue tasks...")
-              (my-auto-postpone-overdue-tasks)
-              
-              (message "Step 2B.2.4: Postponing duplicate priority tasks...")
-              (my-postpone-duplicate-priority-tasks)
-              
-              (message "Step 2B.2.5: Enforcing priority constraints...")
-              (my-enforce-priority-constraints)
-              
-              (message "Step 2B.2.6: Re-ensuring priorities and schedules...")
-              (my-ensure-priorities-and-schedules-for-all-headings)
-              
-              (message "Step 2B.2.7: Postponing consecutive same-file tasks...")
-              (my-postpone-consecutive-same-file-tasks)
+  (my-org-id-initialize-id-locations)
 
-	      (message "Step 2B.2.8: Cleaning up DONE tasks...")
-	      (my-cleanup-all-done-tasks)
+  ;; Step 1: Try to load from cache
+  (message "Step 1: Attempting to load tasks from file...")
+  (let ((cache-loaded (and (fboundp 'my-load-outstanding-tasks-from-file)
+                           (my-load-outstanding-tasks-from-file))))
+    (message "Step 1 complete: Cache loaded? %s" cache-loaded)
+    (message "Checking task format - First task: %S"
+             (and my-outstanding-tasks-list (car my-outstanding-tasks-list)))
 
-              (message "Step 2B.3: Getting outstanding tasks...")
-              (my-get-outstanding-tasks)
-              (setq my-outstanding-tasks-index 0)
-              
-              (message "Step 2B.4: Saving tasks to file...")
-              (my-save-outstanding-tasks-to-file)
-              (message "Maintenance complete"))))
-        
-        
-        ;; Step 4: Initialize SRS system for faster future access
-        (message "Step 4: Pre-initializing SRS system...")
-  	(unless my-android-p
-  	  (if (not my-srs-reviews-exhausted)
-  	      (progn
-  		(my-srs-quit-reviews)
-  		(let ((temp-frame (make-frame '((visibility . nil) (width . 80) (height . 24)))))
-  		  (unwind-protect
-  		      (with-selected-frame temp-frame
-  			(cl-letf (((symbol-function 'read-key) (lambda (&rest _) 32)))
-  			  (condition-case nil
-  			      (my-srs-start-reviews)
-  			    (error (setq my-srs-reviews-exhausted t))))
-  			(my-srs-quit-reviews))
-  		    (delete-frame temp-frame))))
-  	    (my-launch-anki)))
-        
-        (message "✓ Automatic task setup completed successfully.")
-        
-        ;; Schedule task display - this is done whether cache exists or not
-        (run-with-idle-timer 1.5 nil
-                             (lambda ()
-                               (condition-case err
-                                   (if (and my-outstanding-tasks-list
-                                            (> (length my-outstanding-tasks-list) 0)
-                                            (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
-                                       (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
-                                	 ;; Use safe display function
-                                	 (my-display-task-at-marker task-or-marker)
-                                	 (my-show-current-flag-status))
-                                     (message "Task list empty or invalid index"))
-                                 (error
-                                  (message "Error preparing task display: %s" (error-message-string err))))))
-        (message "Task display scheduled.")
+    ;; Step 2: Maintenance if no valid cache
+    (unless cache-loaded
+      (message "Step 2B: No cache, running maintenance...")
+      (when (require 'org-roam nil t)
+        (message "Step 2B.1: Setting up org-roam...")
+        (let ((warning-minimum-level :error))
+          (org-roam-db-autosync-mode)
+          (org-id-update-id-locations (org-agenda-files)))
+        (message "Step 2B.1 complete"))
 
-        ;; Disable debug mode after successful setup
-        (setq debug-on-error nil))
-    
-    (error
-     (message "❌ Error during task setup: %s" (error-message-string err))
-     (message "Task that caused error: %S" 
-              (and my-outstanding-tasks-list 
-                   (nth (or my-outstanding-tasks-index 0) 
-                        my-outstanding-tasks-list)))
-     
-     (message "Backtrace: %S" (with-output-to-string (backtrace)))
-     
-     ;; Try emergency generation with safety
-     (unless my-outstanding-tasks-list
-       (message "Attempting emergency task list generation...")
-       (condition-case err-emergency
-           (progn
-             (my-get-outstanding-tasks)
-             (setq my-outstanding-tasks-index 0)
-             (message "Generated emergency task list with %d tasks." 
-                      (length my-outstanding-tasks-list)))
-         (error
-          (message "Emergency task generation also failed: %s" 
-                   (error-message-string err-emergency)))))
-     
-     ;; Disable debug mode after handling error
-     (setq debug-on-error nil))))
+      (message "Step 2B.2.1: Ensuring priorities and schedules...")
+      (my-ensure-priorities-and-schedules-for-all-headings)
 
-(defun my-emergency-reset ()
-  "Emergency reset function that clears all task cache data and rebuilds."
-  (interactive)
-  (message "Performing emergency reset...")
-  
-  ;; Clear all variables
-  (setq my-outstanding-tasks-list nil)
-  (setq my-outstanding-tasks-index 0)
-  (when (file-exists-p my-outstanding-tasks-cache-file)
-    (delete-file my-outstanding-tasks-cache-file))
-  
-  ;; Rebuild the task list
-  (my-get-outstanding-tasks)
-  (my-save-outstanding-tasks-to-file)
-  (message "Reset complete. Generated %d tasks." 
-           (length my-outstanding-tasks-list)))
+      (message "Step 2B.2.2: Advancing schedules...")
+      (my-auto-advance-schedules 8)
+
+      (message "Step 2B.2.3: Postponing overdue tasks...")
+      (my-auto-postpone-overdue-tasks)
+
+      (message "Step 2B.2.4: Postponing duplicate priority tasks...")
+      (my-postpone-duplicate-priority-tasks)
+
+      (message "Step 2B.2.5: Enforcing priority constraints...")
+      (my-enforce-priority-constraints)
+
+      (message "Step 2B.2.6: Re-ensuring priorities and schedules...")
+      (my-ensure-priorities-and-schedules-for-all-headings)
+
+      (message "Step 2B.2.7: Postponing consecutive same-file tasks...")
+      (my-postpone-consecutive-same-file-tasks)
+
+      (message "Step 2B.2.8: Cleaning up DONE tasks...")
+      (my-cleanup-all-done-tasks)
+
+      (message "Step 2B.3: Getting outstanding tasks...")
+      (my-get-outstanding-tasks)
+      (setq my-outstanding-tasks-index 0)
+
+      (message "Step 2B.4: Saving tasks to file...")
+      (my-save-outstanding-tasks-to-file)
+      (message "Maintenance complete")))
+
+  ;; Step 4: Optional SRS pre-init (set org-queue-preinit-srs to t if you want it)
+  (when (boundp 'org-queue-preinit-srs)
+    (when org-queue-preinit-srs
+      (message "Step 4: Pre-initializing SRS system...")
+      (unless my-android-p
+        (condition-case err
+            (if (not my-srs-reviews-exhausted)
+                (progn
+                  (my-srs-quit-reviews)
+                  (let ((temp-frame (make-frame '((visibility . nil) (width . 80) (height . 24)))))
+                    (unwind-protect
+                        (with-selected-frame temp-frame
+                          (cl-letf (((symbol-function 'read-key) (lambda (&rest _) 32)))
+                            (condition-case nil
+                                (my-srs-start-reviews)
+                              (error (setq my-srs-reviews-exhausted t))))
+                          (my-srs-quit-reviews))
+                      (delete-frame temp-frame))))
+              (my-launch-anki))
+          (error
+           (message "org-queue: SRS pre-init disabled due to error: %s"
+                    (error-message-string err)))))))
+
+  (message "✓ Automatic task setup completed successfully.")
+
+  ;; Schedule task display
+  (run-with-idle-timer 1.5 nil
+                       (lambda ()
+                         (condition-case err
+                             (if (and my-outstanding-tasks-list
+                                      (> (length my-outstanding-tasks-list) 0)
+                                      (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+                                 (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
+                                   (my-display-task-at-marker task-or-marker)
+                                   (my-show-current-flag-status))
+                               (message "Task list empty or invalid index"))
+                           (error
+                            (message "Error preparing task display: %s" (error-message-string err))))))
+  (message "Task display scheduled."))
 
 ;; Add startup hook
 (add-hook 'emacs-startup-hook #'my-auto-task-setup 100)
