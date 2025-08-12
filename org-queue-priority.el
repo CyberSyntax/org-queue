@@ -180,12 +180,60 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
       (error "Failed to set priority after %d attempts" max-attempts))))
 
 (defun my-get-raw-priority-value ()
-  "Get the priority value of the current point without using task list."
-  (let ((priority-str (org-entry-get nil "PRIORITY")))
-    (if priority-str
-	  (string-to-number priority-str)
-	(+ org-priority-default
-	   (random (+ 1 (- org-priority-lowest org-priority-default)))))))
+  "Return numeric priority at point.
+Order:
+- Numeric PRIORITY property if present,
+- Else [#N] cookie from the heading,
+- Else random in [org-priority-default .. org-priority-lowest]."
+  (let* ((s (org-entry-get nil "PRIORITY"))
+         (cookie (my--org-heading-get-cookie-priority)))
+    (cond
+     ((and s (string-match-p "^[ \t]*[0-9]+[ \t]*$" s))
+      (string-to-number (string-trim s)))
+     ((numberp cookie)
+      cookie)
+     (t
+      (+ org-priority-default
+         (random (1+ (- org-priority-lowest org-priority-default))))))))
+
+(defun my--org-heading-get-cookie-priority ()
+  "Return numeric [#N] cookie at current heading, or nil."
+  (save-excursion
+    (org-back-to-heading t)
+    (let ((bol (line-beginning-position))
+          (eol (line-end-position)))
+      (goto-char bol)
+      (when (re-search-forward "\\[#[ \t]*\\([0-9]+\\)[ \t]*\\]" eol t)
+        (string-to-number (match-string 1))))))
+
+(defun my-read-numeric-priority-here ()
+  "Read numeric priority at point from property or cookie."
+  (let ((s (org-entry-get nil "PRIORITY")))
+    (cond
+     ((and s (string-match-p "^[ \t]*[0-9]+[ \t]*$" s))
+      (string-to-number (string-trim s)))
+     (t
+      (my--org-heading-get-cookie-priority)))))
+
+(defun my-set-numeric-priority-here (n)
+  "Set numeric priority at the current heading both as property and [#N] cookie."
+  (let* ((min (or (and (numberp org-priority-highest) org-priority-highest) 1))
+         (max (or (and (numberp org-priority-lowest)  org-priority-lowest) 64))
+         (n   (max min (min max (or n min)))))
+    ;; Set property
+    (org-entry-put nil "PRIORITY" (number-to-string n))
+    ;; Update/insert [#N] cookie in the heading line
+    (save-excursion
+      (org-back-to-heading t)
+      (let ((bol (line-beginning-position))
+            (eol (line-end-position)))
+        (goto-char bol)
+        (if (re-search-forward "\\[#[ \t]*[0-9]+[ \t]*\\]" eol t)
+            (replace-match (format "[#%d]" n) t t)
+          (goto-char bol)
+          (when (looking-at "^\\*+\\s-+")
+            (goto-char (match-end 0)))
+          (insert (format "[#%d] " n)))))))
 
 (defun my-get-priority-value ()
   "Get the priority value of the current task from the task list."
@@ -198,6 +246,60 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
         (string-to-number priority-str)
       (+ org-priority-default
          (random (+ 1 (- org-priority-lowest org-priority-default)))))))
+
+;; Spread: core queue spread function
+(defun my--clamp (x lo hi)
+  "Clamp X into [LO, HI]."
+  (max lo (min hi x)))
+
+(defun my-queue-spread-priorities (start-idx end-idx lo hi)
+  "Evenly distribute integer PRIORITY values between LO and HI (inclusive)
+over the queue subset [START-IDX..END-IDX] (0-based indices).
+Returns the list of priorities that were applied, in order.
+
+Notes:
+- Preserves queue order; does NOT resort the list.
+- Writes to each entry's Org PRIORITY property and updates the cached plist (:priority and :flag).
+- If not enough distinct integer slots exist (HI-LO+1 < N), duplicates are inevitable."
+  (unless (and (numberp start-idx) (numberp end-idx) (<= start-idx end-idx))
+    (user-error "Invalid index range"))
+  (my-ensure-synchronized-task-list)
+  (let* ((n (1+ (- end-idx start-idx)))
+         (span (- hi lo))
+         ;; If n == 1, assign the middle; else space across [0..n-1]
+         (targets
+          (if (= n 1)
+              (list (round (/ (+ lo hi) 2.0)))
+            (cl-loop for i from 0 to (1- n)
+                     for q = (/ (float i) (float (1- n)))  ;; 0..1
+                     for v = (round (+ lo (* q span)))
+                     collect v)))
+         ;; Make sure they are at least non-decreasing and clamped
+         (adjusted
+          (let ((acc '())
+                (prev (1- lo)))
+            (dolist (v targets (nreverse acc))
+              (setq v (my--clamp v lo hi))
+              ;; Ensure monotonic non-decreasing; if not enough slots, duplicates may remain.
+              (when (< v prev) (setq v prev))
+              (push v acc)
+              (setq prev v)))))
+    ;; Apply to entries
+    (cl-loop
+     for idx from start-idx to end-idx
+     for newp in adjusted
+     do (let* ((task (nth idx my-outstanding-tasks-list))
+               (marker (my-extract-marker task)))
+          (when (and (markerp marker)
+                     (marker-buffer marker)
+                     (buffer-live-p (marker-buffer marker)))
+            (org-with-point-at marker
+              (org-entry-put nil "PRIORITY" (number-to-string newp)))
+            ;; Update plist cache too
+            (plist-put task :priority newp)
+            (plist-put task :flag (my-priority-flag newp)))))
+    (my-save-outstanding-tasks-to-file)
+    adjusted))
 
 (provide 'org-queue-priority)
 ;;; org-queue-priority.el ends here

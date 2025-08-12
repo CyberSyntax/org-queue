@@ -19,6 +19,7 @@
                    ("b" my-show-previous-outstanding-task)
                    ("B" org-queue-open-chooser)
                    ("c" my-show-current-outstanding-task)
+                   ("C" org-queue-open-chooser-from-buffer)
                    ("r" my-remove-current-task)
                    ("R" my-reset-and-show-current-outstanding-task)
                    ("i" my-increase-priority-range)

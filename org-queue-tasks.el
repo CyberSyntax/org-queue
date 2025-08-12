@@ -91,13 +91,22 @@ only buries the ones that should not be in the immediate working set."
     (and scheduled-time
 	   (< (time-to-days scheduled-time) (time-to-days (current-time))))))
 
+(defcustom org-queue-force-outstanding-property "QFORCE"
+  "Property name used to force an entry to be treated as outstanding
+even if it is scheduled in the future."
+  :type 'string
+  :group 'org-queue)
+
 (defun my-is-outstanding-task ()
-  "Return non-nil if the current task is overdue or due today."
-  (let ((scheduled-time (org-get-scheduled-time nil))
-        (heading (org-get-heading t t t t)))
-    (let ((result (and scheduled-time
-                       (<= (time-to-days scheduled-time) (time-to-days (current-time))))))
-      result)))
+  "Return non-nil if the current task is outstanding:
+- scheduled for today or earlier, or
+- explicitly forced via `org-queue-force-outstanding-property' (SuperMemo-style Add to outstanding).
+DONE tasks are excluded elsewhere."
+  (let* ((scheduled-time (org-get-scheduled-time nil))
+         (force (org-entry-get nil org-queue-force-outstanding-property)))
+    (or (and scheduled-time
+             (<= (time-to-days scheduled-time) (time-to-days (current-time))))
+        (and force (not (string-empty-p force))))))
 
 ;; Org agenda skip functions
 (defun my-org-agenda-skip-non-outstanding-tasks ()
@@ -180,31 +189,33 @@ Returns nil if not found."
 
 ;; Task list persistence functions
 (defun my-save-outstanding-tasks-to-file ()
-  "Save task list to cache using (file . id) pairs instead of positions.
+  "Save task list to cache using unique (file . id) pairs (dedup by ID).
 Also saves the index separately."
   (let* ((today (format-time-string "%Y-%m-%d"))
-         (pairs
-          (cl-loop for entry in my-outstanding-tasks-list
-                   for marker = (my-extract-marker entry)
-                   if (and (markerp marker)
-                           (marker-buffer marker)
-                           (buffer-live-p (marker-buffer marker))
-                           (buffer-file-name (marker-buffer marker)))
-                   collect
-                   (with-current-buffer (marker-buffer marker)
-                     (save-excursion
-                       (goto-char (marker-position marker))
-                       (let* ((id   (org-entry-get nil "ID"))
-                              (full (file-truename (buffer-file-name)))
-                              (path (if (and (boundp 'org-queue-directory)
-                                             org-queue-directory
-                                             (file-in-directory-p full org-queue-directory))
-                                        (file-relative-name full org-queue-directory)
-                                      full)))
-                         (when id (cons path id))))))))
+         (seen (make-hash-table :test 'equal))
+         (pairs '()))
+    (dolist (entry my-outstanding-tasks-list)
+      (let* ((marker (my-extract-marker entry)))
+        (when (and (markerp marker)
+                   (marker-buffer marker)
+                   (buffer-live-p (marker-buffer marker))
+                   (buffer-file-name (marker-buffer marker)))
+          (with-current-buffer (marker-buffer marker)
+            (save-excursion
+              (goto-char (marker-position marker))
+              (let* ((id   (org-entry-get nil "ID"))
+                     (full (file-truename (buffer-file-name)))
+                     (path (if (and (boundp 'org-queue-directory)
+                                    org-queue-directory
+                                    (file-in-directory-p full org-queue-directory))
+                               (file-relative-name full org-queue-directory)
+                             full)))
+                (when (and id (not (gethash id seen)))
+                  (puthash id t seen)
+                  (push (cons path id) pairs))))))))
     (with-temp-file my-outstanding-tasks-cache-file
       (insert (prin1-to-string (list :date today
-                                     :tasks (delq nil pairs)))))
+                                     :tasks (nreverse pairs)))))
     (my-save-index-to-file)))
 
 (defun my-save-index-to-file ()
@@ -228,62 +239,67 @@ Also saves the index separately."
 
 (defun my-load-outstanding-tasks-from-file ()
   "Load cached tasks stored as (file . id) pairs and rebuild plist tasks with markers.
-This function uses targeted org-id location updates for efficiency,
-logs unresolved IDs, and skips entries that cannot be resolved."
+Dedupes by ID while reading; dedupes result list; rewrites cache deduped."
   (when (file-exists-p my-outstanding-tasks-cache-file)
     (let* ((data (with-temp-buffer
                    (insert-file-contents my-outstanding-tasks-cache-file)
                    (read (buffer-string))))
-           (saved-date (plist-get data :date))
-           (saved-tasks (plist-get data :tasks))
+           (saved-date  (plist-get data :date))
+           (saved-pairs (plist-get data :tasks))
            (today (format-time-string "%Y-%m-%d")))
       (when (string= saved-date today)
-        ;; No longer doing agenda-wide update here - moved to per-ID basis
-        (let ((result-list nil)
+        (let ((seen-ids (make-hash-table :test 'equal))
+              (result-list nil)
               (resolved 0)
               (unresolved 0))
-          (dolist (task-pair saved-tasks)
+          ;; Dedup while reading pairs
+          (dolist (task-pair saved-pairs)
             (let* ((stored-path (car task-pair))
-                   (id (cdr task-pair))
-                   (abs-path (if (or (file-name-absolute-p stored-path)
-                                     (string-match-p "^[A-Za-z]:[/\\\\]" stored-path))
-                                 stored-path
-                               (expand-file-name stored-path
-                                                 (or org-queue-directory default-directory))))
-                   (marker (and id (org-id-find id 'marker))))
-              ;; Targeted refresh only if not found
-              (unless (and marker (markerp marker)
+                   (id (cdr task-pair)))
+              (when (and id (not (gethash id seen-ids)))
+                (puthash id t seen-ids)
+                (let* ((abs-path (if (or (file-name-absolute-p stored-path)
+                                         (string-match-p "^[A-Za-z]:[/\\\\]" stored-path))
+                                     stored-path
+                                   (expand-file-name stored-path
+                                                     (or org-queue-directory default-directory))))
+                       (marker (and id (org-id-find id 'marker))))
+                  ;; Targeted refresh only if not found
+                  (unless (and marker (markerp marker)
+                               (marker-buffer marker)
+                               (buffer-live-p (marker-buffer marker)))
+                    (when (and id abs-path (file-exists-p abs-path))
+                      (ignore-errors
+                        (org-id-update-id-locations (list (file-truename abs-path))))
+                      (setq marker (org-id-find id 'marker))))
+                  (if (and marker
+                           (markerp marker)
                            (marker-buffer marker)
                            (buffer-live-p (marker-buffer marker)))
-                (when (and id abs-path (file-exists-p abs-path))
-                  (ignore-errors
-                    (org-id-update-id-locations (list (file-truename abs-path))))
-                  (setq marker (org-id-find id 'marker))))
-              ;; Now check if we have a valid marker
-              (if (and marker
-                       (markerp marker)
-                       (marker-buffer marker)
-                       (buffer-live-p (marker-buffer marker)))
-                  ;; Build plist for resolved task
-                  (with-current-buffer (marker-buffer marker)
-                    (save-excursion
-                      (goto-char (marker-position marker))
-                      (let* ((priority (my-get-raw-priority-value))
-                             (flag (my-priority-flag priority))
-                             (file abs-path)
-                             (task-plist (list :id id
-                                               :marker marker
-                                               :priority priority
-                                               :flag flag
-                                               :file file)))
-                        (push task-plist result-list)
-                        (setq resolved (1+ resolved)))))
-                ;; Unresolved path
-                (setq unresolved (1+ unresolved))
-                (message "org-queue: could not resolve ID %s (stored path: %s)"
-                         id stored-path))))
+                      (with-current-buffer (marker-buffer marker)
+                        (save-excursion
+                          (goto-char (marker-position marker))
+                          (let* ((priority (my-get-raw-priority-value))
+                                 (flag (my-priority-flag priority))
+                                 (file (buffer-file-name))
+                                 (task-plist (list :id id
+                                                   :marker marker
+                                                   :priority priority
+                                                   :flag flag
+                                                   :file file)))
+                            (push task-plist result-list)
+                            (setq resolved (1+ resolved)))))
+                    (setq unresolved (1+ unresolved))
+                    (message "org-queue: could not resolve ID %s (stored path: %s)" id stored-path))))))
+
           (setq my-outstanding-tasks-list (nreverse result-list))
+          ;; Dedupe final list (belt-and-suspenders)
+          (my-dedupe-outstanding-tasks)
+
           (message "org-queue: resolved %d IDs, %d unresolved (from cache)" resolved unresolved)
+          ;; Fix cache on disk immediately (deduped)
+          (my-save-outstanding-tasks-to-file)
+
           ;; Load index; fallback to 0
           (unless (and (my-load-index-from-file)
                        (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
@@ -293,20 +309,42 @@ logs unresolved IDs, and skips entries that cannot be resolved."
 (defun my-ensure-synchronized-task-list ()
   "Ensure we have a current, synchronized task list and valid index."
   ;; Try to load from cache first
-  (unless (my-load-outstanding-tasks-from-file)
+  (if (my-load-outstanding-tasks-from-file)
+      (progn
+        (my-dedupe-outstanding-tasks)
+        (my-save-outstanding-tasks-to-file))
     ;; If cache is stale or missing, regenerate
     (my-get-outstanding-tasks)
     (setq my-outstanding-tasks-index 0)
     (my-save-outstanding-tasks-to-file))
-  
   ;; Double-check index validity after loading
   (when (or (>= my-outstanding-tasks-index (length my-outstanding-tasks-list))
             (< my-outstanding-tasks-index 0))
     (setq my-outstanding-tasks-index 0)
     (my-save-index-to-file))
-
   ;; Limit visible buffers to a small, focused set
   (my-queue-limit-visible-buffers))
+
+(defun my--task-unique-key (task)
+  "Key for deduplication: prefer :id, else file@pos."
+  (or (plist-get task :id)
+      (let* ((m (my-extract-marker task))
+             (buf (and (markerp m) (marker-buffer m)))
+             (pos (and (markerp m) (marker-position m)))
+             (file (and buf (buffer-file-name buf))))
+        (when (and file pos)
+          (format "%s@%d" (file-truename file) pos)))))
+
+(defun my-dedupe-outstanding-tasks ()
+  "Remove duplicate tasks (by ID, else file@pos), keeping first occurrence."
+  (let ((seen (make-hash-table :test 'equal))
+        (out  '()))
+    (dolist (task my-outstanding-tasks-list)
+      (let ((k (my--task-unique-key task)))
+        (unless (and k (gethash k seen))
+          (when k (puthash k t seen))
+          (push task out))))
+    (setq my-outstanding-tasks-list (nreverse out))))
 
 (defun my-get-outstanding-tasks ()
   "Populate task list with metadata for stable tracking."
@@ -317,7 +355,8 @@ logs unresolved IDs, and skips entries that cannot be resolved."
                 (not (my-is-done-task))
                 (not (org-srs-entry-p (point))))
        (let* ((marker (point-marker))
-              (id (org-entry-get nil "ID"))
+              ;; Ensure ID exists so duplicates can be removed reliably
+              (id (or (org-entry-get nil "ID") (org-id-get-create)))
               (priority (my-get-raw-priority-value))
               (flag (my-priority-flag priority))
               (file (buffer-file-name))
@@ -335,7 +374,6 @@ logs unresolved IDs, and skips entries that cannot be resolved."
          (let ((sort-key (list (if is-todo 0 1) priority)))
            (push (cons sort-key task-data) my-outstanding-tasks-list)))))
    nil 'agenda)
-  
   ;; Sort by two-tier system: TODO status first, then priority
   (setq my-outstanding-tasks-list
         (mapcar #'cdr
@@ -346,7 +384,8 @@ logs unresolved IDs, and skips entries that cannot be resolved."
                           (if (= (car key-a) (car key-b))
                               (< (cadr key-a) (cadr key-b))
                             (< (car key-a) (car key-b))))))))
-  
+  ;; Deduplicate (by :id, else file@pos)
+  (my-dedupe-outstanding-tasks)
   ;; Summary
   (let ((todo-count (length (cl-remove-if-not (lambda (task) (plist-get task :is-todo))
                                               my-outstanding-tasks-list)))
@@ -354,10 +393,7 @@ logs unresolved IDs, and skips entries that cannot be resolved."
     (message "=== QUEUE BUILT ===")
     (message "Total tasks in queue: %d" total-count)
     (message "TODO tasks in queue: %d" todo-count))
-  
   (setq my-outstanding-tasks-index 0)
-
-  ;; Keep only a focused set of queue buffers around current position
   (my-queue-limit-visible-buffers))
 
 (defun my-remove-current-task ()
