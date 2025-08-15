@@ -453,7 +453,9 @@ Behavior:
       (message "Task removed. Now at %d/%d"
                (1+ my-outstanding-tasks-index)
                (length my-outstanding-tasks-list))
-      (my-show-current-outstanding-task)))))
+      (my-show-current-outstanding-task)
+      ;; SRS handling
+      (my-queue-handle-srs-after-task-display)))))
 
 (defun my-move-current-task-to-position (target-pos)
   "Move current task to TARGET-POS in the queue (1-based).
@@ -705,6 +707,25 @@ Saves buffers and regenerates the task list for consistency."
   (my-reset-outstanding-tasks-index)  ;; Call function to reset tasks index
   (my-show-current-outstanding-task))  ;; Call function to show the first/current task
 
+(defun my-queue-handle-srs-after-task-display ()
+  "Handle SRS start/launch after displaying the current task.
+- On Android, launches Anki immediately.
+- On desktop, (re)starts reviews unless `my-srs-reviews-exhausted' is non-nil,
+  in which case Anki is launched instead.
+Errors are caught and only logged."
+  (condition-case err
+      (if my-android-p
+          (my-launch-anki)
+        (if (not my-srs-reviews-exhausted)
+            (progn
+              (my-srs-quit-reviews)
+              (condition-case nil
+                  (my-srs-start-reviews)
+                (error (setq my-srs-reviews-exhausted t))))
+          (my-launch-anki)))
+    (error
+     (message "org-queue: SRS handling failed: %s" (error-message-string err)))))
+
 (defun my-show-next-outstanding-task ()
   "Show the next outstanding task with proper SRS handling.
 Also limits visible queue buffers around the new current task."
@@ -750,15 +771,7 @@ Also limits visible queue buffers around the new current task."
         (my-queue-limit-visible-buffers)
         
         ;; SRS handling
-        (if my-android-p
-            (my-launch-anki)
-          (if (not my-srs-reviews-exhausted)
-              (progn
-                (my-srs-quit-reviews)
-                (condition-case nil
-                    (my-srs-start-reviews)
-                  (error (setq my-srs-reviews-exhausted t))))
-            (my-launch-anki)))
+        (my-queue-handle-srs-after-task-display)
 
         (my-show-current-flag-status))
     (message "No outstanding tasks found.")))
