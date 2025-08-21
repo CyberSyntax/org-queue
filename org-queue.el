@@ -53,7 +53,8 @@
   (define-key org-queue-prefix-map (kbd "3") #'org-queue-srs-rate-good))
 ;; Bind cloze command if function exists (works with or without org-srs)
 (when (fboundp 'org-interactive-cloze)
-  (define-key org-queue-prefix-map (kbd "z") #'org-interactive-cloze))
+  (define-key org-queue-prefix-map (kbd "z") #'org-interactive-cloze)
+  (define-key org-queue-prefix-map (kbd "Z") #'org-queue-srs-item-create-card))
 
 ;; Bind the prefix globally to C-;
 (global-set-key (kbd "C-;") org-queue-prefix-map)

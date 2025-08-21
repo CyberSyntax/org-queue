@@ -661,6 +661,7 @@ Includes all commands, access methods, and usage examples."
     (when (featurep 'org-srs)
       (princ "SRS & Review:\n")
       (princ "  z - Create cloze deletion\n")
+      (princ "  Z - Create SRS card in current entry\n")
       (princ "  1 - Rate again (difficult)\n")
       (princ "  2 - Rate hard (if available)\n")
       (princ "  3 - Rate good (easy)\n\n"))

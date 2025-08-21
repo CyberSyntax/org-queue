@@ -213,5 +213,28 @@
       (error 
        (message "Error rating entry: %s" (error-message-string err))))))
 
+(defun org-queue-srs-item-create-card ()
+  "Create an org-srs review item of type 'card' at the current entry without prompting.
+Ensures the entry has an ID. Gracefully degrades if org-srs is not available."
+  (interactive)
+  (if (not (require 'org-srs nil t))
+      (message "org-srs package not available")
+    (require 'org-id)
+    (condition-case err
+        (progn
+          (org-id-get-create)
+          (cond
+           ((fboundp 'org-srs-item-new)
+            (org-srs-item-new 'card))
+           ((fboundp 'org-srs-item-new-interactively)
+            ;; Keep the spirit of org-srs-item-create's prog1 form:
+            ;; ensure ID, then pass 'card as the chosen type.
+            (org-srs-item-new-interactively 'card))
+           (t
+            (user-error "org-srs: no item creation API found")))
+          (message "Created org-srs card"))
+      (error
+       (user-error "Failed to create SRS card: %s" (error-message-string err))))))
+
 (provide 'org-queue-srs-bridge)
 ;;; org-queue-srs-bridge.el ends here
