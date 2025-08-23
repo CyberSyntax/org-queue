@@ -9,6 +9,10 @@
 ;; Disable large file warning
 (setq large-file-warning-threshold nil)
 (random t)
+(defcustom org-queue-verbose t
+  "If non-nil, print progress messages."
+  :type 'boolean
+  :group 'org-queue)
 ;;; System Detection
 (defvar my-android-p 
   (eq system-type 'android)

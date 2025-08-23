@@ -29,6 +29,7 @@
                    ("d" my-decrease-priority-range)
                    ("D" org-demote-subtree)
                    ("a" my-advance-schedule)
+		   ("A" my-launch-anki)
                    ("p" my-postpone-schedule)
                    ("P" org-promote-subtree)
                    ("n" org-narrow-to-subtree)

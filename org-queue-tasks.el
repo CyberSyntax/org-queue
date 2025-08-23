@@ -67,12 +67,6 @@ only buries the ones that should not be in the immediate working set."
   :type 'string
   :group 'org-queue)
 
-(defcustom org-queue-directory nil
-  "Base directory for task files for Org Queue.
-                If nil, a safe default directory will be used and created automatically."
-  :type 'directory
-  :group 'org-queue)
-
 (defvar my-org-id-locations-initialized nil
   "Whether org-id locations DB has been fully initialized this session.")
 
@@ -296,7 +290,8 @@ Dedupes by ID while reading; dedupes result list; rewrites cache deduped."
           ;; Dedupe final list (belt-and-suspenders)
           (my-dedupe-outstanding-tasks)
 
-          (message "org-queue: resolved %d IDs, %d unresolved (from cache)" resolved unresolved)
+	  (when org-queue-verbose
+	    (message "org-queue: resolved %d IDs, %d unresolved (from cache)" resolved unresolved))
           ;; Fix cache on disk immediately (deduped)
           (my-save-outstanding-tasks-to-file)
 
@@ -707,22 +702,26 @@ Saves buffers and regenerates the task list for consistency."
   (my-reset-outstanding-tasks-index)  ;; Call function to reset tasks index
   (my-show-current-outstanding-task))  ;; Call function to show the first/current task
 
+(defvar my-queue--orchestrating nil
+  "Prevent re-entrancy while orchestrating SRS/Anki.")
+
 (defun my-queue-handle-srs-after-task-display ()
-  "Handle SRS start/launch after displaying the current task.
-- On Android, launches Anki immediately.
-- On desktop, always launches Anki and also (re)starts reviews unless an error occurs.
-Errors are caught and only logged."
-  (condition-case err
-      (if my-android-p
-          (my-launch-anki)
-        (progn
-          (my-srs-quit-reviews)
-          (condition-case nil
-              (my-srs-start-reviews)
-            (error (setq my-srs-reviews-exhausted t)))
-          (my-launch-anki)))
-    (error
-     (message "org-queue: SRS handling failed: %s" (error-message-string err)))))
+  "Launch/focus Anki first, then (re)start org-srs reviews.
+Guarded by `my-queue--orchestrating' to avoid re-entrancy."
+  (unless my-queue--orchestrating
+    (let ((my-queue--orchestrating t))
+      (condition-case err
+          (if my-android-p
+              (my-launch-anki)
+            (progn
+              ;; Launch Anki first so you can start studying immediately
+              (my-launch-anki)
+              ;; Then (re)start SRS in Emacs
+              (ignore-errors (my-srs-quit-reviews))
+              (ignore-errors (my-srs-start-reviews))))
+        (error
+         (message "org-queue: SRS/Anki orchestration failed: %s"
+                  (error-message-string err)))))))
 
 (defun my-show-next-outstanding-task ()
   "Show the next outstanding task with proper SRS handling.
@@ -733,13 +732,6 @@ Also limits visible queue buffers around the new current task."
 
   ;; Ensure we have synchronized data
   (my-ensure-synchronized-task-list)
-
-  ;; Detect end of SRS session
-  (when (and (current-message)
-             (string-match-p "No more cards to review" (current-message)))
-    (message "Review session complete - continuing with tasks")
-    (sit-for 1)
-    (setq my-srs-reviews-exhausted t))
   
   ;; If no list exists or we're at the end, refresh
   (when (or (not my-outstanding-tasks-list)
@@ -856,6 +848,7 @@ Also limits visible queue buffers around the current task."
 ;; Utility functions for task management
 (defun my-auto-task-setup ()
   "Initialize and set up automatic task management processes upon Emacs startup."
+  (my-launch-anki)
   (message "Starting automatic task setup...")
   (my-org-id-initialize-id-locations)
 
@@ -914,20 +907,16 @@ Also limits visible queue buffers around the current task."
     (when org-queue-preinit-srs
       (message "Step 4: Pre-initializing SRS system...")
       (unless my-android-p
-        (condition-case err
-            (if (not my-srs-reviews-exhausted)
-                (progn
-                  (my-srs-quit-reviews)
-                  (let ((temp-frame (make-frame '((visibility . nil) (width . 80) (height . 24)))))
-                    (unwind-protect
-                        (with-selected-frame temp-frame
-                          (cl-letf (((symbol-function 'read-key) (lambda (&rest _) 32)))
-                            (condition-case nil
-                                (my-srs-start-reviews)
-                              (error (setq my-srs-reviews-exhausted t))))
-                          (my-srs-quit-reviews))
-                      (delete-frame temp-frame))))
-              (my-launch-anki))
+	(condition-case err
+            (progn
+              (my-srs-quit-reviews)
+              (let ((temp-frame (make-frame '((visibility . nil) (width . 80) (height . 24)))))
+		(unwind-protect
+                    (with-selected-frame temp-frame
+                      (cl-letf (((symbol-function 'read-key) (lambda (&rest _) 32)))
+			(ignore-errors (my-srs-start-reviews)))
+                      (my-srs-quit-reviews))
+                  (delete-frame temp-frame))))
           (error
            (message "org-queue: SRS pre-init disabled due to error: %s"
                     (error-message-string err)))))))

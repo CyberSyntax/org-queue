@@ -212,37 +212,65 @@ Updates `my-outstanding-tasks-index` and shows the task."
                  (or tasks 0)
                  (or tleft 0))))))
 
+(defun my-anki-running-p ()
+  (cond
+   ((eq system-type 'darwin)
+    (zerop (call-process "pgrep" nil nil nil "-x" "Anki")))
+   ((eq system-type 'gnu/linux)
+    (or (zerop (call-process "pgrep" nil nil nil "-x" "anki"))
+	(zerop (call-process "pgrep" nil nil nil "-x" "anki.bin"))))
+   ((eq system-type 'windows-nt)
+    (with-temp-buffer
+      (call-process "tasklist" nil t nil "/FI" "IMAGENAME eq anki.exe")
+      (goto-char (point-min))
+      (search-forward "anki.exe" nil t)))))
+
 ;; Anki launch function
 (defun my-launch-anki ()
-  "Launch Anki application if it exists. Works on Windows and macOS. On error or Android, show message and call `my-show-current-flag-status`."
+  "Run or focus Anki; never spawn duplicate instances.
+Prereqs:
+- my-anki-running-p: t when Anki is running.
+- (optional) my-android-p: t on Android."
   (interactive)
   (cond
-   ;; Android: Just show flag status and message
-   (my-android-p
-    (message "📱 Please open Anki app manually for reviews")
-    (my-show-current-flag-status))
-   
-   ;; Desktop systems
+   ;; Android
+   ((and (fboundp 'my-android-p) (my-android-p))
+    (message "Please open the Anki app manually on Android."))
+
+   ;; macOS: focus if running (AppleScript), else launch (open -a).
+   ((eq system-type 'darwin)
+    (if (and (fboundp 'my-anki-running-p) (my-anki-running-p))
+        (start-process "anki-activate" nil "osascript" "-e"
+                       "tell application id \"net.ankiweb.dtop\" to activate")
+      (start-process "anki-open" nil "/usr/bin/open" "-a" "Anki")))
+
+   ;; Windows
+   ((eq system-type 'windows-nt)
+    (if (and (fboundp 'my-anki-running-p) (my-anki-running-p))
+        (ignore-errors
+          (start-process "anki-activate" nil "powershell" "-NoProfile" "-Command"
+                         "$p=Get-Process -Name anki -ErrorAction SilentlyContinue; if($p){$ws=New-Object -ComObject WScript.Shell; $ws.AppActivate($p.Id)}"))
+      (w32-shell-execute "open" "anki.exe")))
+
+   ;; GNU/Linux
    (t
-    (let ((anki-path
-           (cond
-            ;; Windows
-            ((eq system-type 'windows-nt)
-             (expand-file-name "AppData/Local/Programs/Anki/anki.exe" (getenv "USERPROFILE")))
-            ;; macOS (default install location)
-            ((eq system-type 'darwin)
-             "/Applications/Anki.app/Contents/MacOS/Anki")
-            ;; Else nil (e.g. GNU/Linux)
-            (t nil))))
-      (if (and anki-path (file-exists-p anki-path))
-          (condition-case err
-              (start-process "Anki" nil anki-path)
-            (error
-             (message "Failed to launch Anki: %s" (error-message-string err))
-             (my-show-current-flag-status)))
-        (message "Anki executable not found%s"
-                 (if anki-path (format " at: %s" anki-path) " on this OS."))
-        (my-show-current-flag-status))))))
+    (if (and (fboundp 'my-anki-running-p) (my-anki-running-p))
+        (cond
+         ((executable-find "wmctrl")
+          (or (zerop (call-process "wmctrl" nil nil nil "-x" "-a" "anki.Anki"))
+              (zerop (call-process "wmctrl" nil nil nil "-a" "Anki"))
+              (message "Anki is running; could not raise via wmctrl.")))
+         ((executable-find "xdotool")
+          (start-process "anki-activate" nil "xdotool"
+                         "search" "--onlyvisible" "--class" "anki"
+                         "windowactivate" "--sync"))
+         (t
+          (message "Anki is running; install wmctrl/xdotool to raise it.")))
+      (let ((exe (or (executable-find "anki")
+                     (executable-find "anki.bin"))))
+        (if exe
+            (start-process "Anki" nil exe)
+          (message "Anki executable not found on PATH.")))))))
 
 ;; Display and highlighting functions
 (defun my-pulse-highlight-current-line (&optional time)
