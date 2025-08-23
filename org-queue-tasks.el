@@ -819,6 +819,9 @@ Also limits visible queue buffers around the current task."
         ;; Limit visible queue buffers for current position
         (my-queue-limit-visible-buffers)
 
+        ;; SRS handling
+        (my-queue-handle-srs-after-task-display)
+
         (my-show-current-flag-status))
     (message "No outstanding tasks found.")))
 
