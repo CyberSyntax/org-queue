@@ -710,18 +710,16 @@ Saves buffers and regenerates the task list for consistency."
 (defun my-queue-handle-srs-after-task-display ()
   "Handle SRS start/launch after displaying the current task.
 - On Android, launches Anki immediately.
-- On desktop, (re)starts reviews unless `my-srs-reviews-exhausted' is non-nil,
-  in which case Anki is launched instead.
+- On desktop, always launches Anki and also (re)starts reviews unless an error occurs.
 Errors are caught and only logged."
   (condition-case err
       (if my-android-p
           (my-launch-anki)
-        (if (not my-srs-reviews-exhausted)
-            (progn
-              (my-srs-quit-reviews)
-              (condition-case nil
-                  (my-srs-start-reviews)
-                (error (setq my-srs-reviews-exhausted t))))
+        (progn
+          (my-srs-quit-reviews)
+          (condition-case nil
+              (my-srs-start-reviews)
+            (error (setq my-srs-reviews-exhausted t)))
           (my-launch-anki)))
     (error
      (message "org-queue: SRS handling failed: %s" (error-message-string err)))))
@@ -824,6 +822,36 @@ Also limits visible queue buffers around the current task."
 
         (my-show-current-flag-status))
     (message "No outstanding tasks found.")))
+
+(defun my-show-next-outstanding-task-in-new-tab ()
+  "Open a new tab and show the next outstanding task."
+  (interactive)
+  (if (fboundp 'tab-new)
+      (progn
+        (tab-new)
+        (my-show-next-outstanding-task))
+    (message "tab-new not available in this Emacs version")
+    (my-show-next-outstanding-task)))
+
+(defun my-show-previous-outstanding-task-in-new-tab ()
+  "Open a new tab and show the previous outstanding task."
+  (interactive)
+  (if (fboundp 'tab-new)
+      (progn
+        (tab-new)
+        (my-show-previous-outstanding-task))
+    (message "tab-new not available in this Emacs version")
+    (my-show-previous-outstanding-task)))
+
+(defun my-show-current-outstanding-task-in-new-tab ()
+  "Open a new tab and show the current outstanding task."
+  (interactive)
+  (if (fboundp 'tab-new)
+      (progn
+        (tab-new)
+        (my-show-current-outstanding-task))
+    (message "tab-new not available in this Emacs version")
+    (my-show-current-outstanding-task)))
 
 ;; Utility functions for task management
 (defun my-auto-task-setup ()
