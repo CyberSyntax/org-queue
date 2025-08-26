@@ -521,63 +521,78 @@ Also registers the displayed buffer as a recent queue buffer."
     (org-highlight-custom-syntax)))
 
 ;; Interactive content creation functions
+(defun my--strip-leading-stars (s)
+  "Remove leading stars + spaces from S to avoid creating a new heading."
+  (if (string-match "^\\*+\\s-*" s)
+      (substring s (match-end 0))
+    s))
+
 (defun org-interactive-cloze ()
-  "Create a cloze deletion from selected text and generate a proper child heading with org-srs."
+  "Create a cloze deletion from selected text; header-aware.
+- If region is on a heading line, cloze context is built from the heading
+  display. In the child body,
+  leading stars are stripped to avoid creating a new heading.
+- Also mirrors extract: inherits parent priority range and sets child priority."
   (interactive)
   (if (not (use-region-p))
       (message "Please select text to create a cloze")
     (let* ((start (region-beginning))
            (end (region-end))
            (selected-text (buffer-substring-no-properties start end))
-           ;; Get current heading position and level
-           (heading-pos (save-excursion (org-back-to-heading) (point)))
-           (heading-level (save-excursion (goto-char heading-pos) (org-outline-level)))
-           ;; Get exact line where cursor is for content
-           (content-line (buffer-substring-no-properties
-                         (line-beginning-position)
-                         (line-end-position))))
-      
+           ;; Current heading pos/level
+           (heading-pos (save-excursion (goto-char start) (org-back-to-heading t) (point)))
+           (heading-level (save-excursion (goto-char heading-pos) (org-current-level)))
+           (parent-priority-range (save-excursion
+                                   (goto-char heading-pos)
+                                   (my-get-current-priority-range)))
+           ;; Will be recomputed after insertion
+           (content-line nil)
+           (on-heading (save-excursion
+                         (goto-char start)
+                         (beginning-of-line)
+                         (org-at-heading-p))))
       ;; Replace selected text with cloze
       (delete-region start end)
       (insert (format "{{clozed:%s}}" selected-text))
-      
+
       ;; Get updated content line
       (setq content-line (buffer-substring-no-properties
-                         (line-beginning-position)
-                         (line-end-position)))
-      
+                          (line-beginning-position)
+                          (line-end-position)))
+
+      ;; If this is a heading line, build a clean heading display string
+      (when on-heading
+        ;; Prevent creating a heading inside the child body: drop leading stars.
+        (setq content-line (my--strip-leading-stars content-line)))
+
       ;; Create child heading with cloze placeholder
       (save-excursion
         (goto-char heading-pos)
         (org-end-of-subtree)
-        
-        ;; Insert position for the new heading
         (let ((new-heading-pos (point)))
-          ;; Create the child heading with proper level
           (insert "\n" (make-string (1+ heading-level) ?*) " ")
-          
-          ;; Create child content - replace the current cloze with [...]
-          (let ((child-content 
-                 (replace-regexp-in-string 
-                  (format "{{clozed:%s}}" selected-text)
-                  "[...]"
-                  content-line)))
-            ;; Replace all other clozes with their content
-            (let ((processed-content child-content))
-              (while (string-match "{{clozed:\\([^}]+\\)}}" processed-content)
-                (setq processed-content 
-                      (replace-match "\\1" t nil processed-content)))
-              (insert processed-content))
-            (insert "\n" selected-text))
-          
-          ;; Now set up org-srs for this child heading (if available)
-          (goto-char (1+ new-heading-pos))  ;; Go to the new heading
-          (org-id-get-create)               ;; Create ID for org-srs
+          ;; Replace the current cloze with [...]
+          (let* ((child-content
+                  (replace-regexp-in-string
+                   (regexp-quote (format "{{clozed:%s}}" selected-text))
+                   "[...]"
+                   content-line))
+                 (processed-content child-content))
+            ;; Replace any other clozes with their content
+            (while (string-match "{{clozed:\\([^}]+\\)}}" processed-content)
+              (setq processed-content
+                    (replace-match "\\1" t nil processed-content)))
+            (insert processed-content))
+          (insert "\n" selected-text)
+          ;; Priority (mirror extract), ID, and org-srs
+          (when parent-priority-range
+            (goto-char (1+ new-heading-pos))
+            (my-set-priority-with-heuristics parent-priority-range))
+          (goto-char (1+ new-heading-pos))
+          (org-id-get-create)
           (when (fboundp 'org-srs-item-new)
-            (org-srs-item-new 'card))       ;; Set up as org-srs card if available
-        ))
-      
-      (message "Created cloze deletion%s" 
+            (org-srs-item-new 'card))))
+      (message "Created cloze deletion%s"
                (if (fboundp 'org-srs-item-new) " with org-srs card" "")))))
 
 (defun org-interactive-extract ()
