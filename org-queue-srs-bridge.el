@@ -24,6 +24,11 @@
 
 (defun my-srs--on-review-done (&rest _)
   (save-some-buffers t (lambda () (and buffer-file-name (string-match-p "\\.org$" buffer-file-name))))
+  (run-at-time 0.05 nil
+               (lambda ()
+                 (when (and (boundp 'my-outstanding-tasks-list)
+                            my-outstanding-tasks-list)
+                   (my-show-current-outstanding-task-no-srs t))))
   (message "No more cards to review in this session."))
 
 (defun my-srs-start-reviews ()

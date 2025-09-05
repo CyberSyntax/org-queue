@@ -792,6 +792,19 @@ Also limits visible queue buffers around the new current task."
           (my-show-current-flag-status)))
     (message "No outstanding tasks to navigate.")))
 
+(defun my-show-current-outstanding-task-no-srs (&optional pulse)
+  "Show current outstanding task without re-triggering SRS/Anki."
+  (interactive)
+  (widen-and-recenter)
+  (my-ensure-synchronized-task-list)
+  (when (and my-outstanding-tasks-list
+             (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+    (let ((task (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
+      (my-display-task-at-marker task)
+      (when pulse (my-pulse-highlight-current-line))
+      (my-queue-limit-visible-buffers)
+      (my-show-current-flag-status))))
+
 (defun my-show-current-outstanding-task ()
   "Show the current outstanding task, or get a new list and show the first task if not valid.
 Also limits visible queue buffers around the current task."
