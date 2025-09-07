@@ -37,11 +37,6 @@ Each entry is a cons cell where the car is the range identifier
 and the cdr is a cons cell representing the minimum and maximum priority values."
   :type '(alist :key-type integer :value-type (cons integer integer))
   :group 'org-queue)
-;;; Cache Directory Configuration
-(defvar cache-dir (expand-file-name "org-queue-cache/" user-emacs-directory)
-  "Directory path for cache files.")
-(unless (file-directory-p cache-dir)
-  (make-directory cache-dir t))
 
 ;;; Directory Configuration - ADD THIS NEW SECTION HERE
 (defcustom org-queue-directory 
