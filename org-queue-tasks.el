@@ -944,6 +944,7 @@ Also limits visible queue buffers around the current task."
                                       (> (length my-outstanding-tasks-list) 0)
                                       (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
                                  (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
+                                   (delete-other-windows)
                                    (my-display-task-at-marker task-or-marker)
                                    (my-show-current-flag-status))
                                (message "Task list empty or invalid index"))
