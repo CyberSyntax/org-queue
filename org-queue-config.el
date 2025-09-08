@@ -39,8 +39,11 @@ and the cdr is a cons cell representing the minimum and maximum priority values.
   :group 'org-queue)
 
 ;;; Directory Configuration - ADD THIS NEW SECTION HERE
-(defcustom org-queue-directory 
-  (expand-file-name "~/org/")  
+(defcustom org-queue-directory
+  (cond
+   ((boundp 'org-agenda-directory) org-agenda-directory)
+   ((eq system-type 'android) "/storage/emulated/0/Documents/org/")
+   (t (expand-file-name "~/org/")))
   "Base directory for org-queue files (searched recursively)."
   :type 'directory
   :group 'org-queue)
