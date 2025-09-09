@@ -60,8 +60,8 @@
   (define-key org-queue-prefix-map (kbd "z") #'org-interactive-cloze)
   (define-key org-queue-prefix-map (kbd "Z") #'org-queue-srs-item-create-card))
 
-;; Bind the prefix globally to C-;
-(global-set-key (kbd "C-;") org-queue-prefix-map)
+;; Bind the prefix globally to C-c q
+(global-set-key (kbd "C-c q") org-queue-prefix-map)
 
 (provide 'org-queue)
 ;;; org-queue.el ends here
