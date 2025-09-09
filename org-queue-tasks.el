@@ -900,19 +900,64 @@ Also limits visible queue buffers around the current task."
 ;; Automatic startup
 (add-hook 'emacs-startup-hook #'org-queue-startup 100)
 
-(defun org-queue-maintenance()
-  "Manually do the minimal maintenance and rebuild the queue, then show current task (no SRS auto-start)."
-  (interactive)
+(defun org-queue-maintenance (&optional full)
+  "Run org-queue maintenance.
+Without prefix: quick maintenance (fast).
+With C-u prefix: full maintenance (the heavy pipeline you used to run at startup).
+Usage
+- Quick (fast): M-x org-queue-maintenance
+- Full (heavy pipeline): C-u M-x org-queue-maintenance"
+  (interactive "P")
   (my-org-id-initialize-id-locations)
   (save-some-buffers t)
-  (my-auto-postpone-overdue-tasks)
-  (my-postpone-duplicate-priority-tasks)
+
+  (if full
+      (progn
+        ;; Optional: tighten org-roam/IDs if available
+        (when (require 'org-roam nil t)
+          (let ((warning-minimum-level :error))
+            (org-roam-db-autosync-mode 1)
+            (ignore-errors (org-id-update-id-locations (org-agenda-files)))))
+
+        ;; Ensure base invariants
+        (when (fboundp 'my-ensure-priorities-and-schedules-for-all-headings)
+          (my-ensure-priorities-and-schedules-for-all-headings))
+
+        ;; Advance near-future schedules so queue is meaningful today
+        (when (fboundp 'my-auto-advance-schedules)
+          (my-auto-advance-schedules 8))
+
+        ;; Reduce noise
+        (my-auto-postpone-overdue-tasks)
+        (my-postpone-duplicate-priority-tasks)
+
+        ;; Enforce “higher priority caps lower priority counts”
+        (when (fboundp 'my-enforce-priority-constraints)
+          (my-enforce-priority-constraints))
+
+        ;; Re-ensure after changes
+        (when (fboundp 'my-ensure-priorities-and-schedules-for-all-headings)
+          (my-ensure-priorities-and-schedules-for-all-headings))
+
+        ;; Keep only the first consecutive task per file
+        (when (fboundp 'my-postpone-consecutive-same-file-tasks)
+          (my-postpone-consecutive-same-file-tasks))
+
+        ;; Remove DONE cruft
+        (when (fboundp 'my-cleanup-all-done-tasks)
+          (my-cleanup-all-done-tasks)))
+    ;; Quick maintenance (fast)
+    (my-auto-postpone-overdue-tasks)
+    (my-postpone-duplicate-priority-tasks))
+
+  (save-some-buffers t)
   (my-get-outstanding-tasks)
   (setq my-outstanding-tasks-index 0)
   (my-save-outstanding-tasks-to-file)
   (delete-other-windows)
   (my-show-current-outstanding-task-no-srs t)
-  (message "org-queue: quick maintenance complete."))
+  (message "org-queue: %s maintenance complete."
+           (if full "full" "quick")))
 
 (provide 'org-queue-tasks)
 ;;; org-queue-tasks.el ends here
