@@ -859,84 +859,30 @@ Also limits visible queue buffers around the current task."
     (my-show-current-outstanding-task)))
 
 ;; Utility functions for task management
-(defun my-auto-task-setup ()
-  "Initialize and set up automatic task management processes upon Emacs startup."
-  (my-launch-anki)
-  (message "Starting automatic task setup...")
+(defun org-queue-startup ()
+  "Minimal org-queue startup:
+- Initialize org-id DB,
+- If cache exists for today, use it;
+  otherwise, build and save the queue.
+- Schedule initial task display (no automatic SRS/Anki here)."
+  (interactive)
+  ;; IDs first
   (my-org-id-initialize-id-locations)
 
-  ;; Step 1: Try to load from cache
-  (message "Step 1: Attempting to load tasks from file...")
+  ;; Try cache first (today)
   (let ((cache-loaded (and (fboundp 'my-load-outstanding-tasks-from-file)
                            (my-load-outstanding-tasks-from-file))))
-    (message "Step 1 complete: Cache loaded? %s" cache-loaded)
-    (message "Checking task format - First task: %S"
-             (and my-outstanding-tasks-list (car my-outstanding-tasks-list)))
+    (if cache-loaded
+        (message "org-queue: cache loaded for today")
+      (progn
+        (message "org-queue: cache missing/stale -> minimal maintenance")
+        ;; Build and save queue
+        (my-get-outstanding-tasks)
+        (setq my-outstanding-tasks-index 0)
+        (my-save-outstanding-tasks-to-file)
+        (message "org-queue: queue built and saved"))))
 
-    ;; Step 2: Maintenance if no valid cache
-    (unless cache-loaded
-      (message "Step 2B: No cache, running maintenance...")
-      (when (require 'org-roam nil t)
-        (message "Step 2B.1: Setting up org-roam...")
-        (let ((warning-minimum-level :error))
-          (org-roam-db-autosync-mode)
-          (org-id-update-id-locations (org-agenda-files)))
-        (message "Step 2B.1 complete"))
-
-      (message "Step 2B.2.1: Ensuring priorities and schedules...")
-      (my-ensure-priorities-and-schedules-for-all-headings)
-
-      (message "Step 2B.2.2: Advancing schedules...")
-      (my-auto-advance-schedules 8)
-
-      (message "Step 2B.2.3: Postponing overdue tasks...")
-      (my-auto-postpone-overdue-tasks)
-
-      (message "Step 2B.2.4: Postponing duplicate priority tasks...")
-      (my-postpone-duplicate-priority-tasks)
-
-      (message "Step 2B.2.5: Enforcing priority constraints...")
-      (my-enforce-priority-constraints)
-
-      (message "Step 2B.2.6: Re-ensuring priorities and schedules...")
-      (my-ensure-priorities-and-schedules-for-all-headings)
-
-      (message "Step 2B.2.7: Postponing consecutive same-file tasks...")
-      (my-postpone-consecutive-same-file-tasks)
-
-      (message "Step 2B.2.8: Cleaning up DONE tasks...")
-      (my-cleanup-all-done-tasks)
-
-      (message "Step 2B.3: Getting outstanding tasks...")
-      (my-get-outstanding-tasks)
-      (setq my-outstanding-tasks-index 0)
-
-      (message "Step 2B.4: Saving tasks to file...")
-      (my-save-outstanding-tasks-to-file)
-      (message "Maintenance complete")))
-
-  ;; Step 4: Optional SRS pre-init (set org-queue-preinit-srs to t if you want it)
-  (when (boundp 'org-queue-preinit-srs)
-    (when org-queue-preinit-srs
-      (message "Step 4: Pre-initializing SRS system...")
-      (unless my-android-p
-	(condition-case err
-            (progn
-              (my-srs-quit-reviews)
-              (let ((temp-frame (make-frame '((visibility . nil) (width . 80) (height . 24)))))
-		(unwind-protect
-                    (with-selected-frame temp-frame
-                      (cl-letf (((symbol-function 'read-key) (lambda (&rest _) 32)))
-			(ignore-errors (my-srs-start-reviews)))
-                      (my-srs-quit-reviews))
-                  (delete-frame temp-frame))))
-          (error
-           (message "org-queue: SRS pre-init disabled due to error: %s"
-                    (error-message-string err)))))))
-
-  (message "✓ Automatic task setup completed successfully.")
-
-  ;; Schedule task display
+  ;; Schedule task display (no SRS auto-start here)
   (run-with-idle-timer 1.5 nil
                        (lambda ()
                          (condition-case err
@@ -949,11 +895,24 @@ Also limits visible queue buffers around the current task."
                                    (my-show-current-flag-status))
                                (message "Task list empty or invalid index"))
                            (error
-                            (message "Error preparing task display: %s" (error-message-string err))))))
-  (message "Task display scheduled."))
+                            (message "Error preparing task display: %s" (error-message-string err)))))))
 
-;; Add startup hook
-(add-hook 'emacs-startup-hook #'my-auto-task-setup 100)
+;; Automatic startup
+(add-hook 'emacs-startup-hook #'org-queue-startup 100)
+
+(defun org-queue-maintenance()
+  "Manually do the minimal maintenance and rebuild the queue, then show current task (no SRS auto-start)."
+  (interactive)
+  (my-org-id-initialize-id-locations)
+  (save-some-buffers t)
+  (my-auto-postpone-overdue-tasks)
+  (my-postpone-duplicate-priority-tasks)
+  (my-get-outstanding-tasks)
+  (setq my-outstanding-tasks-index 0)
+  (my-save-outstanding-tasks-to-file)
+  (delete-other-windows)
+  (my-show-current-outstanding-task-no-srs t)
+  (message "org-queue: quick maintenance complete."))
 
 (provide 'org-queue-tasks)
 ;;; org-queue-tasks.el ends here
