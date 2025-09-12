@@ -8,6 +8,7 @@
 (require 'org-queue-schedule)
 (require 'org-queue-tasks)
 (require 'org-queue-display)
+(require 'org-queue-chooser)
 (require 'org-queue-gptel-bridge)
 
 ;; Global keymap

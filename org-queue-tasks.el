@@ -7,6 +7,11 @@
 (require 'org-queue-config)
 (require 'org-queue-utils)
 (require 'org-queue-srs-bridge)
+(require 'seq)
+(require 'subr-x)
+
+(declare-function my-display-task-at-marker "org-queue-display" (task-or-marker))
+(declare-function my-pulse-highlight-current-line "org-queue-display" (&optional time))
 
 (defcustom my-queue-visible-buffer-count 8
   "How many distinct queue buffers to keep readily visible (not buried).
