@@ -1,11 +1,14 @@
 ;;; org-queue-config.el --- Configuration and utilities for org-queue -*- lexical-binding: t -*-
 ;;; Code:
 (require 'org-agenda)
+(setq org-agenda-skip-unavailable-files t)
 (require 'cl-lib)  ;; Required for cl-find-if and cl-remove-if-not
+
 (defgroup org-queue nil
   "Task queue management for Org mode."
   :group 'org
   :prefix "org-queue-")
+
 ;; Disable large file warning
 (setq large-file-warning-threshold nil)
 (random t)
@@ -13,14 +16,17 @@
   "If non-nil, print progress messages."
   :type 'boolean
   :group 'org-queue)
+
 ;;; System Detection
 (defvar my-android-p 
   (eq system-type 'android)
   "Non-nil if running on Android.")
+
 ;;; Priority Configuration
 (setq org-priority-highest 1)
 (setq org-priority-default 32)
 (setq org-priority-lowest 64)
+
 (defcustom my-priority-ranges
   '((0 . (1 . 2))
     (1 . (2 . 5))
@@ -54,16 +60,31 @@ and the cdr is a cons cell representing the minimum and maximum priority values.
     (setq org-agenda-files 
           (directory-files-recursively org-queue-directory "\\.org$"))))
 
+(defun org-queue--prune-agenda-files ()
+  "Remove non-existent files from `org-agenda-files` (in-place, no prompts)."
+  (let* ((expanded (org-agenda-files)) ; normalized list of files
+         (existing (seq-filter #'file-exists-p expanded)))
+    (when (not (equal expanded existing))
+      (setq org-agenda-files existing)
+      (message "org-agenda: removed %d missing file(s)"
+               (- (length expanded) (length existing))))))
+
 ;; Auto-setup when loaded
 (org-queue-setup-agenda-files)
 
 ;; Hook to refresh on startup
 (add-hook 'after-init-hook #'org-queue-setup-agenda-files)
+(add-hook 'after-init-hook #'org-queue--prune-agenda-files)
+
+;; Always prune right before opening any agenda view
+(dolist (fn '(org-agenda org-todo-list org-tags-view org-search-view))
+  (advice-add fn :before (lambda (&rest _) (org-queue--prune-agenda-files))))
 
 ;;; Utility Functions
 (defun random-float (min max)
   "Return a random float between MIN and MAX."
   (+ min (* (- max min) (/ (float (random 1000000)) 1000000))))
+
 ;;; Priority Helper Functions
 (defun my-find-priority-range (priority)
   "Find the range identifier for a given PRIORITY."
@@ -76,6 +97,7 @@ and the cdr is a cons cell representing the minimum and maximum priority values.
 	    my-priority-ranges)))
     (when range-found
 	(car range-found))))
+
 (defun my-get-current-priority-range ()
   "Determine the priority range of the current heading.
 Returns the range identifier if priority is set; otherwise, nil."
