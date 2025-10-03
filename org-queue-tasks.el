@@ -76,12 +76,12 @@ only buries the ones that should not be in the immediate working set."
   "Whether org-id locations DB has been fully initialized this session.")
 
 (defun my-org-id-initialize-id-locations ()
-  "Scan all agenda files once to build the org-id cache."
+  "Scan all org-queue files once to build the org-id cache."
   (unless my-org-id-locations-initialized
     (setq my-org-id-locations-initialized t)
     (when (fboundp 'org-id-update-id-locations)
       (ignore-errors
-        (org-id-update-id-locations (org-agenda-files))))))
+        (org-id-update-id-locations (org-queue-file-list))))))
 
 ;; Task identification functions
 (defun my-is-overdue-task ()
@@ -125,13 +125,6 @@ DONE tasks are excluded elsewhere."
   (let ((scheduled-time (org-get-scheduled-time nil)))
     (if scheduled-time
 	  (org-end-of-subtree t))))
-
-;; Set up agenda sorting strategy
-(setq org-agenda-sorting-strategy
-	'((agenda priority-down category-down)
-	  (todo priority-down)
-	  (tags priority-down)
-	  (search category-keep)))
 
 ;; Marker extraction and safety functions
 (defun my-extract-marker (task-or-marker)
@@ -349,7 +342,7 @@ Dedupes by ID while reading; dedupes result list; rewrites cache deduped."
 (defun my-get-outstanding-tasks ()
   "Populate task list with metadata for stable tracking."
   (setq my-outstanding-tasks-list nil)
-  (org-map-entries
+  (org-queue-map-entries
    (lambda ()
      (when (and (my-is-outstanding-task)
                 (not (my-is-done-task))
@@ -373,7 +366,7 @@ Dedupes by ID while reading; dedupes result list; rewrites cache deduped."
                   heading todo-state is-todo priority)
          (let ((sort-key (list (if is-todo 0 1) priority)))
            (push (cons sort-key task-data) my-outstanding-tasks-list)))))
-   nil 'agenda)
+   nil)
   ;; Sort by two-tier system: TODO status first, then priority
   (setq my-outstanding-tasks-list
         (mapcar #'cdr
@@ -509,14 +502,14 @@ queue buffers around the new position."
         (total-overdue 0))
     
     ;; First pass: count total overdue TODO tasks
-    (org-map-entries
+    (org-queue-map-entries
      (lambda ()
        (when (and (my-is-overdue-task) (my-is-todo-task))  ; Add TODO check
          (setq total-overdue (1+ total-overdue))))
-     nil 'agenda)
+     nil)
     
     ;; Second pass: process overdue TODO tasks
-    (org-map-entries
+    (org-queue-map-entries
      (lambda ()
        (when (and (my-is-overdue-task) (my-is-todo-task))  ; Add TODO check
          (my-ensure-priority-set)
@@ -525,132 +518,93 @@ queue buffers around the new position."
          
          (when (= (mod processed-count 10) 0)
            (message "Processed %d/%d overdue TODO tasks..." processed-count total-overdue))))
-     nil 'agenda)
+     nil)
     
     (save-some-buffers t)
     (message "✓ Auto-postponed %d overdue TODO tasks." processed-count)))
 
 (defun my-postpone-duplicate-priority-tasks ()
-  "Postpone duplicate outstanding tasks within the same file that share the same priority.
-For each file, only one task per priority level remains as outstanding. 
-All other tasks with the same priority in the same file are postponed.
-Tasks across different files or with different priorities within the same file are unaffected."
+  "In each file, keep only one outstanding task per numeric priority; postpone duplicates."
   (interactive)
-  ;; Ensure we are operating on agenda files
-  (let ((agenda-files (org-agenda-files)))
-    (unless agenda-files
-	(user-error "No agenda files found. Please set `org-agenda-files` accordingly."))
-    (let ((seen-tasks (make-hash-table :test 'equal))) ; Hash table to track seen (file, priority) pairs
-	;; Iterate over each agenda file
-	(dolist (file agenda-files)
-	  (with-current-buffer (find-file-noselect file)
-	    (save-excursion
-	      (goto-char (point-min))
-	      ;; Iterate over all headings in the current file
-	      (org-map-entries
-	       (lambda ()
-		 (when (my-is-outstanding-task)
-		   (let* ((priority-string (org-entry-get nil "PRIORITY"))
-			  (priority (if priority-string
-					(string-to-number priority-string)
-				      ;; If priority not set, use default
-				      org-priority-default))
-			  (key (cons (file-truename file) priority)))
-		     (if (gethash key seen-tasks)
-			 ;; Duplicate found, postpone it
-			 (progn
-			   (my-postpone-schedule)
-			   (message "Postponed duplicate task with priority %d in file %s." priority file))
-		       ;; First occurrence, mark as seen
-		       (puthash key t seen-tasks))))))
-	       nil 'file))))
-    (message "Duplicate outstanding tasks have been processed.")))
+  (let ((files (org-queue-file-list)))
+    (unless files
+      (user-error "No Org files for org-queue. Configure `org-queue-directory` or `org-queue-file-roots`."))
+    (let ((seen (make-hash-table :test 'equal)))
+      (dolist (file files)
+        (when (file-exists-p file)
+          (with-current-buffer (find-file-noselect file)
+            (save-excursion
+              (org-map-entries
+               (lambda ()
+                 (when (my-is-outstanding-task)
+                   (let* ((pstr (org-entry-get nil "PRIORITY"))
+                          (prio (if pstr (string-to-number pstr) org-priority-default))
+                          (key (cons (file-truename file) prio)))
+                     (if (gethash key seen)
+                         (progn
+                           (my-postpone-schedule)
+                           (message "Postponed duplicate priority %d in %s"
+                                    prio (file-name-nondirectory file)))
+                       (puthash key t seen)))))
+               nil 'file))))))
+    (save-some-buffers t)
+    (message "Processed duplicate outstanding priorities.")))
 
 (defun my-enforce-priority-constraints ()
-  "Enforce hierarchical task constraints where higher priorities dictate lower priority limits.
-Processes priorities in descending order (priority 1 → 64) using FIFO task postponement."
+  "Enforce monotone cap: count of lower priorities must not exceed any higher priority count.
+Process priorities from 1 to 64; postpone overflow FIFO within each priority."
   (interactive)
-  (let* ((agenda-files (org-agenda-files))
-	  (priority-counts (make-hash-table :test 'equal))
-	  (tasks-by-priority (make-hash-table :test 'equal)))
+  (let* ((files (org-queue-file-list))
+         (priority-counts (make-hash-table :test 'equal))
+         (tasks-by-priority (make-hash-table :test 'equal)))
+    (unless files
+      (user-error "No Org files for org-queue. Configure `org-queue-directory` or `org-queue-file-roots`."))
+    ;; Collect
+    (dolist (file files)
+      (when (file-exists-p file)
+        (with-current-buffer (find-file-noselect file)
+          (save-excursion
+            (org-map-entries
+             (lambda ()
+               (when (my-is-outstanding-task)
+                 (let* ((pstr (org-entry-get nil "PRIORITY"))
+                        (prio (if pstr (string-to-number pstr) org-priority-default))
+                        (entry (cons (buffer-file-name) (point))))
+                   (puthash prio
+                            (nconc (gethash prio tasks-by-priority) (list entry))
+                            tasks-by-priority)
+                   (puthash prio
+                            (1+ (gethash prio priority-counts 0))
+                            priority-counts))))
+             nil 'file)))))
 
-    ;; ==== PHASE 1: Data Collection ====
-    (dolist (file agenda-files)
-    (with-current-buffer (find-file-noselect file)
-	(save-excursion
-	  (goto-char (point-min))
-	  ;; Process tasks from top to bottom (earlier positions first)
-	  (org-map-entries
-	    (lambda ()
-	      (when (my-is-outstanding-task)
-		(let* ((priority-str (org-entry-get nil "PRIORITY"))
-		      (priority (if priority-str 
-				  (string-to-number priority-str)
-				  org-priority-default))
-		      (task-entry (cons (buffer-file-name) (point))))
-		  ;; Store tasks in reverse order to facilitate O(1) pop-front
-		  (puthash priority 
-			  (nconc (gethash priority tasks-by-priority) (list task-entry))
-			  tasks-by-priority)
-		  (puthash priority 
-			  (1+ (gethash priority priority-counts 0))
-			  priority-counts))))
-	    nil 'file))))
-
-    ;; ==== PHASE 2: Priority Order Setup ====
-    ;; 1. Get sorted priorities 1 (highest) to 64 (lowest)
-    (let* ((sorted-priorities (sort (hash-table-keys priority-counts) #'<))
-	    (current-max nil)
-	    highest-processed)
-
-	;; Check if there are any priorities to process
-	(if (zerop (length sorted-priorities))
-	    (message "[COMPLETE] No outstanding tasks found - no constraints to enforce")
-	  
-	  ;; ==== PHASE 3: Constraint Processing ====
-	  ;; Process highest (1 → 64) priorities first
-	  (dolist (prio sorted-priorities)
-	    ;; No reverse needed since (sort '<) returns 1,2,...,64
-	    (let ((count (gethash prio priority-counts 0))
-		  (tasks (gethash prio tasks-by-priority '())))
-	      (cond
-		((zerop count) ; Skip empty priorities
-		nil)
-
-		;; Set initial constraint from highest priority with tasks
-		((null current-max)
-		(setq current-max count
-		      highest-processed prio)
-		(message "[CONSTRAINT] Priority %d = new global max: %d" 
-			prio current-max))
-
-		;; Enforce constraints for lower priorities
-		((> count current-max)
-		(let ((excess (- count current-max)))
-		  (message "[ENFORCE] Priority %d overflow (%d > max %d). Postponing %d tasks..."
-			  prio count current-max excess)
-		  ;; Process oldest tasks first (FIFO through list order)
-		  (dotimes (_ excess)
-		    (when-let ((task (pop tasks))) 
-		      (let ((file (car task))
-			    (pos (cdr task)))
-			;; Postpone logic
-			(with-current-buffer (find-file-noselect file)
-			  (goto-char pos)
-			  (my-postpone-schedule)
-			  (message "Postponed priority %d task: %s" prio 
-				  (file-name-nondirectory file))))))
-		  (puthash prio tasks tasks-by-priority)))
-		
-		;; Update current-max for subsequent priorities
-		(t
-		(setq current-max (min current-max count))))))
-
-	  ;; ==== PHASE 4: Cleanup ====
-	  (save-some-buffers t)
-	  (message "[COMPLETE] Constrained %d priorities. Final max: %d"
-		  (hash-table-count priority-counts)
-		  (or current-max 0))))))
+    (let* ((sorted (sort (hash-table-keys priority-counts) #'<))
+           (current-max nil))
+      (if (zerop (length sorted))
+          (message "[COMPLETE] No outstanding tasks found")
+        (dolist (prio sorted)
+          (let ((count (gethash prio priority-counts 0))
+                (fifo  (copy-sequence (gethash prio tasks-by-priority '()))))
+            (cond
+             ((zerop count) nil)
+             ((null current-max)
+              (setq current-max count)
+              (message "[CONSTRAINT] Pri %d sets cap to %d" prio current-max))
+             ((> count current-max)
+              (let ((excess (- count current-max)))
+                (message "[ENFORCE] Pri %d overflow (%d > %d). Postponing %d..."
+                         prio count current-max excess)
+                (dotimes (_ excess)
+                  (when-let ((entry (pop fifo)))
+                    (let ((file (car entry)) (pos (cdr entry)))
+                      (with-current-buffer (find-file-noselect file)
+                        (goto-char pos)
+                        (my-postpone-schedule))))))))
+            (puthash prio fifo tasks-by-priority))
+          (setq current-max (min current-max (gethash prio priority-counts 0)))))
+      (save-some-buffers t)
+      (message "[COMPLETE] Constraint enforcement done; final cap %s"
+               (or current-max 0)))))
 
 (defun my-postpone-consecutive-same-file-tasks ()
   "Postpone consecutive tasks from the same file, keeping only the first.
@@ -922,7 +876,7 @@ Usage
         (when (require 'org-roam nil t)
           (let ((warning-minimum-level :error))
             (org-roam-db-autosync-mode 1)
-            (ignore-errors (org-id-update-id-locations (org-agenda-files)))))
+            (ignore-errors (org-id-update-id-locations (org-queue-file-list)))))
 
         ;; Ensure base invariants
         (when (fboundp 'my-ensure-priorities-and-schedules-for-all-headings)

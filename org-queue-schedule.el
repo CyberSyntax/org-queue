@@ -216,47 +216,46 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
     (append vec nil)))
 
 (defun my-auto-advance-schedules (&optional power)
-  "Advance 2^POWER random tasks (default:64) with proper loop control."
+  "Advance 2^POWER random tasks (default: 64) across org-queue files."
   (interactive "P")
   (let* ((n (or power 6))
-	   (limit (expt 2 n))
-	   (candidates (org-map-entries #'point-marker nil 'agenda))
-	   (shuffled (my-custom-shuffle candidates))
-	   (total (length shuffled))
-	   (processed 0)
-	   (count 0))
+         (limit (expt 2 n))
+         (candidates (org-queue-collect-markers))
+         (shuffled (my-custom-shuffle candidates))
+         (total (length shuffled))
+         (processed 0)
+         (count 0))
     (save-some-buffers t)
     (catch 'break
-	(dolist (m shuffled)
-	  (when (>= count limit) (throw 'break nil))
-	  (setq count (1+ count))
-	  (org-with-point-at m
-	    (when (my-advance-schedule)
-	      (setq processed (1+ processed))))))
+      (dolist (m shuffled)
+        (when (>= count limit) (throw 'break nil))
+        (setq count (1+ count))
+        (org-with-point-at m
+          (when (my-advance-schedule)
+            (setq processed (1+ processed))))))
     (save-some-buffers t)
     (message "Advanced %d/%d (2^%d=%d)" processed total n limit)))
 
 (defun my-auto-postpone-schedules (&optional power)
-  "Postpone 2^POWER random tasks (default:64) with safe iteration."
+  "Postpone 2^POWER random tasks (default: 64) across org-queue files."
   (interactive "P")
   (let* ((n (or power 6))
-	   (limit (expt 2 n))
-	   (candidates (org-map-entries #'point-marker nil 'agenda))
-	   (shuffled (my-custom-shuffle candidates))
-	   (total (length shuffled))
-	   (processed 0)
-	   (count 0))
-    (save-excursion
-	(save-some-buffers t)
-	(catch 'break
-	  (dolist (m shuffled)
-	    (when (>= count limit) (throw 'break nil))
-	    (setq count (1+ count))
-	    (org-with-point-at m
-	      (when (my-postpone-schedule)
-		(setq processed (1+ processed))))))
-	(save-some-buffers t)
-	(message "Postponed %d/%d (2^%d=%d)" processed total n limit))))
+         (limit (expt 2 n))
+         (candidates (org-queue-collect-markers))
+         (shuffled (my-custom-shuffle candidates))
+         (total (length shuffled))
+         (processed 0)
+         (count 0))
+    (save-some-buffers t)
+    (catch 'break
+      (dolist (m shuffled)
+        (when (>= count limit) (throw 'break nil))
+        (setq count (1+ count))
+        (org-with-point-at m
+          (when (my-postpone-schedule)
+            (setq processed (1+ processed))))))
+    (save-some-buffers t)
+    (message "Postponed %d/%d (2^%d=%d)" processed total n limit)))
 
 (defun my-schedule-command (&optional months)
   "Interactive command that schedules MONTHS months in the future and prompts for priority."
@@ -286,7 +285,7 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
       ;; First pass: Count total entries and incomplete entries
       (let ((total-entries 0)
             (incomplete-entries 0))
-        (org-map-entries
+        (org-queue-map-entries
          (lambda ()
            (setq total-entries (1+ total-entries))
            ;; Skip DONE tasks entirely
@@ -318,11 +317,11 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
                   (t
                    ;; For non-SRS entries, count if missing either
                    (setq incomplete-entries (1+ incomplete-entries))))))))
-         nil 'agenda)
+         nil)
 
         ;; Process entries if there are incomplete ones
         (when (> incomplete-entries 0)
-          (org-map-entries
+          (org-queue-map-entries
            (lambda ()
              ;; Skip DONE tasks entirely
              (unless (my-is-done-task)
@@ -368,7 +367,7 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
                        (error
                         (message "Error processing entry: %s" 
                                  (error-message-string err))))))))))
-           nil 'agenda))
+           nil))
 
         ;; Set all-complete if no incomplete entries found
         (setq all-complete (zerop incomplete-entries)))

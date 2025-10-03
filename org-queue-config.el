@@ -1,8 +1,7 @@
 ;;; org-queue-config.el --- Configuration and utilities for org-queue -*- lexical-binding: t -*-
 ;;; Code:
-(require 'org-agenda)
-(setq org-agenda-skip-unavailable-files t)
 (require 'cl-lib)  ;; Required for cl-find-if and cl-remove-if-not
+(eval-when-compile (require 'org))  ;; silence compiler; no agenda dependency
 
 (defgroup org-queue nil
   "Task queue management for Org mode."
@@ -44,41 +43,28 @@ and the cdr is a cons cell representing the minimum and maximum priority values.
   :type '(alist :key-type integer :value-type (cons integer integer))
   :group 'org-queue)
 
-;;; Directory Configuration - ADD THIS NEW SECTION HERE
-(defcustom org-queue-directory
-  (if (eq system-type 'android)
-      "/storage/emulated/0/Documents/org/"
-    (expand-file-name "~/org/"))
-  "Base directory for org-queue files (searched recursively)."
-  :type 'directory
+;;; Directory Configuration
+(defcustom org-queue-directory nil
+  "Base directory for org-queue files (searched recursively). Set this or `org-queue-file-roots`."
+  :type '(choice (const :tag "Unset" nil) directory)
   :group 'org-queue)
 
-(defun org-queue-setup-agenda-files ()
-  "Set org-agenda-files to all .org files found recursively in org-queue-directory."
-  (when (and org-queue-directory 
-             (file-directory-p org-queue-directory))
-    (setq org-agenda-files 
-          (directory-files-recursively org-queue-directory "\\.org$"))))
-
-(defun org-queue--prune-agenda-files ()
-  "Remove non-existent files from `org-agenda-files` (in-place, no prompts)."
-  (let* ((expanded (org-agenda-files)) ; normalized list of files
-         (existing (seq-filter #'file-exists-p expanded)))
-    (when (not (equal expanded existing))
-      (setq org-agenda-files existing)
-      (message "org-agenda: removed %d missing file(s)"
-               (- (length expanded) (length existing))))))
-
-;; Auto-setup when loaded
-(org-queue-setup-agenda-files)
-
-;; Hook to refresh on startup
-(add-hook 'after-init-hook #'org-queue-setup-agenda-files)
-(add-hook 'after-init-hook #'org-queue--prune-agenda-files)
-
-;; Always prune right before opening any agenda view
-(dolist (fn '(org-agenda org-todo-list org-tags-view org-search-view))
-  (advice-add fn :before (lambda (&rest _) (org-queue--prune-agenda-files))))
+;; === File indexing ===
+(defun org-queue-reindex-files (&optional silent)
+  "Return the absolute list of .org files scanned by org-queue.
+It searches recursively under `org-queue-directory`.
+Returns an empty list if the directory is unset or does not exist.
+Does not read or modify `org-agenda-files`."
+  (let* ((root (and org-queue-directory
+                    (file-directory-p org-queue-directory)
+                    (file-truename org-queue-directory)))
+         (files (if root
+                    (mapcar #'file-truename
+                            (directory-files-recursively root "\\.org\\'"))
+                  '())))
+    (unless silent
+      (message "org-queue: indexed %d file(s)" (length files)))
+    files))
 
 ;;; Utility Functions
 (defun random-float (min max)

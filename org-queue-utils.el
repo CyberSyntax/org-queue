@@ -4,6 +4,24 @@
 
 (require 'org-queue-config)
 
+;; Map helpers that never rely on 'agenda
+(defun org-queue-file-list ()
+  "Always reindex and return org-queue's file roster (absolute paths)."
+  (org-queue-reindex-files t))
+
+(defun org-queue-map-entries (fn &optional matcher)
+  "Run FN on each entry matching MATCHER across org-queue files."
+  (dolist (file (org-queue-file-list))
+    (when (file-exists-p file)
+      (with-current-buffer (find-file-noselect file)
+        (org-map-entries fn matcher 'file)))))
+
+(defun org-queue-collect-markers (&optional matcher)
+  "Collect heading markers across org-queue files."
+  (let (xs)
+    (org-queue-map-entries (lambda () (push (point-marker) xs)) matcher)
+    (nreverse xs)))
+
 ;;; Task State Functions
 
 (defun my-is-todo-task ()
@@ -43,13 +61,13 @@
     
     (save-some-buffers t)
     
-    (org-map-entries
+    (org-queue-map-entries
      (lambda ()
        (when (my-is-done-task)
          (setq total-done (1+ total-done))
          (when (my-cleanup-done-task)
            (setq cleaned-count (1+ cleaned-count)))))
-     nil 'agenda)
+     nil)
     
     (save-some-buffers t)
     (message "✓ Cleaned %d of %d DONE tasks (removed SCHEDULED/PRIORITY)" 
