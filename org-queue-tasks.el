@@ -661,6 +661,23 @@ Saves buffers and regenerates the task list for consistency."
   (my-reset-outstanding-tasks-index)  ;; Call function to reset tasks index
   (my-show-current-outstanding-task))  ;; Call function to show the first/current task
 
+(defun org-queue-hard-refresh ()
+  "Force reindex + rebuild the queue, refresh chooser if visible, and show current task."
+  (interactive)
+  (org-queue-reindex-files)             ;; optional: log size
+  (my-get-outstanding-tasks)            ;; rebuild from files
+  (my-save-outstanding-tasks-to-file)   ;; update cache
+  ;; refresh chooser buffers if open
+  (dolist (b (list "*Org Queue*" "*Org Queue (Subset)*"))
+    (when (get-buffer b)
+      (with-current-buffer b
+        (when (derived-mode-p 'org-queue-chooser-mode)
+          (ignore-errors (org-queue-chooser-refresh))))))
+  ;; show current task (no SRS restart)
+  (my-show-current-outstanding-task-no-srs t)
+  (message "org-queue: hard refresh complete (%d task(s))"
+           (length my-outstanding-tasks-list)))
+
 (defvar my-queue--orchestrating nil
   "Prevent re-entrancy while orchestrating SRS/Anki.")
 

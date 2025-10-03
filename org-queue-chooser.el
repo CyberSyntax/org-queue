@@ -129,6 +129,7 @@
     (define-key map (kbd "C-c t") #'org-queue-chooser-visit-in-new-tab-foreground)
     ;; Refresh
     (define-key map (kbd "g") #'org-queue-chooser-refresh)
+    (define-key map (kbd "G") #'org-queue-chooser-hard-refresh)
     ;; Open chooser in its own tab (foreground)
     (define-key map (kbd "C-c T") #'org-queue-chooser-open-in-tab)
     ;; Reorder tasks (global queue only)
@@ -455,6 +456,26 @@ This version is deterministic and guarantees exactly WIDTH columns output."
   (let ((inhibit-read-only t))
     (setq tabulated-list-entries (org-queue-chooser--entries))
     (tabulated-list-print t)))
+
+(defun org-queue-chooser-hard-refresh ()
+  "Force reindex + rebuild the global queue, then refresh chooser.
+In subset mode, only refresh the subset view (no global rebuild)."
+  (interactive)
+  (if org-queue-chooser--subset-p
+      (progn
+        (org-queue-chooser-refresh)
+        (message "Subset view: refreshed entries (global hard refresh not applied)."))
+    ;; Global queue: reindex + rebuild + refresh
+    (org-queue-reindex-files)            ;; optional: log how many files found
+    (my-get-outstanding-tasks)           ;; rebuild queue from files
+    (my-save-outstanding-tasks-to-file)  ;; update cache
+    (setq org-queue-chooser--tasks nil
+          org-queue-chooser--subset-p nil
+          org-queue-chooser--marks (make-hash-table :test 'eql))
+    (org-queue-chooser-refresh)
+    (org-queue-chooser--goto-index my-outstanding-tasks-index)
+    (message "Queue reindexed and rebuilt: %d tasks"
+             (length my-outstanding-tasks-list))))
 
 (defun org-queue-chooser--goto-index (idx)
   "Place point on the row with index IDX (relative to current task list)."

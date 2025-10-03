@@ -27,6 +27,7 @@
                    ("q" org-queue-open-chooser-from-buffer)
                    ("r" my-remove-current-task)
                    ("R" my-reset-and-show-current-outstanding-task)
+                   ("G" org-queue-hard-refresh)
                    ("i" my-increase-priority-range)
                    ("d" my-decrease-priority-range)
                    ("D" org-demote-subtree)
