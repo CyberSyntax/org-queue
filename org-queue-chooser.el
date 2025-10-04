@@ -338,33 +338,34 @@ This version is deterministic and guarantees exactly WIDTH columns output."
     (string-trim txt)))
 
 (defun org-queue-chooser--gather-preview (task)
-  "One-line preview for TASK body only (no children/meta)."
+  "One-line preview for TASK body only (no children/meta), without modifying buffers."
   (let* ((m (my-extract-marker task))
          (buf (and (markerp m) (marker-buffer m))))
     (when (and (markerp m) buf (buffer-live-p buf))
       (with-current-buffer buf
-        (save-excursion
-          (goto-char (marker-position m))
-          (org-back-to-heading t)
-          (let* ((start (progn (forward-line 1) (point)))
-                 (start (progn
-                          (when (fboundp 'org-end-of-meta-data)
-                            (goto-char start)
-                            (org-end-of-meta-data t))
-                          (point)))
-                 (end (save-excursion
-                        (or (and (outline-next-heading) (point)) (point-max)))))
-            (save-restriction
-              (narrow-to-region start end)
-              (goto-char (point-min))
-              (while (re-search-forward "^[ \t]*#\\+.*$" nil t)
-                (replace-match "" t t))
-              (goto-char (point-min))
-              (let* ((raw (buffer-substring-no-properties
-                           (point-min)
-                           (min (point-max) (+ (point-min) 400))))
-                     (plain (org-queue-chooser--org-to-plain raw)))
-                (string-trim (replace-regexp-in-string "[ \t\n\r]+" " " plain))))))))))
+        (save-restriction
+          (widen)
+          (save-excursion
+            (goto-char (marker-position m))
+            (org-back-to-heading t)
+            (let* ((start (progn (forward-line 1) (point)))
+                   (start (progn
+                            (when (fboundp 'org-end-of-meta-data)
+                              (goto-char start)
+                              (org-end-of-meta-data t))
+                            (point)))
+                   (end (save-excursion
+                          (or (and (outline-next-heading) (point)) (point-max))))
+                   (raw (buffer-substring-no-properties
+                         start (min end (+ start 400))))
+                   ;; Strip #+ lines in string space only
+                   (raw-no-meta (string-join
+                                 (cl-remove-if
+                                  (lambda (l) (string-match-p "^\\s-*#\\+" l))
+                                  (split-string raw "\n"))
+                                 " "))
+                   (plain (org-queue-chooser--org-to-plain raw-no-meta)))
+              (string-trim (replace-regexp-in-string "[ \t\n\r]+" " " plain)))))))))
 
 (defun org-queue-chooser--scheduled-string (task)
   "Return YYYY-MM-DD or empty."
@@ -372,10 +373,12 @@ This version is deterministic and guarantees exactly WIDTH columns output."
          (buf (and (markerp m) (marker-buffer m))))
     (when (and (markerp m) buf (buffer-live-p buf))
       (with-current-buffer buf
-        (save-excursion
-          (goto-char (marker-position m))
-          (let ((tm (org-get-scheduled-time nil)))
-            (if tm (format-time-string "%Y-%m-%d" tm) "")))))))
+        (save-restriction
+          (widen)
+          (save-excursion
+            (goto-char (marker-position m))
+            (let ((tm (org-get-scheduled-time nil)))
+              (if tm (format-time-string "%Y-%m-%d" tm) ""))))))))
 
 (defun org-queue-chooser--current-index ()
   (tabulated-list-get-id))
@@ -412,14 +415,17 @@ This version is deterministic and guarantees exactly WIDTH columns output."
       (let* ((task (nth i lst))
              (m (my-extract-marker task))
              (buf (and (markerp m) (marker-buffer m)))
-             (title-raw (with-current-buffer (or buf (current-buffer))
-                          (save-excursion
-                            (when (markerp m)
-                              (goto-char (marker-position m))
-                              (org-get-heading t t t t)))))
-             ;; ASCII-sanitize all text fields
+             ;; Prefer stored heading; fallback to live heading widened
+             (title-raw (or (plist-get task :heading)
+                            (when (and (markerp m) buf (buffer-live-p buf))
+                              (with-current-buffer buf
+                                (save-restriction
+                                  (widen)
+                                  (save-excursion
+                                    (goto-char (marker-position m))
+                                    (org-get-heading t t t t)))))))
              (title (org-queue-chooser--asciiize
-                     (org-queue-chooser--heading-as-plain title-raw)))
+                     (org-queue-chooser--heading-as-plain (or title-raw ""))))
              (file (plist-get task :file))
              (file-short (org-queue-chooser--asciiize
                           (and file (file-name-nondirectory file))))
@@ -431,7 +437,6 @@ This version is deterministic and guarantees exactly WIDTH columns output."
                               (my-get-raw-priority-value)))))
              (sched (org-queue-chooser--scheduled-string task))
              (marked (gethash i org-queue-chooser--marks))
-             ;; Fixed-width columns
              (mark-col (org-queue-chooser--truncate-pad (if marked "*" " ") org-queue-chooser-mark-width))
              (idx-str   (org-queue-chooser--rjust (format "%d" (1+ i)) org-queue-chooser-index-width))
              (prio-str  (org-queue-chooser--rjust (number-to-string (or prio 0)) org-queue-chooser-priority-width))
@@ -571,22 +576,16 @@ In subset mode, only refresh the subset view (no global rebuild)."
   "Return a meaningful tab name for queue index IDX."
   (let* ((lst (org-queue-chooser--task-list))
          (task (and (numberp idx) (nth idx lst)))
-         (m (and task (my-extract-marker task)))
-         (buf (and (markerp m) (marker-buffer m)))
-         (title-raw (when (and (markerp m) buf (buffer-live-p buf))
-                      (with-current-buffer buf
-                        (save-excursion
-                          (goto-char (marker-position m))
-                          (org-get-heading t t t t)))))
+         (title-raw (plist-get task :heading))
          (title (org-queue-chooser--asciiize
-                 (org-queue-chooser--heading-as-plain title-raw)))
+                 (org-queue-chooser--heading-as-plain (or title-raw ""))))
          (file (and task (plist-get task :file)))
          (base (cond ((and title (> (length title) 0)) title)
                      (file (file-name-nondirectory file))
                      (t "Untitled"))))
     (format "#%d %s" (1+ idx)
             (if (> (length base) 40)
-                (concat (substring base 0 39) "...")  ; ASCII dots
+                (concat (substring base 0 39) "...")
               base))))
 
 (defun org-queue-chooser-visit-in-new-tab ()
@@ -707,14 +706,16 @@ In subset mode, only refresh the subset view (no global rebuild)."
          (task (nth i lst))
          (m (my-extract-marker task))
          (buf (and (markerp m) (marker-buffer m)))
-         (title-raw (with-current-buffer (or buf (current-buffer))
-                      (save-excursion
-                        (when (markerp m)
-                          (goto-char (marker-position m))
-                          (org-get-heading t t t t)))))
-         ;; ASCII-sanitize all text fields
+         (title-raw (or (plist-get task :heading)
+                        (when (and (markerp m) buf (buffer-live-p buf))
+                          (with-current-buffer buf
+                            (save-restriction
+                              (widen)
+                              (save-excursion
+                                (goto-char (marker-position m))
+                                (org-get-heading t t t t)))))))
          (title (org-queue-chooser--asciiize
-                 (org-queue-chooser--heading-as-plain title-raw)))
+                 (org-queue-chooser--heading-as-plain (or title-raw ""))))
          (file (plist-get task :file))
          (file-short (org-queue-chooser--asciiize
                       (and file (file-name-nondirectory file))))
@@ -728,7 +729,6 @@ In subset mode, only refresh the subset view (no global rebuild)."
                                (number-to-string org-priority-default)))))))
          (sched (org-queue-chooser--scheduled-string task))
          (marked (gethash i org-queue-chooser--marks))
-         ;; Fixed-width columns
          (mark-col (org-queue-chooser--truncate-pad (if marked "*" " ") org-queue-chooser-mark-width))
          (idx-str   (org-queue-chooser--rjust (format "%d" (1+ i)) org-queue-chooser-index-width))
          (prio-str  (org-queue-chooser--rjust (number-to-string (or prio 0)) org-queue-chooser-priority-width))

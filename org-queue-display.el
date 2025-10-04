@@ -46,9 +46,9 @@ Display shows \"NN. Title — file\". Titles may be \"(untitled)\"."
 
 (defun my-queue-switch-to-task ()
   "Choose a task from the queue in queue order and jump to it.
-Updates `my-outstanding-tasks-index` and shows the task."
+Uses the in-memory queue; no rebuild/resync."
   (interactive)
-  (my-ensure-synchronized-task-list)
+  (my-ensure-task-list-present)
   (if (null my-outstanding-tasks-list)
       (message "Queue is empty.")
     (let* ((pairs (my--queue-task-candidates))
@@ -315,67 +315,30 @@ Defaults to 0.2 seconds."
   (org-narrow-to-subtree)
   (org-highlight-custom-syntax))
 
-;; Add this to your Emacs config - never ask about reverting
-(setq revert-without-query '(".*"))
-
 (defun my-queue-register-visit (_buf)
   "No-op. Keep native C-x b behavior."
   nil)
 
 (defun my-display-task-at-marker (task-or-marker)
-  "Display the task at TASK-OR-MARKER with appropriate visibility settings.
-Always resolves the live position by :id if available (lazy and per-ID).
-Falls back to the existing marker only when ID cannot be resolved.
-Also registers the displayed buffer as a recent queue buffer."
-  (let* ((id   (and (listp task-or-marker) (plist-get task-or-marker :id)))
-         (file (and (listp task-or-marker) (plist-get task-or-marker :file)))
-         ;; Start with whatever we have, but we will prefer resolving by ID below.
-         (marker (my-extract-marker task-or-marker))
-         (buf    (and marker (marker-buffer marker)))
-         (pos    (and marker (marker-position marker))))
-    (when (and buf (buffer-live-p buf))
-      (condition-case err
-          (progn
-            (switch-to-buffer buf)
-            (when (buffer-file-name buf)
-              (let ((revert-without-query '(".*")))
-                (revert-buffer t t t)))
-            (widen-and-recenter)
-
-            ;; Always resolve by ID if we have one (lazy, targeted, per call)
-            (when id
-              (let ((resolved
-                     (or (org-id-find id 'marker)
-                         (progn
-                           (when (or file (buffer-file-name))
-                             (ignore-errors
-                               (org-id-update-id-locations
-                                (list (file-truename (or file (buffer-file-name)))))))
-                           (org-id-find id 'marker)))))
-                (when (markerp resolved)
-                  (setq marker resolved
-                        buf    (marker-buffer resolved)
-                        pos    (marker-position resolved))
-                  (unless (eq (current-buffer) buf)
-                    (switch-to-buffer buf)))))
-
-            ;; Final position fallback if ID was missing or not resolved
-            (setq pos (or pos (and (markerp marker) (marker-position marker)) (point-min)))
-            (goto-char pos)
-            ;; Make sure we are on the heading before narrowing/revealing
-            (when (derived-mode-p 'org-mode)
-              (org-back-to-heading t))
-
-            (org-narrow-to-subtree)
-            (org-overview)
-            (org-reveal t)
-            (org-show-entry)
-            (org-show-children)
-
-            (when (eq buf (window-buffer (selected-window)))
-              (recenter)))
-        (error
-         (message "Error displaying task: %s" (error-message-string err)))))))
+  "Display TASK-OR-MARKER robustly. Prefer existing marker; no forced org-id re-resolve."
+  (let* ((marker (my-extract-marker task-or-marker)))
+    (unless (and (markerp marker)
+                 (marker-buffer marker)
+                 (buffer-live-p (marker-buffer marker)))
+      (user-error "Cannot resolve task marker"))
+    (let ((buf (marker-buffer marker))
+          (pos (marker-position marker)))
+      (switch-to-buffer buf)
+      (widen)
+      (goto-char pos)
+      (when (derived-mode-p 'org-mode)
+        (org-back-to-heading t)
+        (org-narrow-to-subtree)
+        (org-overview)
+        (org-reveal t)
+        (org-show-entry)
+        (org-show-children))
+      (recenter))))
 
 ;; Custom syntax highlighting functions
 (defun org-clear-custom-overlays ()

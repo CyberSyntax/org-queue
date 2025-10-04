@@ -126,20 +126,129 @@ DONE tasks are excluded elsewhere."
     (if scheduled-time
 	  (org-end-of-subtree t))))
 
+(defun my--candidates-for-id-in-file (uuid file)
+  "Return all heading markers in FILE that have :ID: UUID."
+  (when (and (stringp uuid) (> (length uuid) 0)
+             (stringp file) (file-exists-p file))
+    (with-current-buffer (find-file-noselect file)
+      (save-restriction
+        (widen)
+        (save-excursion
+          (goto-char (point-min))
+          (let ((rx (concat "^[ \t]*:ID:[ \t]*" (regexp-quote uuid) "[ \t]*$"))
+                (ms '()))
+            (while (re-search-forward rx nil t)
+              (let ((after (match-end 0)))
+                (org-back-to-heading t)
+                (push (point-marker) ms)
+                (goto-char after)))
+            (nreverse ms)))))))
+
+(defun my--task-sync-metadata (task mk)
+  "Update TASK plist with MK's current location: :marker :file :heading :pos.
+Return MK. Widen temporarily and only update :heading when the ID matches."
+  (when (and (listp task)
+             (markerp mk)
+             (marker-buffer mk)
+             (buffer-live-p (marker-buffer mk)))
+    (plist-put task :marker mk)
+    (with-current-buffer (marker-buffer mk)
+      (save-restriction
+        (widen)
+        (save-excursion
+          (goto-char (marker-position mk))
+          (let ((file (buffer-file-name))
+                (pos nil)
+                (heading nil))
+            (when (derived-mode-p 'org-mode)
+              (org-back-to-heading t)
+              (setq pos (point))
+              (setq heading (org-get-heading t t t t)))
+            (plist-put task :file file)
+            (when pos (plist-put task :pos pos))
+            ;; Only update heading if it really belongs to this task's ID.
+            (when (and (derived-mode-p 'org-mode)
+                       (plist-get task :id)
+                       (string= (or (org-entry-get nil "ID") "")
+                                (plist-get task :id)))
+              (plist-put task :heading heading)))))))
+  mk)
+
 ;; Marker extraction and safety functions
 (defun my-extract-marker (task-or-marker)
-  "Extract a live marker from TASK-OR-MARKER.
-Prefers resolving from :id (UUID) when present; falls back to :marker."
-  (cond
-   ((markerp task-or-marker)
-    task-or-marker)
-   ((and (listp task-or-marker) (plist-get task-or-marker :id))
-    (or (my-marker-from-uuid (plist-get task-or-marker :id)
-                             (plist-get task-or-marker :file))
-        (plist-get task-or-marker :marker)))
-   ((and (listp task-or-marker) (plist-get task-or-marker :marker))
-    (plist-get task-or-marker :marker))
-   (t nil)))
+  "Robustly extract a live marker from TASK-OR-MARKER.
+Strategy:
+- If a live marker is present, use it and sync plist metadata.
+- Else resolve by :id within :file, preferring matching :heading, else closest to :pos (and sync).
+- Else fallback to org-id-find (and sync).
+- Else if :file and :pos exist, jump to that position (and sync)."
+  (cl-block my-extract-marker
+    (cond
+     ;; Given a marker directly
+     ((markerp task-or-marker)
+      (when (and (marker-buffer task-or-marker)
+                 (buffer-live-p (marker-buffer task-or-marker)))
+        (cl-return-from my-extract-marker task-or-marker)))
+     ;; Given a plist task
+     ((listp task-or-marker)
+      (let* ((m (plist-get task-or-marker :marker))
+             (id (plist-get task-or-marker :id))
+             (file (plist-get task-or-marker :file))
+             (heading (plist-get task-or-marker :heading))
+             (pos0 (plist-get task-or-marker :pos)))
+        ;; Prefer existing live marker and sync
+        (when (and (markerp m)
+                   (marker-buffer m)
+                   (buffer-live-p (marker-buffer m)))
+          (cl-return-from my-extract-marker
+            (my--task-sync-metadata task-or-marker m)))
+        ;; Resolve by ID inside the recorded file (handles duplicates deterministically)
+        (when (and id file)
+          (let* ((cands (my--candidates-for-id-in-file id file))
+                 (chosen
+                  (cond
+                   ;; Prefer candidate whose heading matches stored heading
+                   ((and heading cands)
+                    (cl-find-if
+                     (lambda (mk)
+                       (with-current-buffer (marker-buffer mk)
+                         (save-excursion
+                           (goto-char (marker-position mk))
+                           (string= (or (org-get-heading t t t t) "")
+                                    (or heading "")))))
+                     cands))
+                   ;; Otherwise, choose the closest to the stored pos
+                   ((and (numberp pos0) cands)
+                    (car (sort (copy-sequence cands)
+                               (lambda (a b)
+                                 (< (abs (- (marker-position a) pos0))
+                                    (abs (- (marker-position b) pos0)))))))
+                   ;; Else first candidate in file
+                   (t (car cands)))))
+            (when (and (markerp chosen)
+                       (marker-buffer chosen)
+                       (buffer-live-p (marker-buffer chosen)))
+              (cl-return-from my-extract-marker
+                (my--task-sync-metadata task-or-marker chosen)))))
+        ;; Fallback to org-id DB if file scan failed
+        (when (and id (fboundp 'org-id-find))
+          (let ((mk (org-id-find id 'marker)))
+            (when (and (markerp mk)
+                       (marker-buffer mk)
+                       (buffer-live-p (marker-buffer mk)))
+              (cl-return-from my-extract-marker
+                (my--task-sync-metadata task-or-marker mk)))))
+        ;; Fallback to file+pos if available
+        (when (and file (file-exists-p file) (numberp pos0))
+          (with-current-buffer (find-file-noselect file)
+            (save-restriction
+              (widen)
+              (save-excursion
+                (goto-char (min (max pos0 (point-min)) (point-max)))
+                (org-back-to-heading t)
+                (cl-return-from my-extract-marker
+                  (my--task-sync-metadata task-or-marker (point-marker)))))))))
+     (t nil))))
 
 (defun my-safe-marker-buffer (task-or-marker)
   "Safely get the buffer of TASK-OR-MARKER.
@@ -162,15 +271,31 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
       (marker-position marker))))
 
 (defun my-marker-from-uuid (uuid &optional file)
-  "Return a live marker for the heading with UUID.
-If not found and FILE is non-nil, refresh IDs only for FILE and retry.
-Returns nil if still not found."
+  "Return a live marker for heading UUID, preferring FILE when given."
   (when (and (stringp uuid) (> (length uuid) 0))
-    (or (org-id-find uuid 'marker)
-        (when (and file (file-exists-p file))
-          (ignore-errors
-            (org-id-update-id-locations (list (file-truename file))))
-          (org-id-find uuid 'marker)))))
+    (let ((m (org-id-find uuid 'marker)))
+      (cond
+       ;; If the found marker is already in the right file, use it.
+       ((and m file
+             (buffer-live-p (marker-buffer m))
+             (with-current-buffer (marker-buffer m)
+               (and buffer-file-name
+                    (file-equal-p (file-truename buffer-file-name)
+                                  (file-truename file)))))
+        m)
+       ;; Otherwise, search the specific FILE directly for the ID drawer.
+       ((and file (file-exists-p file))
+        (with-current-buffer (find-file-noselect file)
+          (save-restriction
+            (widen)
+            (save-excursion
+              (goto-char (point-min))
+              (if (re-search-forward
+                   (concat "^[ \t]*:ID:[ \t]*" (regexp-quote uuid) "[ \t]*$") nil t)
+                  (progn (org-back-to-heading t) (point-marker))
+                ;; fallback to whatever org-id-find returned
+                m)))))
+       (t m)))))
 
 (defun my-position-from-uuid (uuid)
   "Return the buffer position (point) of the Org heading with UUID (its :ID:).
@@ -193,18 +318,20 @@ Also saves the index separately."
                    (buffer-live-p (marker-buffer marker))
                    (buffer-file-name (marker-buffer marker)))
           (with-current-buffer (marker-buffer marker)
-            (save-excursion
-              (goto-char (marker-position marker))
-              (let* ((id   (org-entry-get nil "ID"))
-                     (full (file-truename (buffer-file-name)))
-                     (path (if (and (boundp 'org-queue-directory)
-                                    org-queue-directory
-                                    (file-in-directory-p full org-queue-directory))
-                               (file-relative-name full org-queue-directory)
-                             full)))
-                (when (and id (not (gethash id seen)))
-                  (puthash id t seen)
-                  (push (cons path id) pairs))))))))
+            (save-restriction
+              (widen)
+              (save-excursion
+                (goto-char (marker-position marker))
+                (let* ((id   (org-entry-get nil "ID"))
+                       (full (file-truename (buffer-file-name)))
+                       (path (if (and (boundp 'org-queue-directory)
+                                      org-queue-directory
+                                      (file-in-directory-p full org-queue-directory))
+                                 (file-relative-name full org-queue-directory)
+                               full)))
+                  (when (and id (not (gethash id seen)))
+                    (puthash id t seen)
+                    (push (cons path id) pairs)))))))))
     (with-temp-file my-outstanding-tasks-cache-file
       (insert (prin1-to-string (list :date today
                                      :tasks (nreverse pairs)))))
@@ -244,7 +371,6 @@ Dedupes by ID while reading; dedupes result list; rewrites cache deduped."
               (result-list nil)
               (resolved 0)
               (unresolved 0))
-          ;; Dedup while reading pairs
           (dolist (task-pair saved-pairs)
             (let* ((stored-path (car task-pair))
                    (id (cdr task-pair)))
@@ -256,7 +382,6 @@ Dedupes by ID while reading; dedupes result list; rewrites cache deduped."
                                    (expand-file-name stored-path
                                                      (or org-queue-directory default-directory))))
                        (marker (and id (org-id-find id 'marker))))
-                  ;; Targeted refresh only if not found
                   (unless (and marker (markerp marker)
                                (marker-buffer marker)
                                (buffer-live-p (marker-buffer marker)))
@@ -274,31 +399,46 @@ Dedupes by ID while reading; dedupes result list; rewrites cache deduped."
                           (let* ((priority (my-get-raw-priority-value))
                                  (flag (my-priority-flag priority))
                                  (file (buffer-file-name))
+                                 (heading (org-get-heading t t t t))
+                                 (pos (point))
                                  (task-plist (list :id id
                                                    :marker marker
                                                    :priority priority
                                                    :flag flag
-                                                   :file file)))
+                                                   :file file
+                                                   :is-todo (my-is-todo-task)
+                                                   :heading heading
+                                                   :pos pos)))
                             (push task-plist result-list)
                             (setq resolved (1+ resolved)))))
                     (setq unresolved (1+ unresolved))
                     (message "org-queue: could not resolve ID %s (stored path: %s)" id stored-path))))))
 
           (setq my-outstanding-tasks-list (nreverse result-list))
-          ;; Dedupe final list (belt-and-suspenders)
           (my-dedupe-outstanding-tasks)
-
-	  (when org-queue-verbose
-	    (message "org-queue: resolved %d IDs, %d unresolved (from cache)" resolved unresolved))
-          ;; Fix cache on disk immediately (deduped)
+          (message "org-queue: resolved %d IDs, %d unresolved (from cache)" resolved unresolved)
           (my-save-outstanding-tasks-to-file)
 
-          ;; Load index; fallback to 0
           (unless (and (my-load-index-from-file)
                        (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
             (setq my-outstanding-tasks-index 0))
           t)))))
 
+(defun my-ensure-task-list-present ()
+  "Ensure the task list exists in memory without reordering it.
+- If the in-memory list exists, do nothing.
+- Else try to load today's cache (no rebuild).
+- If cache is missing, build once (initialization fallback). Clamp index."
+  (unless my-outstanding-tasks-list
+    (unless (my-load-outstanding-tasks-from-file)
+      (my-get-outstanding-tasks)
+      (setq my-outstanding-tasks-index 0)
+      (my-save-outstanding-tasks-to-file)))
+  (when (or (not (numberp my-outstanding-tasks-index))
+            (< my-outstanding-tasks-index 0)
+            (>= my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+    (setq my-outstanding-tasks-index 0)))
+  
 (defun my-ensure-synchronized-task-list ()
   "Ensure we have a current, synchronized task list and valid index."
   ;; Try to load from cache first
@@ -348,7 +488,6 @@ Dedupes by ID while reading; dedupes result list; rewrites cache deduped."
                 (not (my-is-done-task))
                 (not (org-srs-entry-p (point))))
        (let* ((marker (point-marker))
-              ;; Ensure ID exists so duplicates can be removed reliably
               (id (or (org-entry-get nil "ID") (org-id-get-create)))
               (priority (my-get-raw-priority-value))
               (flag (my-priority-flag priority))
@@ -356,30 +495,35 @@ Dedupes by ID while reading; dedupes result list; rewrites cache deduped."
               (heading (org-get-heading t t t t))
               (todo-state (org-get-todo-state))
               (is-todo (my-is-todo-task))
+              (pos (point))
               (task-data (list :id id
                                :marker marker
                                :priority priority
                                :flag flag
                                :file file
-                               :is-todo is-todo)))
+                               :is-todo is-todo
+                               :heading heading
+                               :pos pos)))
          (message "QUEUE BUILD: %s | TODO-state: %s | is-todo: %s | priority: %s"
                   heading todo-state is-todo priority)
          (let ((sort-key (list (if is-todo 0 1) priority)))
            (push (cons sort-key task-data) my-outstanding-tasks-list)))))
    nil)
-  ;; Sort by two-tier system: TODO status first, then priority
+  ;; Stable sort by TODO-ness, then numeric priority, tie-break by ID
   (setq my-outstanding-tasks-list
         (mapcar #'cdr
-                (sort my-outstanding-tasks-list
-                      (lambda (a b)
-                        (let ((key-a (car a))
-                              (key-b (car b)))
-                          (if (= (car key-a) (car key-b))
-                              (< (cadr key-a) (cadr key-b))
-                            (< (car key-a) (car key-b))))))))
-  ;; Deduplicate (by :id, else file@pos)
+                (cl-stable-sort
+                 my-outstanding-tasks-list
+                 (lambda (a b)
+                   (let* ((ka (car a)) (kb (car b))
+                          (todoa (car ka)) (todob (car kb))
+                          (pa (cadr ka))   (pb (cadr kb)))
+                     (cond
+                      ((/= todoa todob) (< todoa todob))
+                      ((/= pa pb)       (< pa pb))
+                      (t (string< (or (plist-get (cdr a) :id) "")
+                                  (or (plist-get (cdr b) :id) "")))))))))
   (my-dedupe-outstanding-tasks)
-  ;; Summary
   (let ((todo-count (length (cl-remove-if-not (lambda (task) (plist-get task :is-todo))
                                               my-outstanding-tasks-list)))
         (total-count (length my-outstanding-tasks-list)))
@@ -400,8 +544,7 @@ Behavior:
 - Saves the cache and index.
 - Shows the new current task if any."
   (interactive)
-  ;; Ensure we have synchronized data
-  (my-ensure-synchronized-task-list)
+  (my-ensure-task-list-present)
 
   ;; Validate
   (unless (and my-outstanding-tasks-list
@@ -700,107 +843,68 @@ Guarded by `my-queue--orchestrating' to avoid re-entrancy."
                   (error-message-string err)))))))
 
 (defun my-show-next-outstanding-task ()
-  "Show the next outstanding task with proper SRS handling.
-Also limits visible queue buffers around the new current task."
+  "Show the next outstanding task using the in-memory queue only."
   (interactive)
-
   (widen-and-recenter)
-
-  ;; Ensure we have synchronized data
-  (my-ensure-synchronized-task-list)
-  
-  ;; If no list exists or we're at the end, refresh
-  (when (or (not my-outstanding-tasks-list)
-            (>= my-outstanding-tasks-index (length my-outstanding-tasks-list)))
-    (if my-outstanding-tasks-list
-        (setq my-outstanding-tasks-index 0)
-      (my-get-outstanding-tasks)))
-  
-  ;; Advance index with wrap
-  (when (and my-outstanding-tasks-list
-             (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
-    (setq my-outstanding-tasks-index (1+ my-outstanding-tasks-index))
-    (when (>= my-outstanding-tasks-index (length my-outstanding-tasks-list))
-      (setq my-outstanding-tasks-index 0)))
-  
-  ;; Save the updated index
-  (my-save-index-to-file)
-  
-  ;; Show the task
+  (my-ensure-task-list-present)
   (if (and my-outstanding-tasks-list
-           (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
-      (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
-        (my-display-task-at-marker task-or-marker)
-        (my-pulse-highlight-current-line)
-
-        ;; Limit visible queue buffers now that we have moved
-        (my-queue-limit-visible-buffers)
-        
-        ;; SRS handling
-        (my-queue-handle-srs-after-task-display)
-
-        (my-show-current-flag-status))
+           (> (length my-outstanding-tasks-list) 0))
+      (let* ((len (length my-outstanding-tasks-list))
+             (idx (mod (1+ my-outstanding-tasks-index) len)))
+        (setq my-outstanding-tasks-index idx)
+        (my-save-index-to-file)
+        (let ((task (nth idx my-outstanding-tasks-list)))
+          (my-display-task-at-marker task)
+          (my-pulse-highlight-current-line)
+          (my-queue-limit-visible-buffers)
+          (my-queue-handle-srs-after-task-display)
+          (my-show-current-flag-status)))
     (message "No outstanding tasks found.")))
 
 (defun my-show-previous-outstanding-task ()
-  "Show the previous outstanding task, cycling if needed.
-Also limits visible queue buffers around the new current task."
+  "Show the previous outstanding task using the in-memory queue only."
   (interactive)
-
   (widen-and-recenter)
-  (my-ensure-synchronized-task-list)
-  
-  (if my-outstanding-tasks-list
-      (progn
-        (if (<= my-outstanding-tasks-index 0)
-            (setq my-outstanding-tasks-index (1- (length my-outstanding-tasks-list)))
-          (setq my-outstanding-tasks-index (1- my-outstanding-tasks-index)))
-        
+  (my-ensure-task-list-present)
+  (if (and my-outstanding-tasks-list
+           (> (length my-outstanding-tasks-list) 0))
+      (let* ((len (length my-outstanding-tasks-list))
+             (idx (mod (1- my-outstanding-tasks-index) len)))
+        (setq my-outstanding-tasks-index idx)
         (my-save-index-to-file)
-        
-        (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
-          (my-display-task-at-marker task-or-marker)
+        (let ((task (nth idx my-outstanding-tasks-list)))
+          (my-display-task-at-marker task)
           (my-pulse-highlight-current-line)
-
-          ;; Limit visible queue buffers now that we have moved
           (my-queue-limit-visible-buffers)
-
           (my-show-current-flag-status)))
     (message "No outstanding tasks to navigate.")))
 
 (defun my-show-current-outstanding-task-no-srs (&optional pulse)
-  "Show current outstanding task without re-triggering SRS/Anki."
+  "Show current outstanding task from the in-memory queue without SRS/Anki."
   (interactive)
   (widen-and-recenter)
-  (my-ensure-synchronized-task-list)
-  (when (and my-outstanding-tasks-list
-             (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
-    (let ((task (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
-      (my-display-task-at-marker task)
-      (when pulse (my-pulse-highlight-current-line))
-      (my-queue-limit-visible-buffers)
-      (my-show-current-flag-status))))
-
-(defun my-show-current-outstanding-task ()
-  "Show the current outstanding task, or get a new list and show the first task if not valid.
-Also limits visible queue buffers around the current task."
-  (interactive)
-
-  (widen-and-recenter)
-  (my-ensure-synchronized-task-list)
-    
+  (my-ensure-task-list-present)
   (if (and my-outstanding-tasks-list
            (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
-      (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
-        (my-display-task-at-marker task-or-marker)
-        (my-pulse-highlight-current-line)
-
-        ;; Limit visible queue buffers for current position
+      (let ((task (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
+        (my-display-task-at-marker task)
+        (when pulse (my-pulse-highlight-current-line))
         (my-queue-limit-visible-buffers)
+        (my-show-current-flag-status))
+    (message "No outstanding tasks found.")))
 
-        ;; SRS handling
+(defun my-show-current-outstanding-task ()
+  "Show the current outstanding task from the in-memory queue."
+  (interactive)
+  (widen-and-recenter)
+  (my-ensure-task-list-present)
+  (if (and my-outstanding-tasks-list
+           (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+      (let ((task (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
+        (my-display-task-at-marker task)
+        (my-pulse-highlight-current-line)
+        (my-queue-limit-visible-buffers)
         (my-queue-handle-srs-after-task-display)
-
         (my-show-current-flag-status))
     (message "No outstanding tasks found.")))
 
