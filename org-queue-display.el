@@ -610,16 +610,21 @@ Defaults to 0.2 seconds."
                  (point))))
       (cons beg end))))
 
+(defun my--strip-clozes-in-string (s)
+  "Return S with all {{clozed:...}} unwrapped to inner text."
+  (when s
+    (replace-regexp-in-string "{{clozed:\\([^}]*\\)}}" "\\1" s)))
+
 (defun org-interactive-cloze ()
   "Create a cloze deletion.
-- On a heading line: one-line front as child heading, back in body.
-- In body: Front = whole entry body with […] replacing the selection; Back = selection.
-Mirrors extract: inherits parent priority range and sets child priority."
+- On a heading line: child heading title is Front (other clozes unwrapped); Back is the selected text in the child body.
+- In body: child has Front/Back subheadings; Front = whole entry body with […] replacing selection and all other clozes unwrapped; Back = selected text.
+Other cloze markers remain in the original location only."
   (interactive)
   (if (not (use-region-p))
       (message "Please select text to create a cloze")
     (let* ((start0 (region-beginning))
-           (end0 (region-end))
+           (end0   (region-end))
            (selected-text (buffer-substring-no-properties start0 end0))
            (heading-pos (save-excursion (goto-char start0) (org-back-to-heading t) (point)))
            (heading-level (save-excursion (goto-char heading-pos) (org-current-level)))
@@ -627,36 +632,33 @@ Mirrors extract: inherits parent priority range and sets child priority."
                                    (goto-char heading-pos)
                                    (my-get-current-priority-range)))
            (on-heading (save-excursion
-                         (goto-char start0)
-                         (beginning-of-line)
-                         (org-at-heading-p)))
+                         (goto-char start0) (beginning-of-line) (org-at-heading-p)))
            front-title front-block)
-
-      ;; Build front preview BEFORE modifying buffer
+      ;; Build Front BEFORE modifying buffer
       (if on-heading
           (let* ((lb (save-excursion (goto-char start0) (line-beginning-position)))
-                 (le (save-excursion (goto-char end0) (line-end-position)))
+                 (le (save-excursion (goto-char end0)   (line-end-position)))
                  (prefix (buffer-substring-no-properties lb start0))
                  (suffix (buffer-substring-no-properties end0 le)))
             (setq front-title
                   (my--strip-leading-stars
-                   (concat prefix "[...]" suffix))))
-        ;; Body: Front = whole body with selection replaced by [...]
+                   (my--strip-clozes-in-string
+                    (concat prefix "[...]" suffix)))))
         (let* ((bounds (my--org-entry-body-bounds))
                (bbeg (car bounds))
                (bend (cdr bounds))
-               ;; Clamp selection to body just in case
                (s (max start0 bbeg))
                (e (min end0 bend))
                (prefix (buffer-substring-no-properties bbeg s))
                (suffix (buffer-substring-no-properties e bend)))
-          (setq front-block (concat prefix "[...]" suffix))))
-
-      ;; Replace selection with cloze marker
+          (setq front-block
+                (concat (my--strip-clozes-in-string prefix)
+                        "[...]"
+                        (my--strip-clozes-in-string suffix)))))
+      ;; Replace selection in-place with {{clozed:...}}
       (delete-region start0 end0)
       (insert (format "{{clozed:%s}}" selected-text))
-
-      ;; Create child heading and fill content
+      ;; Create child entry
       (save-excursion
         (goto-char heading-pos)
         (org-end-of-subtree)
@@ -667,12 +669,15 @@ Mirrors extract: inherits parent priority range and sets child priority."
                 (insert (if (> (length (string-trim (or front-title ""))) 0)
                             front-title
                           "(untitled)"))
-                (insert "\n" selected-text))
-            ;; Body: blank title; Front/Back as subheads
-            (insert
-             "\n"
-             (make-string (+ 2 heading-level) ?*) " Front\n" (or front-block "") "\n"
-             (make-string (+ 2 heading-level) ?*) " Back\n" selected-text))
+                (insert "\n")
+                (insert selected-text))
+            ;; Body: blank title; Front/Back subheads
+            (insert "\n") ; end empty title line
+            (insert (make-string (+ 2 heading-level) ?*) " Front\n")
+            (when front-block (insert front-block))
+            (unless (bolp) (insert "\n")) ; exactly one newline before Back
+            (insert (make-string (+ 2 heading-level) ?*) " Back\n")
+            (insert selected-text))
           ;; Priority, ID, SRS
           (when parent-priority-range
             (goto-char (1+ new-heading-pos))
