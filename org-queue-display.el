@@ -490,64 +490,82 @@ Defaults to 0.2 seconds."
       (substring s (match-end 0))
     s))
 
+(defun my--org-entry-body-bounds ()
+  (save-excursion
+    (org-back-to-heading t)
+    (let ((beg (progn
+                 (when (fboundp 'org-end-of-meta-data)
+                   (org-end-of-meta-data t))
+                 (point)))
+          (end (progn
+                 (outline-next-heading)
+                 (point))))
+      (cons beg end))))
+
 (defun org-interactive-cloze ()
-  "Create a cloze deletion from selected text; header-aware.
-- If region is on a heading line, cloze context is built from the heading
-  display. In the child body,
-  leading stars are stripped to avoid creating a new heading.
-- Also mirrors extract: inherits parent priority range and sets child priority."
+  "Create a cloze deletion.
+- On a heading line: one-line front as child heading, back in body.
+- In body: Front = whole entry body with […] replacing the selection; Back = selection.
+Mirrors extract: inherits parent priority range and sets child priority."
   (interactive)
   (if (not (use-region-p))
       (message "Please select text to create a cloze")
-    (let* ((start (region-beginning))
-           (end (region-end))
-           (selected-text (buffer-substring-no-properties start end))
-           ;; Current heading pos/level
-           (heading-pos (save-excursion (goto-char start) (org-back-to-heading t) (point)))
+    (let* ((start0 (region-beginning))
+           (end0 (region-end))
+           (selected-text (buffer-substring-no-properties start0 end0))
+           (heading-pos (save-excursion (goto-char start0) (org-back-to-heading t) (point)))
            (heading-level (save-excursion (goto-char heading-pos) (org-current-level)))
            (parent-priority-range (save-excursion
                                    (goto-char heading-pos)
                                    (my-get-current-priority-range)))
-           ;; Will be recomputed after insertion
-           (content-line nil)
            (on-heading (save-excursion
-                         (goto-char start)
+                         (goto-char start0)
                          (beginning-of-line)
-                         (org-at-heading-p))))
-      ;; Replace selected text with cloze
-      (delete-region start end)
+                         (org-at-heading-p)))
+           front-title front-block)
+
+      ;; Build front preview BEFORE modifying buffer
+      (if on-heading
+          (let* ((lb (save-excursion (goto-char start0) (line-beginning-position)))
+                 (le (save-excursion (goto-char end0) (line-end-position)))
+                 (prefix (buffer-substring-no-properties lb start0))
+                 (suffix (buffer-substring-no-properties end0 le)))
+            (setq front-title
+                  (my--strip-leading-stars
+                   (concat prefix "[...]" suffix))))
+        ;; Body: Front = whole body with selection replaced by [...]
+        (let* ((bounds (my--org-entry-body-bounds))
+               (bbeg (car bounds))
+               (bend (cdr bounds))
+               ;; Clamp selection to body just in case
+               (s (max start0 bbeg))
+               (e (min end0 bend))
+               (prefix (buffer-substring-no-properties bbeg s))
+               (suffix (buffer-substring-no-properties e bend)))
+          (setq front-block (concat prefix "[...]" suffix))))
+
+      ;; Replace selection with cloze marker
+      (delete-region start0 end0)
       (insert (format "{{clozed:%s}}" selected-text))
 
-      ;; Get updated content line
-      (setq content-line (buffer-substring-no-properties
-                          (line-beginning-position)
-                          (line-end-position)))
-
-      ;; If this is a heading line, build a clean heading display string
-      (when on-heading
-        ;; Prevent creating a heading inside the child body: drop leading stars.
-        (setq content-line (my--strip-leading-stars content-line)))
-
-      ;; Create child heading with cloze placeholder
+      ;; Create child heading and fill content
       (save-excursion
         (goto-char heading-pos)
         (org-end-of-subtree)
         (let ((new-heading-pos (point)))
           (insert "\n" (make-string (1+ heading-level) ?*) " ")
-          ;; Replace the current cloze with [...]
-          (let* ((child-content
-                  (replace-regexp-in-string
-                   (regexp-quote (format "{{clozed:%s}}" selected-text))
-                   "[...]"
-                   content-line))
-                 (processed-content child-content))
-            ;; Replace any other clozes with their content
-            (while (string-match "{{clozed:\\([^}]+\\)}}" processed-content)
-              (setq processed-content
-                    (replace-match "\\1" t nil processed-content)))
-            (insert processed-content))
-          (insert "\n" selected-text)
-          ;; Priority (mirror extract), ID, and org-srs
+          (if on-heading
+              (progn
+                (insert (if (> (length (string-trim (or front-title ""))) 0)
+                            front-title
+                          "(untitled)"))
+                (insert "\n" selected-text))
+            ;; Body: blank title; Front/Back as subheads
+            (insert
+             "\n"
+             (make-string (+ 2 heading-level) ?*) " Front\n" (or front-block "") "\n"
+             (make-string (+ 2 heading-level) ?*) " Back\n" selected-text))
+          ;; Priority, ID, SRS
           (when parent-priority-range
             (goto-char (1+ new-heading-pos))
             (my-set-priority-with-heuristics parent-priority-range))
@@ -555,8 +573,7 @@ Defaults to 0.2 seconds."
           (org-id-get-create)
           (when (fboundp 'org-srs-item-new)
             (org-srs-item-new 'card))))
-      (message "Created cloze deletion%s"
-               (if (fboundp 'org-srs-item-new) " with org-srs card" "")))))
+      (message "Created cloze deletion"))))
 
 (defun org-interactive-extract ()
   "Create a SuperMemo-style extract from selected text and generate a child heading."
