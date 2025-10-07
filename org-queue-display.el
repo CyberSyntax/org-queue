@@ -319,6 +319,112 @@ Defaults to 0.2 seconds."
   "No-op. Keep native C-x b behavior."
   nil)
 
+(defvar-local org-queue-srs--conceal-overlays nil)
+
+(defun org-queue-srs--clear-conceal ()
+  (while org-queue-srs--conceal-overlays
+    (delete-overlay (pop org-queue-srs--conceal-overlays))))
+
+(defun org-queue-srs--hide-region (beg end)
+  "Hide [BEG,END) using Org’s folding so TAB/S-TAB reveal it."
+  (org-flag-region beg end t 'outline))
+
+;; Options
+(defcustom org-queue-srs-back-heading-regexp "\\`\\(Back\\|Answer\\)\\'"
+  "Child headings treated as answers."
+  :type 'string :group 'org-queue)
+
+;; Exact region helpers
+(defun org-queue--subtree-end ()
+  (save-excursion (org-end-of-subtree t t) (point)))
+
+(defun org-queue--meta-end ()
+  (save-excursion
+    (org-back-to-heading t)
+    (forward-line 1)
+    (when (fboundp 'org-end-of-meta-data)
+      (org-end-of-meta-data t))
+    (point)))
+
+(defun org-queue--first-child-pos ()
+  (save-excursion
+    (org-back-to-heading t)
+    (let* ((lvl (org-current-level)) (lim (org-queue--subtree-end)))
+      (goto-char (org-queue--meta-end))
+      (catch 'found
+        (while (and (outline-next-heading) (< (point) lim))
+          (when (> (org-current-level) lvl)
+            (throw 'found (line-beginning-position))))
+        nil))))
+
+;; Hide Back subtree(s) exactly
+(defun org-queue-srs--conceal-back ()
+  "Hide Back/Answer child bodies; keep their heading line visible. Return count."
+  (save-excursion
+    (org-back-to-heading t)
+    (let* ((lim (save-excursion (org-end-of-subtree t t) (point)))
+           (lvl (org-current-level))
+           (count 0))
+      (goto-char (org-queue--meta-end))
+      (while (and (outline-next-heading) (< (point) lim))
+        (when (> (org-current-level) lvl)
+          (let* ((title (org-get-heading t t t t))
+                 (name  (string-trim (car (split-string title "[ \t:]")))))
+            (when (string-match-p org-queue-srs-back-heading-regexp name)
+              (setq count (1+ count))
+              (let* ((body-beg (save-excursion
+                                 (forward-line 1)
+                                 (when (fboundp 'org-end-of-meta-data)
+                                   (org-end-of-meta-data t))
+                                 (point)))
+                     (body-end (save-excursion
+                                 (or (and (outline-next-heading) (point))
+                                     lim))))
+                (when (< body-beg body-end)
+                  (org-queue-srs--hide-region body-beg body-end)))))))
+      count)))
+
+;; Hide body-as-answer when there is no Back child:
+(defun org-queue-srs--conceal-entry-body-if-no-back ()
+  "Hide body [B,E) exactly when this entry has no Back child."
+  (save-excursion
+    (org-back-to-heading t)
+    (let* ((lim   (save-excursion (org-end-of-subtree t t) (point)))
+           (b0    (org-queue--meta-end))
+           (first (save-excursion
+                    (let ((lvl (org-current-level)))
+                      (goto-char (org-queue--meta-end))
+                      (catch 'found
+                        (while (and (outline-next-heading) (< (point) lim))
+                          (when (> (org-current-level) lvl)
+                            (throw 'found (line-beginning-position))))
+                        nil))))
+           (e     (or first lim)))
+      (when (< b0 e)
+        (org-queue-srs--hide-region b0 e)))))
+
+(defun org-queue-srs--show-front-subtree ()
+  "If a child named Front exists, show its subtree (body visible)."
+  (save-excursion
+    (org-back-to-heading t)
+    (let* ((lim (save-excursion (org-end-of-subtree t t) (point)))
+           (lvl (org-current-level))
+           (rx  (format "^\\*\\{%d,\\}\\s-+Front\\b" (1+ (or lvl 0)))))
+      (goto-char (org-queue--meta-end))
+      (when (re-search-forward rx lim t)
+        (goto-char (match-beginning 0))
+        (org-show-subtree)))))
+
+;; Exact main entry-point
+(defun org-queue-srs-maybe-conceal-here ()
+  "Conceal only the answer for SRS entries; do nothing else."
+  (org-queue-srs--clear-conceal)
+  (let ((where (org-srs-entry-p (point))))
+    (when (and org-queue-srs-conceal-answer (memq where '(current parent)))
+      (if (> (org-queue-srs--conceal-back) 0)
+          (org-queue-srs--show-front-subtree)
+        (org-queue-srs--conceal-entry-body-if-no-back)))))
+
 (defun my-display-task-at-marker (task-or-marker)
   "Display TASK-OR-MARKER robustly. Prefer existing marker; no forced org-id re-resolve."
   (let* ((marker (my-extract-marker task-or-marker)))
@@ -338,6 +444,8 @@ Defaults to 0.2 seconds."
         (org-reveal t)
         (org-show-entry)
         (org-show-children))
+      (org-queue-srs-maybe-conceal-here)
+      (add-hook 'kill-buffer-hook #'org-queue-srs--clear-conceal nil t)
       (recenter))))
 
 ;; Custom syntax highlighting functions

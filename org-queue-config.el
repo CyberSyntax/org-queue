@@ -26,6 +26,16 @@
 (setq org-priority-default 32)
 (setq org-priority-lowest 64)
 
+(defcustom org-queue-srs-mix-ratio '(1 . 4)
+  "Interleave ratio (NON-SRS . SRS) for the queue, e.g., (1 . 4)."
+  :type '(cons (integer :tag "Non-SRS") (integer :tag "SRS"))
+  :group 'org-queue)
+
+(defcustom org-queue-srs-conceal-answer t
+  "If non-nil, conceal the answer (Back) when visiting SRS items."
+  :type 'boolean
+  :group 'org-queue)
+
 (defcustom my-priority-ranges
   '((0 . (1 . 2))
     (1 . (2 . 5))

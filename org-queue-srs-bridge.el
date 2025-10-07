@@ -6,6 +6,7 @@
 
 (require 'org)
 (require 'cl-lib)
+(require 'org-queue-utils)
 
 (defcustom org-queue-preinit-srs nil
   "If non-nil, attempt to pre-initialize org-srs during startup."
@@ -196,6 +197,82 @@ Ensures the entry has an ID. Gracefully degrades if org-srs is not available."
           (message "Created org-srs card"))
       (error
        (user-error "Failed to create SRS card: %s" (error-message-string err))))))
+
+(defun org-queue-srs--drawer-bounds (&optional pos)
+  "Return cons (beg . end) of :SRSITEMS: drawer in entry at POS (default point), or nil."
+  (save-excursion
+    (when pos (goto-char pos))
+    (org-back-to-heading t)
+    (let* ((limit (save-excursion (outline-next-heading) (point)))
+           (drawer (or (and (boundp 'org-srs-log-drawer-name) org-srs-log-drawer-name) "SRSITEMS"))
+           (beg (save-excursion
+                  (forward-line 1)
+                  (when (re-search-forward
+                         (concat "^[ \t]*:" (regexp-quote drawer) ":[ \t]*$")
+                         limit t)
+                    (match-beginning 0))))
+           (end (and beg (save-excursion
+                           (goto-char beg)
+                           (re-search-forward "^[ \t]*:END:[ \t]*$" limit t)))))
+      (when (and beg end) (cons beg end)))))
+
+(defun org-queue-srs--parse-table-rows (beg end)
+  "Return a list of alists for each data row in the SRS table between BEG and END.
+Each alist has keys: :mark (string), :timestamp (string), :time (Emacs time or nil), :raw."
+  (let ((rows '()))
+    (save-excursion
+      (goto-char beg)
+      (while (re-search-forward "^\\s-*|.*|.*|.*$" end t)
+        (let ((line (buffer-substring-no-properties (line-beginning-position) (line-end-position))))
+          (when (and (string-match-p "^\\s-*|\\([^|]*\\)|\\([^|]*\\)|" line)
+                     (not (string-match-p "^\\s-*|-[+-]" line)) ; skip table rule rows
+                     (not (string-match-p "^\\s-*|\\s*!\\s*|\\s*timestamp\\s*|" line))) ; skip header
+            (let* ((cells (mapcar #'string-trim (split-string line "|")))
+                   ;; cells[0] is "", so real columns start at 1
+                   (mark (nth 1 cells))
+                   (ts   (nth 2 cells))
+                   (tm   (ignore-errors (and ts (> (length ts) 0) (date-to-time ts)))))
+              (push (list :mark mark :timestamp ts :time tm :raw line) rows)))))
+      (nreverse rows))))
+
+(defun org-queue-srs-next-due-time (&optional pos)
+  "Heuristically return next-due time from SRSITEMS drawer at POS (or point).
+Prefer the row with mark \"*\" in the first column; else the earliest valid timestamp."
+  (let* ((bounds (org-queue-srs--drawer-bounds pos)))
+    (when bounds
+      (let* ((rows (org-queue-srs--parse-table-rows (car bounds) (cdr bounds)))
+             (star (cl-find-if (lambda (r) (string= (string-trim (or (plist-get r :mark) "")) "*")) rows))
+             (times (delq nil (mapcar (lambda (r) (plist-get r :time)) rows))))
+        (or (and star (plist-get star :time))
+            (car (sort (copy-sequence times) #'time-less-p)))))))
+
+(defun org-queue-collect-srs-due-items ()
+  "Collect SRS entries due now (timestamp <= now) as task plists.
+Each plist contains: :id :marker :priority :flag :file :heading :pos :srs t :srs-due <time>."
+  (let ((now (current-time))
+        (items '()))
+    (org-queue-map-entries
+     (lambda ()
+       (when (eq (org-srs-entry-p (point)) 'current)
+         (let ((due (org-queue-srs-next-due-time (point))))
+           (when (and due (not (time-less-p now due))) ; due <= now
+             (let* ((marker (point-marker))
+                    (id (or (org-entry-get nil "ID") (org-id-get-create)))
+                    (priority (or (and (fboundp 'my-get-raw-priority-value)
+                                       (my-get-raw-priority-value))
+                                  (let ((ps (org-entry-get nil "PRIORITY")))
+                                    (if ps (string-to-number ps) org-priority-default))))
+                    (flag (and (fboundp 'my-priority-flag) (my-priority-flag priority)))
+                    (file (buffer-file-name))
+                    (heading (org-get-heading t t t t))
+                    (pos (point))
+                    (task (list :id id :marker marker :priority priority
+                                :flag flag :file file :is-todo nil
+                                :heading heading :pos pos
+                                :srs t :srs-due due)))
+               (push task items)))))) nil)
+    (sort items (lambda (a b) (time-less-p (plist-get a :srs-due)
+                                           (plist-get b :srs-due))))))
 
 (provide 'org-queue-srs-bridge)
 ;;; org-queue-srs-bridge.el ends here

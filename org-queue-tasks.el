@@ -479,59 +479,77 @@ Dedupes by ID while reading; dedupes result list; rewrites cache deduped."
           (push task out))))
     (setq my-outstanding-tasks-list (nreverse out))))
 
+(defun org-queue--interleave-by-ratio (a b a-count b-count)
+  "Interleave lists A (non-SRS) and B (SRS) by groups of A-COUNT and B-COUNT."
+  (let ((out '()))
+    (while (or a b)
+      (dotimes (_ (max 0 a-count)) (when a (push (pop a) out)))
+      (dotimes (_ (max 0 b-count)) (when b (push (pop b) out))))
+    (nreverse out)))
+
 (defun my-get-outstanding-tasks ()
-  "Populate task list with metadata for stable tracking."
-  (setq my-outstanding-tasks-list nil)
-  (org-queue-map-entries
-   (lambda ()
-     (when (and (my-is-outstanding-task)
-                (not (my-is-done-task))
-                (not (org-srs-entry-p (point))))
-       (let* ((marker (point-marker))
-              (id (or (org-entry-get nil "ID") (org-id-get-create)))
-              (priority (my-get-raw-priority-value))
-              (flag (my-priority-flag priority))
-              (file (buffer-file-name))
-              (heading (org-get-heading t t t t))
-              (todo-state (org-get-todo-state))
-              (is-todo (my-is-todo-task))
-              (pos (point))
-              (task-data (list :id id
-                               :marker marker
-                               :priority priority
-                               :flag flag
-                               :file file
-                               :is-todo is-todo
-                               :heading heading
-                               :pos pos)))
-         (message "QUEUE BUILD: %s | TODO-state: %s | is-todo: %s | priority: %s"
-                  heading todo-state is-todo priority)
-         (let ((sort-key (list (if is-todo 0 1) priority)))
-           (push (cons sort-key task-data) my-outstanding-tasks-list)))))
-   nil)
-  ;; Stable sort by TODO-ness, then numeric priority, tie-break by ID
-  (setq my-outstanding-tasks-list
-        (mapcar #'cdr
-                (cl-stable-sort
-                 my-outstanding-tasks-list
-                 (lambda (a b)
-                   (let* ((ka (car a)) (kb (car b))
-                          (todoa (car ka)) (todob (car kb))
-                          (pa (cadr ka))   (pb (cadr kb)))
-                     (cond
-                      ((/= todoa todob) (< todoa todob))
-                      ((/= pa pb)       (< pa pb))
-                      (t (string< (or (plist-get (cdr a) :id) "")
-                                  (or (plist-get (cdr b) :id) "")))))))))
-  (my-dedupe-outstanding-tasks)
-  (let ((todo-count (length (cl-remove-if-not (lambda (task) (plist-get task :is-todo))
-                                              my-outstanding-tasks-list)))
-        (total-count (length my-outstanding-tasks-list)))
-    (message "=== QUEUE BUILT ===")
-    (message "Total tasks in queue: %d" total-count)
-    (message "TODO tasks in queue: %d" todo-count))
-  (setq my-outstanding-tasks-index 0)
-  (my-queue-limit-visible-buffers))
+  "Populate task list with metadata and integrate due SRS items by ratio."
+  (let ((non-srs '()))
+    ;; Collect non-SRS outstanding tasks (original behavior with SRS excluded)
+    (setq non-srs nil)
+    (org-queue-map-entries
+     (lambda ()
+       (when (and (my-is-outstanding-task)
+                  (not (my-is-done-task))
+                  (not (org-srs-entry-p (point))))
+         (let* ((marker (point-marker))
+                (id (or (org-entry-get nil "ID") (org-id-get-create)))
+                (priority (my-get-raw-priority-value))
+                (flag (my-priority-flag priority))
+                (file (buffer-file-name))
+                (heading (org-get-heading t t t t))
+                (todo-state (org-get-todo-state))
+                (is-todo (my-is-todo-task))
+                (pos (point))
+                (task-data (list :id id
+                                 :marker marker
+                                 :priority priority
+                                 :flag flag
+                                 :file file
+                                 :is-todo is-todo
+                                 :heading heading
+                                 :pos pos))
+                (sort-key (list (if is-todo 0 1) priority)))
+           (push (cons sort-key task-data) non-srs))))
+     nil)
+    ;; Stable sort non-SRS by TODO-ness, then priority, tie by ID
+    (setq non-srs
+          (mapcar #'cdr
+                  (cl-stable-sort
+                   non-srs
+                   (lambda (a b)
+                     (let* ((ka (car a)) (kb (car b))
+                            (todoa (car ka)) (todob (car kb))
+                            (pa (cadr ka))   (pb (cadr kb)))
+                       (cond
+                        ((/= todoa todob) (< todoa todob))
+                        ((/= pa pb)       (< pa pb))
+                        (t (string< (or (plist-get (cdr a) :id) "")
+                                    (or (plist-get (cdr b) :id) "")))))))))
+    ;; Collect SRS due items now
+    (let* ((srs (org-queue-collect-srs-due-items))
+           (ratio (or (and (boundp 'org-queue-srs-mix-ratio)
+                           org-queue-srs-mix-ratio)
+                      '(1 . 4)))
+           (a-count (car ratio))
+           (b-count (cdr ratio))
+           (mixed (org-queue--interleave-by-ratio (copy-sequence non-srs)
+                                                  (copy-sequence srs)
+                                                  a-count b-count)))
+      (setq my-outstanding-tasks-list mixed))
+    (my-dedupe-outstanding-tasks)
+    (let ((todo-count (length (cl-remove-if-not (lambda (task) (plist-get task :is-todo))
+                                                my-outstanding-tasks-list)))
+          (total-count (length my-outstanding-tasks-list)))
+      (message "=== QUEUE BUILT (SRS integrated) ===")
+      (message "Total tasks in queue: %d (TODO: %d)" total-count todo-count))
+    (setq my-outstanding-tasks-index 0)
+    (my-queue-limit-visible-buffers)))
 
 (defun my-remove-current-task ()
   "Remove the task at the current index from the queue and keep buffers tidy.
@@ -834,10 +852,7 @@ Guarded by `my-queue--orchestrating' to avoid re-entrancy."
               (my-launch-anki)
             (progn
               ;; Launch Anki first so you can start studying immediately
-              (my-launch-anki)
-              ;; Then (re)start SRS in Emacs
-              (ignore-errors (my-srs-quit-reviews))
-              (ignore-errors (my-srs-start-reviews))))
+              (my-launch-anki)))
         (error
          (message "org-queue: SRS/Anki orchestration failed: %s"
                   (error-message-string err)))))))
