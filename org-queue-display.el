@@ -477,43 +477,55 @@ Defaults to 0.2 seconds."
     (delete-overlay (pop org-custom-overlays))))
 
 (defun org-highlight-custom-syntax ()
-  "Highlight {{type#ID|PAYLOAD|ID}} markers by displaying PAYLOAD.
-Supports any type matching [A-Za-z0-9_-]+."
+  "Render {{type#ID|PAYLOAD|ID}} markers by hiding wrappers, even when nested.
+- Opening wrapper '{{type#ID|' and closing wrapper '|ID}}' are invisible.
+- Only PAYLOAD is visible; it may itself contain nested markers which are processed recursively.
+- The payload is given a face based on TYPE."
   (interactive)
   (when (eq major-mode 'org-mode)
     (org-clear-custom-overlays)
-    (save-excursion
-      (goto-char (point-min))
-      (while (search-forward "{{" nil t)
-        (let ((start (match-beginning 0))
-              type id content-beg content-end found-end)
-          (cond
-           ;; ID form: {{type#ID| ... |ID}}
-           ((looking-at "\\([A-Za-z0-9_-]+\\)#\\([A-Za-z0-9_-]+\\)|")
-            (setq type (match-string-no-properties 1))
-            (setq id   (match-string-no-properties 2))
-            (goto-char (match-end 0))
-            (setq content-beg (point))
-            (if (search-forward (format "|%s}}" id) nil t)
-                (progn
-                  (setq found-end (point))
-                  (setq content-end (- found-end (+ 3 (length id)))))
-              ;; malformed; step forward to avoid infinite loops
-              (goto-char (1+ start))))
-           ;; Not our syntax; skip forward safely
-           (t (goto-char (1+ start))))
-          (when found-end
-            (let* ((ov (make-overlay start found-end))
-                   (content (buffer-substring-no-properties content-beg content-end)))
-              (overlay-put ov 'face
-                           (cond
-                            ((string= type "extract") 'org-extract-face)
-                            ((string= type "clozed")  'org-clozed-face)
-                            (t 'org-extract-face)))
-              (overlay-put ov 'display content)
-              (overlay-put ov 'org-custom-syntax t)
-              (push ov org-custom-overlays))
-            (goto-char found-end)))))))
+    (cl-labels
+        ;; Recursively scan [beg,end) for ID-form markers
+        ((scan (beg end)
+           (save-excursion
+             (goto-char beg)
+             (while (search-forward "{{" end t)
+               (let ((start (match-beginning 0)))
+                 (if (looking-at "\\([A-Za-z0-9_-]+\\)#\\([A-Za-z0-9_-]+\\)|")
+                     (let ((type (match-string-no-properties 1))
+                           (id   (match-string-no-properties 2)))
+                       ;; Move to start of payload.
+                       (goto-char (match-end 0))
+                       (let ((content-beg (point)))
+                         ;; Find the exact closing token inside [content-beg, end)
+                         (when (search-forward (format "|%s}}" id) end t)
+                           (let* ((close-end (point))
+                                  (content-end (- close-end (+ 3 (length id))))
+                                  (open-end content-beg)
+                                  (close-start (- close-end (+ 3 (length id)))))
+                             ;; Recurse into payload first to handle nested markers
+                             (scan content-beg content-end)
+                             ;; Create overlays: hide wrappers, style payload
+                             (let ((ov-open  (make-overlay start open-end))
+                                   (ov-close (make-overlay close-start close-end))
+                                   (ov-body  (make-overlay content-beg content-end)))
+                               ;; Hide wrappers
+                               (overlay-put ov-open  'invisible t)
+                               (overlay-put ov-close 'invisible t)
+                               ;; Optional styling over payload
+                               (overlay-put ov-body 'face
+                                            (cond
+                                             ((string= type "extract") 'org-extract-face)
+                                             ((string= type "clozed")  'org-clozed-face)
+                                             (t 'org-extract-face)))
+                               (push ov-open  org-custom-overlays)
+                               (push ov-close org-custom-overlays)
+                               (push ov-body  org-custom-overlays))
+                             ;; Continue scanning after this marker
+                             (goto-char close-end)))))
+                   ;; Not our syntax; move forward to avoid infinite loops
+                   (goto-char (1+ start))))))))
+      (scan (point-min) (point-max)))))
 
 (defun org-refresh-all-custom-highlighting ()
   "Refresh custom syntax highlighting in all org-mode buffers."
