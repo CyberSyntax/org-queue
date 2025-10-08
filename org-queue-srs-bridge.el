@@ -36,35 +36,34 @@
 (defun my-srs-start-reviews ()
   "Start SRS review session; do not call task display or Anki here."
   (interactive)
-  (unless (my-srs--ensure-loaded)
-    (message "org-srs not available; skipping SRS.")
-    (cl-return-from my-srs-start-reviews))
-  (condition-case err
-      (progn
-        (setq my-srs-review-count 0)
-        (dolist (fn '(org-srs-review-rate-easy
-                      org-srs-review-rate-good
-                      org-srs-review-rate-hard
-                      org-srs-review-rate-again))
-          (when (and (fboundp fn)
-                     (not (advice-member-p #'my-srs-count-review fn)))
-            (advice-add fn :after #'my-srs-count-review)))
-        (when (and (fboundp 'org-srs-review-message-review-done)
-                   (not (advice-member-p #'my-srs--on-review-done
-                                         'org-srs-review-message-review-done)))
-          (advice-add 'org-srs-review-message-review-done :before #'my-srs--on-review-done))
-        (if (fboundp 'org-srs-review-start)
-            (progn
-              (org-srs-review-start default-directory)
-              (run-at-time 0.02 nil
-                           (lambda ()
-                             (when (and (fboundp 'org-srs-reviewing-p)
-                                        (not (org-srs-reviewing-p)))
-                               (message "No SRS cards to review right now.")))))
-          (message "org-srs-review-start not found; cannot start SRS.")))
-    (error
-     (my-srs-remove-advice)
-     (message "SRS error: %s" (error-message-string err)))))
+  (if (not (my-srs--ensure-loaded))
+      (message "org-srs not available; skipping SRS.")
+    (condition-case err
+        (progn
+          (setq my-srs-review-count 0)
+          (dolist (fn '(org-srs-review-rate-easy
+                        org-srs-review-rate-good
+                        org-srs-review-rate-hard
+                        org-srs-review-rate-again))
+            (when (and (fboundp fn)
+                       (not (advice-member-p #'my-srs-count-review fn)))
+              (advice-add fn :after #'my-srs-count-review)))
+          (when (and (fboundp 'org-srs-review-message-review-done)
+                     (not (advice-member-p #'my-srs--on-review-done
+                                           'org-srs-review-message-review-done)))
+            (advice-add 'org-srs-review-message-review-done :before #'my-srs--on-review-done))
+          (if (fboundp 'org-srs-review-start)
+              (progn
+                (org-srs-review-start default-directory)
+                (run-at-time 0.02 nil
+                             (lambda ()
+                               (when (and (fboundp 'org-srs-reviewing-p)
+                                          (not (org-srs-reviewing-p)))
+                                 (message "No SRS cards to review right now.")))))
+            (message "org-srs-review-start not found; cannot start SRS.")))
+      (error
+       (my-srs-remove-advice)
+       (message "SRS error: %s" (error-message-string err))))))
 
 (defun my-srs-count-review (&rest _)
   (setq my-srs-review-count (1+ my-srs-review-count))
@@ -248,34 +247,34 @@ Prefer the row with mark \"*\" in the first column; else the earliest valid time
             (car (sort (copy-sequence times) #'time-less-p)))))))
 
 (defun org-queue-collect-srs-due-items ()
-  "Collect SRS entries due now (timestamp <= now) as task plists.
-Each plist contains: :id :marker :priority :flag :file :heading :pos :srs t :srs-due <time>."
-  (when (org-queue-night-shift-p)
-    (cl-return-from org-queue-collect-srs-due-items nil))
-  (let ((now (current-time))
-        (items '()))
-    (org-queue-map-entries
-     (lambda ()
-       (when (eq (org-srs-entry-p (point)) 'current)
-         (let ((due (org-queue-srs-next-due-time (point))))
-           (when (and due (not (time-less-p now due))) ; due <= now
-             (let* ((marker (point-marker))
-                    (id (or (org-entry-get nil "ID") (org-id-get-create)))
-                    (priority (or (and (fboundp 'my-get-raw-priority-value)
-                                       (my-get-raw-priority-value))
-                                  (let ((ps (org-entry-get nil "PRIORITY")))
-                                    (if ps (string-to-number ps) org-priority-default))))
-                    (flag (and (fboundp 'my-priority-flag) (my-priority-flag priority)))
-                    (file (buffer-file-name))
-                    (heading (org-get-heading t t t t))
-                    (pos (point))
-                    (task (list :id id :marker marker :priority priority
-                                :flag flag :file file :is-todo nil
-                                :heading heading :pos pos
-                                :srs t :srs-due due)))
-               (push task items)))))) nil)
-    (sort items (lambda (a b) (time-less-p (plist-get a :srs-due)
-                                           (plist-get b :srs-due))))))
+  "Collect SRS entries due now (timestamp <= now) as task plists."
+  (if (org-queue-night-shift-p)
+      nil
+    (let ((now (current-time))
+          (items '()))
+      (org-queue-map-entries
+       (lambda ()
+         (when (eq (org-srs-entry-p (point)) 'current)
+           (let ((due (org-queue-srs-next-due-time (point))))
+             (when (and due (not (time-less-p now due))) ; due <= now
+               (let* ((marker (point-marker))
+                      (id (or (org-entry-get nil "ID") (org-id-get-create)))
+                      (priority (or (and (fboundp 'my-get-raw-priority-value)
+                                         (my-get-raw-priority-value))
+                                    (let ((ps (org-entry-get nil "PRIORITY")))
+                                      (if ps (string-to-number ps) org-priority-default))))
+                      (flag (and (fboundp 'my-priority-flag) (my-priority-flag priority)))
+                      (file (buffer-file-name))
+                      (heading (org-get-heading t t t t))
+                      (pos (point))
+                      (task (list :id id :marker marker :priority priority
+                                  :flag flag :file file :is-todo nil
+                                  :heading heading :pos pos
+                                  :srs t :srs-due due)))
+                 (push task items)))))) nil)
+      (sort items (lambda (a b)
+                    (time-less-p (plist-get a :srs-due)
+                                 (plist-get b :srs-due)))))))
 
 (provide 'org-queue-srs-bridge)
 ;;; org-queue-srs-bridge.el ends here

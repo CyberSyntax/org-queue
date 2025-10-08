@@ -159,6 +159,46 @@ Returns the number of removed items. Only touches items already in the queue."
         (message "Pruned %d not-due item(s) from queue" removed))
       removed)))
 
+(defun org-queue--inject-current-if-outstanding (&optional quiet)
+  "If the current heading is non-SRS, not DONE, and outstanding now, append it to the queue.
+No re-sort or SRS mixing. Dedupe by :id. Returns t when injected."
+  (when (derived-mode-p 'org-mode)
+    (save-excursion
+      (org-back-to-heading t)
+      (unless (or (my-is-done-task)
+                  (eq (org-srs-entry-p (point)) 'current))  ;; do not inject SRS here
+        (when (my-is-outstanding-task)                      ;; due today/past or QFORCE
+          (let* ((id (or (org-entry-get nil "ID") (org-id-get-create)))
+                 (already (and id (cl-find id my-outstanding-tasks-list
+                                           :test #'equal
+                                           :key  (lambda (t) (plist-get t :id))))))
+            (unless already
+              (let* ((marker (point-marker))
+                     (priority (my-get-raw-priority-value))
+                     (flag (my-priority-flag priority))
+                     (file (buffer-file-name))
+                     (heading (org-get-heading t t t t))
+                     (pos (point))
+                     (task (list :id id :marker marker :priority priority
+                                 :flag flag :file file :is-todo (my-is-todo-task)
+                                 :heading heading :pos pos)))
+                (setq my-outstanding-tasks-list
+                      (append my-outstanding-tasks-list (list task)))
+                (my-dedupe-outstanding-tasks)
+                (my-save-outstanding-tasks-to-file)
+                (my-queue--refresh-chooser-buffers)
+                (unless quiet
+                  (message "Added current task to end of queue (now %d)"
+                           (length my-outstanding-tasks-list)))
+                t))))))))
+
+(defun org-queue--maybe-prune-current-after-schedule (&optional quiet)
+  "If the current queue item is no longer due after scheduling, prune it now."
+  (when (my-queue--prune-current-if-not-due t)
+    (my-queue--refresh-chooser-buffers)
+    (unless quiet
+      (message "Current task is no longer due; pruned from queue."))))
+
 (defcustom org-queue-file-roster-ttl 20
   "Seconds to cache the list of Org files for soft rebuild."
   :type 'integer :group 'org-queue)
@@ -179,6 +219,7 @@ Returns the number of removed items. Only touches items already in the queue."
   "Rebuild queue (priority sort + SRS mixing) without reindexing disk.
 Uses cached file roster (see `org-queue-file-roster-ttl')."
   (interactive)
+  (my-launch-anki)
   (let ((files (org-queue-file-list-cached)))
     (cl-letf (((symbol-function 'org-queue-file-list)
                (lambda () files)))
@@ -334,28 +375,28 @@ Strategy:
 - Else resolve by :id within :file, preferring matching :heading, else closest to :pos (and sync).
 - Else fallback to org-id-find (and sync).
 - Else if :file and :pos exist, jump to that position (and sync)."
-  (cl-block my-extract-marker
+  (let (result)
     (cond
      ;; Given a marker directly
      ((markerp task-or-marker)
       (when (and (marker-buffer task-or-marker)
                  (buffer-live-p (marker-buffer task-or-marker)))
-        (cl-return-from my-extract-marker task-or-marker)))
+        (setq result task-or-marker)))
      ;; Given a plist task
      ((listp task-or-marker)
-      (let* ((m (plist-get task-or-marker :marker))
-             (id (plist-get task-or-marker :id))
-             (file (plist-get task-or-marker :file))
+      (let* ((m       (plist-get task-or-marker :marker))
+             (id      (plist-get task-or-marker :id))
+             (file    (plist-get task-or-marker :file))
              (heading (plist-get task-or-marker :heading))
-             (pos0 (plist-get task-or-marker :pos)))
+             (pos0    (plist-get task-or-marker :pos)))
         ;; Prefer existing live marker and sync
-        (when (and (markerp m)
+        (when (and (not result)
+                   (markerp m)
                    (marker-buffer m)
                    (buffer-live-p (marker-buffer m)))
-          (cl-return-from my-extract-marker
-            (my--task-sync-metadata task-or-marker m)))
+          (setq result (my--task-sync-metadata task-or-marker m)))
         ;; Resolve by ID inside the recorded file (handles duplicates deterministically)
-        (when (and id file)
+        (when (and (not result) id file)
           (let* ((cands (my--candidates-for-id-in-file id file))
                  (chosen
                   (cond
@@ -377,30 +418,27 @@ Strategy:
                                     (abs (- (marker-position b) pos0)))))))
                    ;; Else first candidate in file
                    (t (car cands)))))
-            (when (and (markerp chosen)
+            (when (and chosen
                        (marker-buffer chosen)
                        (buffer-live-p (marker-buffer chosen)))
-              (cl-return-from my-extract-marker
-                (my--task-sync-metadata task-or-marker chosen)))))
+              (setq result (my--task-sync-metadata task-or-marker chosen)))))
         ;; Fallback to org-id DB if file scan failed
-        (when (and id (fboundp 'org-id-find))
+        (when (and (not result) id (fboundp 'org-id-find))
           (let ((mk (org-id-find id 'marker)))
-            (when (and (markerp mk)
+            (when (and mk
                        (marker-buffer mk)
                        (buffer-live-p (marker-buffer mk)))
-              (cl-return-from my-extract-marker
-                (my--task-sync-metadata task-or-marker mk)))))
+              (setq result (my--task-sync-metadata task-or-marker mk)))))
         ;; Fallback to file+pos if available
-        (when (and file (file-exists-p file) (numberp pos0))
+        (when (and (not result) file (file-exists-p file) (numberp pos0))
           (with-current-buffer (find-file-noselect file)
             (save-restriction
               (widen)
               (save-excursion
                 (goto-char (min (max pos0 (point-min)) (point-max)))
                 (org-back-to-heading t)
-                (cl-return-from my-extract-marker
-                  (my--task-sync-metadata task-or-marker (point-marker)))))))))
-     (t nil))))
+                (setq result (my--task-sync-metadata task-or-marker (point-marker))))))))))
+    result))
 
 (defun my-safe-marker-buffer (task-or-marker)
   "Safely get the buffer of TASK-OR-MARKER.
@@ -976,12 +1014,14 @@ Saves buffers and regenerates the task list for consistency."
 (defun my-reset-and-show-current-outstanding-task ()
   "Reset the outstanding tasks index and then show the current outstanding task."
   (interactive)  ;; Allows the function to be executed via M-x in Emacs
+  (my-launch-anki)
   (my-reset-outstanding-tasks-index)  ;; Call function to reset tasks index
   (my-show-current-outstanding-task))  ;; Call function to show the first/current task
 
 (defun org-queue-hard-refresh ()
   "Force reindex + rebuild the queue, refresh chooser if visible, and show current task."
   (interactive)
+  (my-launch-anki)
   (org-queue-reindex-files)             ;; optional: log size
   (my-get-outstanding-tasks)            ;; rebuild from files
   (my-save-outstanding-tasks-to-file)   ;; update cache
@@ -1093,7 +1133,6 @@ Rules:
         (my-display-task-at-marker task)
         (my-pulse-highlight-current-line)
         (my-queue-limit-visible-buffers)
-        (my-queue-handle-srs-after-task-display task)
         (my-show-current-flag-status))
     (message "No outstanding tasks found.")))
 
@@ -1135,6 +1174,7 @@ Rules:
   otherwise, build and save the queue.
 - Schedule initial task display (no automatic SRS/Anki here)."
   (interactive)
+  (my-launch-anki)
   ;; IDs first
   (my-org-id-initialize-id-locations)
 

@@ -149,7 +149,11 @@ Skips scheduling if the current heading or its parent is an SRS entry
                                              (time-add (current-time)
                                                        (days-to-time adjusted-days))))
         (message "Advanced: Priority %d (factor %.2f) → %.2f months" 
-                 priority priority-factor random-months)))))
+                 priority priority-factor random-months)
+        ;; If now due, inject; if no longer due, prune.
+        (ignore-errors (org-queue--inject-current-if-outstanding t))
+        (ignore-errors (org-queue--maybe-prune-current-after-schedule t))))))
+
 
 (defun my-postpone-schedule ()
   "Postpone the current Org heading by a mathematically adjusted number of months.
@@ -203,7 +207,10 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
           (org-schedule nil (format-time-string "%Y-%m-%d" new-time))
           (message "Postponed: Priority %d (factor %.2f) → %.2f months%s" 
                    priority priority-factor random-months
-                   (if is-overdue " (overdue→today allowed)" "")))))))
+                   (if is-overdue " (overdue→today allowed)" ""))
+          ;; If now due (e.g., overdue→today), inject; if not, prune.
+          (ignore-errors (org-queue--inject-current-if-outstanding t))
+          (ignore-errors (org-queue--maybe-prune-current-after-schedule t)))))))
 
 (defun my-custom-shuffle (list)
   "Fisher-Yates shuffle implementation for Emacs Lisp."
@@ -261,11 +268,14 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
   "Interactive command that schedules MONTHS months in the future and prompts for priority."
   (interactive
    (list (read-number
-	    "Enter the upper month limit: "
-	    (my-find-schedule-weight))))
+          "Enter the upper month limit: "
+          (my-find-schedule-weight))))
   ;; Schedule the current heading
   (my-random-schedule (or months (my-find-schedule-weight)))
-  (my-ensure-priority-set))
+  (my-ensure-priority-set)
+  ;; Update in-memory queue minimally (no resort/mix)
+  (ignore-errors (org-queue--inject-current-if-outstanding t))
+  (ignore-errors (org-queue--maybe-prune-current-after-schedule t)))
 
 (defun my-ensure-priorities-and-schedules-for-all-headings (&optional max-attempts)
   "Ensure priorities and schedules are set for all headings across Org agenda files.

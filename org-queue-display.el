@@ -153,29 +153,30 @@ Uses the in-memory queue; no rebuild/resync."
    (t nil)))
 
 (defun my-current-flag-counts ()
-  "Calculate flag metrics for the current outstanding task."
+  "Calculate flag metrics for the current outstanding task.
+Returns a plist:
+  :flag-name  Human name (e.g., \"Flag:3\")
+  :flag-num   Numeric flag id
+  :flag-count Total tasks with this flag
+  :flag-pos   Position (1-based) of current among same-flag tasks
+  :flag-left  Remaining same-flag tasks including current
+Returns nil if no valid current task or flag cannot be determined."
   ;; Validate task list and index
   (unless (and my-outstanding-tasks-list
                (>= my-outstanding-tasks-index 0)
                (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
     (message "No valid task at current position")
-    (cl-return-from my-current-flag-counts nil))
-  
+    (cl-return nil))
   ;; Get current task information
   (let* ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list))
          (current-flag (my-get-marker-flag task-or-marker))
          (flag-name (alist-get current-flag my-priority-flag-table)))
-    
-    ;; Check validity
     (unless current-flag
       (message "Cannot determine flag for current task")
-      (cl-return-from my-current-flag-counts nil))
-    
+      (cl-return nil))
     ;; Count same-flag tasks and current position
     (let ((same-flag-count 0)
           (position 0))
-      
-      ;; Scan all tasks
       (dotimes (i (length my-outstanding-tasks-list))
         (let* ((m (nth i my-outstanding-tasks-list))
                (flag (my-get-marker-flag m)))
@@ -183,8 +184,6 @@ Uses the in-memory queue; no rebuild/resync."
             (setq same-flag-count (1+ same-flag-count))
             (when (= i my-outstanding-tasks-index)
               (setq position same-flag-count)))))
-      
-      ;; Calculate remaining (including current)
       (let ((remaining (- same-flag-count (1- position))))
         (list :flag-name flag-name
               :flag-num current-flag
@@ -252,53 +251,48 @@ Uses the in-memory queue; no rebuild/resync."
 
 ;; Anki launch function
 (defun my-launch-anki ()
-  "Run or focus Anki; never spawn duplicate instances.
-Prereqs:
-- my-anki-running-p: t when Anki is running.
-- (optional) my-android-p: t on Android."
+  "Run or focus Anki; never spawn duplicate instances."
   (interactive)
-  (when (org-queue-night-shift-p)
-    (message "Night shift active: not launching Anki.")
-    (cl-return-from my-launch-anki nil))
-  (cond
-   ;; Android
-   ((and (fboundp 'my-android-p) (my-android-p))
-    (message "Please open the Anki app manually on Android."))
-
-   ;; macOS: focus if running (AppleScript), else launch (open -a).
-   ((eq system-type 'darwin)
-    (if (and (fboundp 'my-anki-running-p) (my-anki-running-p))
-        (start-process "anki-activate" nil "osascript" "-e"
-                       "tell application id \"net.ankiweb.dtop\" to activate")
-      (start-process "anki-open" nil "/usr/bin/open" "-a" "Anki")))
-
-   ;; Windows
-   ((eq system-type 'windows-nt)
-    (if (and (fboundp 'my-anki-running-p) (my-anki-running-p))
-        (ignore-errors
-          (start-process "anki-activate" nil "powershell" "-NoProfile" "-Command"
-                         "$p=Get-Process -Name anki -ErrorAction SilentlyContinue; if($p){$ws=New-Object -ComObject WScript.Shell; $ws.AppActivate($p.Id)}"))
-      (w32-shell-execute "open" "anki.exe")))
-
-   ;; GNU/Linux
-   (t
-    (if (and (fboundp 'my-anki-running-p) (my-anki-running-p))
-        (cond
-         ((executable-find "wmctrl")
-          (or (zerop (call-process "wmctrl" nil nil nil "-x" "-a" "anki.Anki"))
-              (zerop (call-process "wmctrl" nil nil nil "-a" "Anki"))
-              (message "Anki is running; could not raise via wmctrl.")))
-         ((executable-find "xdotool")
-          (start-process "anki-activate" nil "xdotool"
-                         "search" "--onlyvisible" "--class" "anki"
-                         "windowactivate" "--sync"))
-         (t
-          (message "Anki is running; install wmctrl/xdotool to raise it.")))
-      (let ((exe (or (executable-find "anki")
-                     (executable-find "anki.bin"))))
-        (if exe
-            (start-process "Anki" nil exe)
-          (message "Anki executable not found on PATH.")))))))
+  (if (org-queue-night-shift-p)
+      (progn
+        (message "Night shift active: not launching Anki.")
+        nil)
+    (cond
+     ;; Android
+     ((and (fboundp 'my-android-p) (my-android-p))
+      (message "Please open the Anki app manually on Android."))
+     ;; macOS
+     ((eq system-type 'darwin)
+      (if (and (fboundp 'my-anki-running-p) (my-anki-running-p))
+          (start-process "anki-activate" nil "osascript" "-e"
+                         "tell application id \"net.ankiweb.dtop\" to activate")
+        (start-process "anki-open" nil "/usr/bin/open" "-a" "Anki")))
+     ;; Windows
+     ((eq system-type 'windows-nt)
+      (if (and (fboundp 'my-anki-running-p) (my-anki-running-p))
+          (ignore-errors
+            (start-process "anki-activate" nil "powershell" "-NoProfile" "-Command"
+                           "$p=Get-Process -Name anki -ErrorAction SilentlyContinue; if($p){$ws=New-Object -ComObject WScript.Shell; $ws.AppActivate($p.Id)}"))
+        (w32-shell-execute "open" "anki.exe")))
+     ;; GNU/Linux
+     (t
+      (if (and (fboundp 'my-anki-running-p) (my-anki-running-p))
+          (cond
+           ((executable-find "wmctrl")
+            (or (zerop (call-process "wmctrl" nil nil nil "-x" "-a" "anki.Anki"))
+                (zerop (call-process "wmctrl" nil nil nil "-a" "Anki"))
+                (message "Anki is running; could not raise via wmctrl.")))
+           ((executable-find "xdotool")
+            (start-process "anki-activate" nil "xdotool"
+                           "search" "--onlyvisible" "--class" "anki"
+                           "windowactivate" "--sync"))
+           (t
+            (message "Anki is running; install wmctrl/xdotool to raise it.")))
+        (let ((exe (or (executable-find "anki")
+                       (executable-find "anki.bin"))))
+          (if exe
+              (start-process "Anki" nil exe)
+            (message "Anki executable not found on PATH."))))))))
 
 ;; Display and highlighting functions
 (defun my-pulse-highlight-current-line (&optional time)

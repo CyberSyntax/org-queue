@@ -458,6 +458,7 @@ This version is deterministic and guarantees exactly WIDTH columns output."
 (defun org-queue-chooser-refresh ()
   "Refresh the chooser buffer."
   (interactive)
+  (my-launch-anki)
   (let ((inhibit-read-only t))
     (setq tabulated-list-entries (org-queue-chooser--entries))
     (tabulated-list-print t)))
@@ -466,6 +467,7 @@ This version is deterministic and guarantees exactly WIDTH columns output."
   "Force reindex + rebuild the global queue, then refresh chooser.
 In subset mode, only refresh the subset view (no global rebuild)."
   (interactive)
+  (my-launch-anki)
   (if org-queue-chooser--subset-p
       (progn
         (org-queue-chooser-refresh)
@@ -499,6 +501,7 @@ In subset mode, only refresh the subset view (no global rebuild)."
 (defun org-queue-open-chooser ()
   "Open the queue chooser buffer showing the global queue."
   (interactive)
+  (my-launch-anki)
   (my-ensure-synchronized-task-list)
   (let ((buf (get-buffer-create org-queue-chooser-buffer-name)))
     (pop-to-buffer buf)
@@ -512,6 +515,7 @@ In subset mode, only refresh the subset view (no global rebuild)."
 (defun org-queue-chooser-open-in-tab ()
   "Open the queue chooser in a dedicated tab-bar tab named \"Queue\"."
   (interactive)
+  (my-launch-anki)
   (if (not (fboundp 'tab-bar-new-tab))
       (progn (message "tab-bar-mode not available in this Emacs") (org-queue-open-chooser))
     (tab-bar-mode 1)
@@ -679,25 +683,27 @@ In subset mode, only refresh the subset view (no global rebuild)."
       (message "Moved to position %d" (1+ to)))))
 
 (defun org-queue-chooser-move-to-position (pos)
+  "Move the selected task to POS (1-based) in the global queue."
   (interactive "nMove to position (1-based): ")
   (org-queue-chooser--require-global)
   (let* ((from (tabulated-list-get-id))
          (len (length my-outstanding-tasks-list))
-         (to (1- (max 1 (min len pos)))))
+         (to  (1- (max 1 (min len pos)))))
     (unless (numberp from)
       (user-error "No task selected"))
-    (when (= from to)
-      (message "Already at that position")
-      (cl-return-from org-queue-chooser-move-to-position))
-    (let ((old-list my-outstanding-tasks-list))
-      (setq my-outstanding-tasks-list (org-queue-chooser--move-element old-list from to))
-      (setq my-outstanding-tasks-index (org-queue-chooser--adjust-index-after-move
-                                        my-outstanding-tasks-index from to))
-      (my-save-outstanding-tasks-to-file)
-      (my-queue-limit-visible-buffers)
-      (org-queue-chooser-refresh)
-      (org-queue-chooser--goto-index to)
-      (message "Moved to position %d" (1+ to)))))
+    (if (= from to)
+        (message "Already at that position")
+      (let ((old-list my-outstanding-tasks-list))
+        (setq my-outstanding-tasks-list
+              (org-queue-chooser--move-element old-list from to))
+        (setq my-outstanding-tasks-index
+              (org-queue-chooser--adjust-index-after-move
+               my-outstanding-tasks-index from to))
+        (my-save-outstanding-tasks-to-file)
+        (my-queue-limit-visible-buffers)
+        (org-queue-chooser-refresh)
+        (org-queue-chooser--goto-index to)
+        (message "Moved to position %d" (1+ to))))))
 
 ;; Mark helpers
 (defun org-queue-chooser--make-row (i)
@@ -1002,6 +1008,7 @@ This does not alter the global queue."
   (unless (derived-mode-p 'org-mode)
     (user-error "Not in org-mode buffer"))
 
+  (my-launch-anki)
   (save-excursion
     (save-restriction
       ;; If the user selected a region, narrow to it. Otherwise respect any
