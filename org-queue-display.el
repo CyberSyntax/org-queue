@@ -70,6 +70,10 @@ Uses the in-memory queue; no rebuild/resync."
   '((t (:background "#44C2FF" :foreground "black")))
   "Face for extracted text in org-mode.")
 
+(defface org-cloze-face
+  '((t (:foreground "red" :background "#FF0" :weight bold :slant normal)))
+  "Face for the visible cloze placeholder on the Front.")
+
 (defvar-local org-custom-overlays nil
   "List of overlays for custom syntax highlighting.")
 
@@ -485,7 +489,6 @@ Defaults to 0.2 seconds."
   (when (eq major-mode 'org-mode)
     (org-clear-custom-overlays)
     (cl-labels
-        ;; Recursively scan [beg,end) for ID-form markers
         ((scan (beg end)
            (save-excursion
              (goto-char beg)
@@ -494,36 +497,31 @@ Defaults to 0.2 seconds."
                  (if (looking-at "\\([A-Za-z0-9_-]+\\)#\\([A-Za-z0-9_-]+\\)|")
                      (let ((type (match-string-no-properties 1))
                            (id   (match-string-no-properties 2)))
-                       ;; Move to start of payload.
                        (goto-char (match-end 0))
                        (let ((content-beg (point)))
-                         ;; Find the exact closing token inside [content-beg, end)
                          (when (search-forward (format "|%s}}" id) end t)
                            (let* ((close-end (point))
                                   (content-end (- close-end (+ 3 (length id))))
                                   (open-end content-beg)
                                   (close-start (- close-end (+ 3 (length id)))))
-                             ;; Recurse into payload first to handle nested markers
+                             ;; Recurse first so nested markers get processed
                              (scan content-beg content-end)
-                             ;; Create overlays: hide wrappers, style payload
+                             ;; Overlays: hide wrappers, style payload
                              (let ((ov-open  (make-overlay start open-end))
                                    (ov-close (make-overlay close-start close-end))
                                    (ov-body  (make-overlay content-beg content-end)))
-                               ;; Hide wrappers
                                (overlay-put ov-open  'invisible t)
                                (overlay-put ov-close 'invisible t)
-                               ;; Optional styling over payload
                                (overlay-put ov-body 'face
                                             (cond
                                              ((string= type "extract") 'org-extract-face)
                                              ((string= type "clozed")  'org-clozed-face)
+                                             ((string= type "cloze")   'org-cloze-face)
                                              (t 'org-extract-face)))
                                (push ov-open  org-custom-overlays)
                                (push ov-close org-custom-overlays)
                                (push ov-body  org-custom-overlays))
-                             ;; Continue scanning after this marker
                              (goto-char close-end)))))
-                   ;; Not our syntax; move forward to avoid infinite loops
                    (goto-char (1+ start))))))))
       (scan (point-min) (point-max)))))
 
@@ -589,7 +587,8 @@ Defaults to 0.2 seconds."
   :group 'org)
 
 (defun org-interactive-cloze (&optional front-context)
-  "Create a cloze deletion using {{clozed#ID|SELECTION|ID}} and a child entry.
+  "Create a cloze deletion using {{clozed#ID|SELECTION|ID}} 
+  and {{cloze#ID|[...]|ID}} for the Front ellipsis.
 
 Front context options:
 - 'both   : prefix + […] + suffix (default)
@@ -618,7 +617,10 @@ Other cloze markers are unwrapped on the Front only."
                                     (my-get-current-priority-range)))
            (on-heading (save-excursion
                          (goto-char start0) (beginning-of-line) (org-at-heading-p)))
+           ;; Generate one ID and reuse it for both Back (clozed) and Front (cloze)
+           (id (org-custom-syntax--make-id))
            (ellipsis org-interactive-cloze-ellipsis)
+           (ellipsis-mark (format "{{cloze#%s|%s|%s}}" id ellipsis id))
            front-title front-block)
 
       ;; Build Front BEFORE modifying buffer
@@ -632,10 +634,10 @@ Other cloze markers are unwrapped on the Front only."
             (setq front-title
                   (my--strip-leading-stars
                    (pcase front-context
-                     ('both   (concat pre ellipsis suf))
-                     ('prefix (concat pre ellipsis))
-                     ('suffix (concat ellipsis suf))
-                     (_       (concat pre ellipsis suf))))))
+                     ('both   (concat pre ellipsis-mark suf))
+                     ('prefix (concat pre ellipsis-mark))
+                     ('suffix (concat ellipsis-mark suf))
+                     (_       (concat pre ellipsis-mark suf))))))
         (let* ((bounds (my--org-entry-body-bounds))
                (bbeg (car bounds))
                (bend (cdr bounds))
@@ -647,15 +649,14 @@ Other cloze markers are unwrapped on the Front only."
                      (buffer-substring-no-properties e bend))))
           (setq front-block
                 (pcase front-context
-                  ('both   (concat pre ellipsis suf))
-                  ('prefix (concat pre ellipsis))
-                  ('suffix (concat ellipsis suf))
-                  (_       (concat pre ellipsis suf))))))
+                  ('both   (concat pre ellipsis-mark suf))
+                  ('prefix (concat pre ellipsis-mark))
+                  ('suffix (concat ellipsis-mark suf))
+                  (_       (concat pre ellipsis-mark suf))))))
 
       ;; Replace selection in-place with ID-form {{clozed#ID|...|ID}}
-      (let ((id (org-custom-syntax--make-id)))
-        (delete-region start0 end0)
-        (insert (format "{{clozed#%s|%s|%s}}" id selected-text id)))
+      (delete-region start0 end0)
+      (insert (format "{{clozed#%s|%s|%s}}" id selected-text id))
 
       ;; Create child entry
       (save-excursion
