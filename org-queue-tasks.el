@@ -397,18 +397,20 @@ Dedupes by ID while reading; dedupes result list; rewrites cache deduped."
                         (save-excursion
                           (goto-char (marker-position marker))
                           (let* ((priority (my-get-raw-priority-value))
-                                 (flag (my-priority-flag priority))
-                                 (file (buffer-file-name))
-                                 (heading (org-get-heading t t t t))
-                                 (pos (point))
-                                 (task-plist (list :id id
-                                                   :marker marker
-                                                   :priority priority
-                                                   :flag flag
-                                                   :file file
-                                                   :is-todo (my-is-todo-task)
-                                                   :heading heading
-                                                   :pos pos)))
+                                (flag (my-priority-flag priority))
+                                (file (buffer-file-name))
+                                (heading (org-get-heading t t t t))
+                                (pos (point))
+                                (srs (eq (org-srs-entry-p (point)) 'current))
+                                (task-plist (list :id id
+                                                  :marker marker
+                                                  :priority priority
+                                                  :flag flag
+                                                  :file file
+                                                  :is-todo (my-is-todo-task)
+                                                  :heading heading
+                                                  :pos pos
+                                                  :srs srs)))
                             (push task-plist result-list)
                             (setq resolved (1+ resolved)))))
                     (setq unresolved (1+ unresolved))
@@ -612,9 +614,7 @@ Behavior:
       (message "Task removed. Now at %d/%d"
                (1+ my-outstanding-tasks-index)
                (length my-outstanding-tasks-list))
-      (my-show-current-outstanding-task)
-      ;; SRS handling
-      (my-queue-handle-srs-after-task-display)))))
+      (my-show-current-outstanding-task)))))
 
 (defun my-move-current-task-to-position (target-pos)
   "Move current task to TARGET-POS in the queue (1-based).
