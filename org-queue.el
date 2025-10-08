@@ -65,7 +65,8 @@
 ;; Bind cloze keys if cloze is available
 (when (fboundp 'org-interactive-cloze)
   (define-key org-queue-prefix-map (kbd "z") #'org-interactive-cloze)
-  (define-key org-queue-prefix-map (kbd "Z") #'org-interactive-cloze-prefix))
+  (define-key org-queue-prefix-map (kbd "Z") #'org-interactive-cloze-prefix)
+  (define-key org-queue-prefix-map (kbd "M-z") #'org-interactive-cloze-suffix))
 
 ;; Bind the prefix globally to C-c q
 (global-set-key (kbd "C-c q") org-queue-prefix-map)
