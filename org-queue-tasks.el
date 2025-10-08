@@ -51,6 +51,158 @@ only buries the ones that should not be in the immediate working set."
             (when (and buf (buffer-live-p buf) (not (gethash buf allowed)))
               (bury-buffer buf))))))))
 
+;; --- Lazy prune helpers: remove not-due items on departure/arrival ---
+
+(defun my-queue--task-due-p (task)
+  "Return non-nil if TASK is due now.
+- Non-SRS: outstanding (scheduled today or earlier, or QFORCE).
+- SRS: has next-due time <= now (suppressed during night shift)."
+  (let ((m (my-extract-marker task)))
+    (when (and (markerp m) (marker-buffer m) (buffer-live-p (marker-buffer m)))
+      (org-with-point-at m
+        (cond
+         ;; SRS: only due if not night shift and next-due <= now
+         ((plist-get task :srs)
+          (and (not (org-queue-night-shift-p))
+               (let ((due (org-queue-srs-next-due-time (point))))
+                 (and due (not (time-less-p (current-time) due))))))
+         ;; Non-SRS: outstanding?
+         (t (my-is-outstanding-task)))))))
+
+(defun my-queue--refresh-chooser-buffers ()
+  (dolist (b (list "*Org Queue*" "*Org Queue (Subset)*"))
+    (when (get-buffer b)
+      (with-current-buffer b
+        (when (derived-mode-p 'org-queue-chooser-mode)
+          (when (fboundp 'org-queue-chooser-refresh)
+            (ignore-errors (org-queue-chooser-refresh))))))))
+
+(defun my-queue--remove-index (idx &optional quiet)
+  "Remove entry at IDX from the queue; do not display anything."
+  (when (and my-outstanding-tasks-list
+             (numberp idx)
+             (>= idx 0)
+             (< idx (length my-outstanding-tasks-list)))
+    (let* ((removed (nth idx my-outstanding-tasks-list))
+           (buf (my-safe-marker-buffer removed)))
+      (setq my-outstanding-tasks-list
+            (append (seq-take my-outstanding-tasks-list idx)
+                    (seq-drop  my-outstanding-tasks-list (1+ idx))))
+      ;; Clamp index
+      (when (>= my-outstanding-tasks-index (length my-outstanding-tasks-list))
+        (setq my-outstanding-tasks-index (max 0 (1- (length my-outstanding-tasks-list)))))
+      ;; Tidy buffers, save, refresh chooser
+      (when (buffer-live-p buf) (bury-buffer buf))
+      (my-queue-limit-visible-buffers)
+      (my-save-outstanding-tasks-to-file)
+      (unless quiet
+        (message "Removed 1 item from queue; now %d total."
+                 (length my-outstanding-tasks-list)))
+      (my-queue--refresh-chooser-buffers)
+      t)))
+
+(defun my-queue--prune-current-if-not-due (&optional quiet)
+  "If the current queue item isn’t due, remove it. Return t if pruned."
+  (when (and my-outstanding-tasks-list
+             (>= my-outstanding-tasks-index 0)
+             (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
+    (let ((task (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
+      (unless (my-queue--task-due-p task)
+        (my-queue--remove-index my-outstanding-tasks-index quiet)))))
+
+(defun my-queue--skip-not-due-forward (start-idx &optional quiet)
+  "From START-IDX, remove not-due items at that index until a due item is found or list empty.
+Return final index (or 0 if empty)."
+  (let ((idx start-idx))
+    (while (and my-outstanding-tasks-list
+                (>= idx 0)
+                (< idx (length my-outstanding-tasks-list))
+                (not (my-queue--task-due-p (nth idx my-outstanding-tasks-list))))
+      ;; Remove the candidate at IDX; after removal the next candidate slides into same IDX
+      (my-queue--remove-index idx t))
+    (if (zerop (length my-outstanding-tasks-list)) 0
+      (min idx (1- (length my-outstanding-tasks-list))))))
+
+(defun my-queue--skip-not-due-backward (start-idx &optional quiet)
+  "From START-IDX, remove not-due items at that index (backward semantics).
+We still remove at START-IDX and keep idx = min(idx, last) after each removal.
+Return final index (or 0 if empty)."
+  (let ((idx start-idx))
+    (while (and my-outstanding-tasks-list
+                (>= idx 0)
+                (< idx (length my-outstanding-tasks-list))
+                (not (my-queue--task-due-p (nth idx my-outstanding-tasks-list))))
+      (my-queue--remove-index idx t)
+      (setq idx (min idx (max 0 (1- (length my-outstanding-tasks-list))))))
+    (if (zerop (length my-outstanding-tasks-list)) 0
+      (min idx (1- (length my-outstanding-tasks-list))))))
+
+(defun my-queue-filter-not-due-in-place (&optional quiet)
+  "Remove all not-due items from the current queue list in one pass.
+Returns the number of removed items. Only touches items already in the queue."
+  (when my-outstanding-tasks-list
+    (let* ((old my-outstanding-tasks-list)
+           (new (let (acc)
+                  (dolist (task old (nreverse acc))
+                    (when (my-queue--task-due-p task)
+                      (push task acc)))))
+           (removed (- (length old) (length new))))
+      (setq my-outstanding-tasks-list new)
+      ;; Clamp index if needed
+      (when (>= my-outstanding-tasks-index (length new))
+        (setq my-outstanding-tasks-index (max 0 (1- (length new)))))
+      ;; Tidy, save, refresh chooser
+      (my-queue-limit-visible-buffers)
+      (my-save-outstanding-tasks-to-file)
+      (my-queue--refresh-chooser-buffers)
+      (unless quiet
+        (message "Pruned %d not-due item(s) from queue" removed))
+      removed)))
+
+(defcustom org-queue-file-roster-ttl 20
+  "Seconds to cache the list of Org files for soft rebuild."
+  :type 'integer :group 'org-queue)
+
+(defvar org-queue--file-roster-cache nil)
+(defvar org-queue--file-roster-ts 0)
+
+(defun org-queue-file-list-cached (&optional force)
+  "Return cached file roster or reindex when stale or FORCE."
+  (let* ((now (float-time))
+         (stale (> (- now org-queue--file-roster-ts) org-queue-file-roster-ttl)))
+    (when (or force (null org-queue--file-roster-cache) stale)
+      (setq org-queue--file-roster-cache (org-queue-reindex-files t))
+      (setq org-queue--file-roster-ts now))
+    org-queue--file-roster-cache))
+
+(defun org-queue-rebuild-soft ()
+  "Rebuild queue (priority sort + SRS mixing) without reindexing disk.
+Uses cached file roster (see `org-queue-file-roster-ttl')."
+  (interactive)
+  (let ((files (org-queue-file-list-cached)))
+    (cl-letf (((symbol-function 'org-queue-file-list)
+               (lambda () files)))
+      (my-get-outstanding-tasks)  ;; does priority sort and SRS mixing
+      (setq my-outstanding-tasks-index
+            (min my-outstanding-tasks-index
+                 (max 0 (1- (length my-outstanding-tasks-list)))))
+      (my-save-outstanding-tasks-to-file)
+      (my-queue--refresh-chooser-buffers)
+      (my-show-current-outstanding-task-no-srs t)
+      (message "org-queue: soft rebuild (no reindex): %d task(s)"
+               (length my-outstanding-tasks-list)))))
+
+(defun org-queue-prune-queue ()
+  "Prune not-due items from the in-memory queue; keep order; no resort."
+  (interactive)
+  (let ((removed (or (my-queue-filter-not-due-in-place) 0)))
+    (my-show-current-outstanding-task-no-srs t)
+    (message "Pruned %d; %d remain"
+             removed (length my-outstanding-tasks-list))))
+
+;; Backward-compat alias (safe to keep; remove later if you wish)
+(defalias 'org-queue-fast-refresh 'org-queue-prune-queue)
+
 ;; Variables for task list management
 (defvar my-outstanding-tasks-list nil
   "List of outstanding tasks, sorted by priority.")
@@ -868,13 +1020,19 @@ Rules:
   (interactive)
   (widen-and-recenter)
   (my-ensure-task-list-present)
+
+  ;; Prune the item you’re leaving if it’s no longer due (SRS future, scheduled future, or night shift SRS).
+  (while (my-queue--prune-current-if-not-due t))
+
   (if (and my-outstanding-tasks-list
            (> (length my-outstanding-tasks-list) 0))
       (let* ((len (length my-outstanding-tasks-list))
-             (idx (mod (1+ my-outstanding-tasks-index) len)))
-        (setq my-outstanding-tasks-index idx)
+             (candidate (mod (1+ my-outstanding-tasks-index) len)))
+        ;; Skip any not-due items we would land on (remove them as we go).
+        (setq candidate (my-queue--skip-not-due-forward candidate t))
+        (setq my-outstanding-tasks-index candidate)
         (my-save-index-to-file)
-        (let ((task (nth idx my-outstanding-tasks-list)))
+        (let ((task (nth candidate my-outstanding-tasks-list)))
           (my-display-task-at-marker task)
           (my-pulse-highlight-current-line)
           (my-queue-limit-visible-buffers)
@@ -887,13 +1045,19 @@ Rules:
   (interactive)
   (widen-and-recenter)
   (my-ensure-task-list-present)
+
+  ;; Prune the item you’re leaving if it’s no longer due
+  (while (my-queue--prune-current-if-not-due t))
+
   (if (and my-outstanding-tasks-list
            (> (length my-outstanding-tasks-list) 0))
       (let* ((len (length my-outstanding-tasks-list))
-             (idx (mod (1- my-outstanding-tasks-index) len)))
-        (setq my-outstanding-tasks-index idx)
+             (candidate (mod (1- my-outstanding-tasks-index) len)))
+        ;; Skip any not-due items we would land on (remove them)
+        (setq candidate (my-queue--skip-not-due-backward candidate t))
+        (setq my-outstanding-tasks-index candidate)
         (my-save-index-to-file)
-        (let ((task (nth idx my-outstanding-tasks-list)))
+        (let ((task (nth candidate my-outstanding-tasks-list)))
           (my-display-task-at-marker task)
           (my-pulse-highlight-current-line)
           (my-queue-limit-visible-buffers)
@@ -919,6 +1083,10 @@ Rules:
   (interactive)
   (widen-and-recenter)
   (my-ensure-task-list-present)
+
+  ;; If current is not due (e.g., SRS reviewed already, or night shift started), prune it first.
+  (while (my-queue--prune-current-if-not-due t))
+
   (if (and my-outstanding-tasks-list
            (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
       (let ((task (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
@@ -983,18 +1151,16 @@ Rules:
         (my-save-outstanding-tasks-to-file)
         (message "org-queue: queue built and saved"))))
 
+  ;; Fast prune current queue (removes SRS during night shift and any not-due items)
+  (ignore-errors (my-queue-filter-not-due-in-place t))
+
   ;; Schedule task display (no SRS auto-start here)
   (run-with-idle-timer 1.5 nil
                        (lambda ()
                          (condition-case err
-                             (if (and my-outstanding-tasks-list
-                                      (> (length my-outstanding-tasks-list) 0)
-                                      (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
-                                 (let ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
-                                   (delete-other-windows)
-                                   (my-display-task-at-marker task-or-marker)
-                                   (my-show-current-flag-status))
-                               (message "Task list empty or invalid index"))
+                             (progn
+                               (delete-other-windows)
+                               (my-show-current-outstanding-task)) ;; prune-aware
                            (error
                             (message "Error preparing task display: %s" (error-message-string err)))))))
 

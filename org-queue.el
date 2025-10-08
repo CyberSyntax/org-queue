@@ -27,6 +27,7 @@
                    ("q" org-queue-open-chooser-from-buffer)
                    ("r" my-remove-current-task)
                    ("R" my-reset-and-show-current-outstanding-task)
+                   ("g" org-queue-rebuild-soft)
                    ("G" org-queue-hard-refresh)
                    ("i" my-increase-priority-range)
                    ("d" my-decrease-priority-range)
@@ -48,9 +49,6 @@
 (when (require 'org-web-tools nil t)
   (define-key org-queue-prefix-map (kbd "l") #'org-web-tools-insert-link-for-url)
   (define-key org-queue-prefix-map (kbd "I") #'org-web-tools-insert-web-page-as-entry))
-
-(when (require 'gptel nil t)
-  (define-key org-queue-prefix-map (kbd "g") #'gptel))
 
 ;; SRS review commands - bind if functions exist
 (when (fboundp 'org-queue-srs-rate-again)
