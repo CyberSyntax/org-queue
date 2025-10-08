@@ -257,6 +257,9 @@ Prereqs:
 - my-anki-running-p: t when Anki is running.
 - (optional) my-android-p: t on Android."
   (interactive)
+  (when (org-queue-night-shift-p)
+    (message "Night shift active: not launching Anki.")
+    (cl-return-from my-launch-anki nil))
   (cond
    ;; Android
    ((and (fboundp 'my-android-p) (my-android-p))

@@ -21,6 +21,43 @@
   (eq system-type 'android)
   "Non-nil if running on Android.")
 
+;; Night shift configuration
+(defcustom org-queue-night-shift-enabled t
+  "If non-nil, night shift rules are enforced."
+  :type 'boolean
+  :group 'org-queue)
+
+(defcustom org-queue-night-shift-start "22:00"
+  "Local time-of-day when night shift begins (HH:MM, 24h)."
+  :type 'string
+  :group 'org-queue)
+
+(defcustom org-queue-night-shift-end "06:00"
+  "Local time-of-day when night shift ends (HH:MM, 24h)."
+  :type 'string
+  :group 'org-queue)
+
+(defun org-queue--parse-hhmm (s)
+  "Return minutes since midnight for string S = \"HH:MM\"."
+  (when (and (stringp s) (string-match "\\`\\([0-2][0-9]\\):\\([0-5][0-9]\\)\\'" s))
+    (+ (* 60 (string-to-number (match-string 1 s)))
+       (string-to-number (match-string 2 s)))))
+
+(defun org-queue-night-shift-p (&optional at-time)
+  "Return non-nil if local time AT-TIME is within night-shift window.
+Uses `org-queue-night-shift-enabled', `org-queue-night-shift-start', and
+`org-queue-night-shift-end'. If AT-TIME is nil, use current time."
+  (when org-queue-night-shift-enabled
+    (let* ((now (or at-time (current-time)))
+           (hm (+ (* 60 (string-to-number (format-time-string "%H" now)))
+                  (string-to-number (format-time-string "%M" now)))))
+      (let ((start (org-queue--parse-hhmm org-queue-night-shift-start))
+            (end   (org-queue--parse-hhmm org-queue-night-shift-end)))
+        (when (and start end)
+          (if (<= start end)
+              (and (>= hm start) (< hm end))
+            (or (>= hm start) (< hm end))))))))
+
 ;;; Priority Configuration
 (setq org-priority-highest 1)
 (setq org-priority-default 32)

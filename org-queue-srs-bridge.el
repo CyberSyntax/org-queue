@@ -6,6 +6,7 @@
 
 (require 'org)
 (require 'cl-lib)
+(require 'org-queue-config)
 (require 'org-queue-utils)
 
 (defcustom org-queue-preinit-srs nil
@@ -249,6 +250,8 @@ Prefer the row with mark \"*\" in the first column; else the earliest valid time
 (defun org-queue-collect-srs-due-items ()
   "Collect SRS entries due now (timestamp <= now) as task plists.
 Each plist contains: :id :marker :priority :flag :file :heading :pos :srs t :srs-due <time>."
+  (when (org-queue-night-shift-p)
+    (cl-return-from org-queue-collect-srs-due-items nil))
   (let ((now (current-time))
         (items '()))
     (org-queue-map-entries

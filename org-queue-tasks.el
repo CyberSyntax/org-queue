@@ -532,13 +532,16 @@ Dedupes by ID while reading; dedupes result list; rewrites cache deduped."
                         (t (string< (or (plist-get (cdr a) :id) "")
                                     (or (plist-get (cdr b) :id) "")))))))))
     ;; Collect SRS due items now
-    (let* ((srs (org-queue-collect-srs-due-items))
-           (ratio (or (and (boundp 'org-queue-srs-mix-ratio)
-                           org-queue-srs-mix-ratio)
-                      '(1 . 4)))
-           (a-count (car ratio))
-           (b-count (cdr ratio))
-           (mixed (org-queue--interleave-by-ratio (copy-sequence non-srs)
+    (let* ((night (org-queue-night-shift-p))
+          (srs (unless night (org-queue-collect-srs-due-items)))
+          (ratio (if night
+                      '(1 . 0)  ;; suppress SRS during night shift
+                    (or (and (boundp 'org-queue-srs-mix-ratio)
+                            org-queue-srs-mix-ratio)
+                        '(1 . 4))))
+          (a-count (car ratio))
+          (b-count (cdr ratio))
+          (mixed (org-queue--interleave-by-ratio (copy-sequence non-srs)
                                                   (copy-sequence srs)
                                                   a-count b-count)))
       (setq my-outstanding-tasks-list mixed))
@@ -546,7 +549,9 @@ Dedupes by ID while reading; dedupes result list; rewrites cache deduped."
     (let ((todo-count (length (cl-remove-if-not (lambda (task) (plist-get task :is-todo))
                                                 my-outstanding-tasks-list)))
           (total-count (length my-outstanding-tasks-list)))
-      (message "=== QUEUE BUILT (SRS integrated) ===")
+      (message (if (org-queue-night-shift-p)
+                  "=== QUEUE BUILT (SRS suppressed for night shift) ==="
+                "=== QUEUE BUILT (SRS integrated) ==="))
       (message "Total tasks in queue: %d (TODO: %d)" total-count todo-count))
     (setq my-outstanding-tasks-index 0)
     (my-queue-limit-visible-buffers)))
@@ -842,16 +847,17 @@ Saves buffers and regenerates the task list for consistency."
 (defvar my-queue--orchestrating nil
   "Prevent re-entrancy while orchestrating SRS/Anki.")
 
-(defun my-queue-handle-srs-after-task-display ()
-  "Launch/focus Anki first, then (re)start org-srs reviews.
-Guarded by `my-queue--orchestrating' to avoid re-entrancy."
+(defun my-queue-handle-srs-after-task-display (&optional task)
+  "Launch/focus Anki only when appropriate.
+Rules:
+- Never during night shift.
+- Only for non-SRS items (TASK lacks :srs)."
   (unless my-queue--orchestrating
     (let ((my-queue--orchestrating t))
       (condition-case err
-          (if my-android-p
-              (my-launch-anki)
-            (progn
-              ;; Launch Anki first so you can start studying immediately
+          (let ((night (org-queue-night-shift-p))
+                (is-srs (and (listp task) (plist-get task :srs))))
+            (when (and (not night) (not is-srs))
               (my-launch-anki)))
         (error
          (message "org-queue: SRS/Anki orchestration failed: %s"
@@ -872,7 +878,7 @@ Guarded by `my-queue--orchestrating' to avoid re-entrancy."
           (my-display-task-at-marker task)
           (my-pulse-highlight-current-line)
           (my-queue-limit-visible-buffers)
-          (my-queue-handle-srs-after-task-display)
+          (my-queue-handle-srs-after-task-display task)
           (my-show-current-flag-status)))
     (message "No outstanding tasks found.")))
 
@@ -919,7 +925,7 @@ Guarded by `my-queue--orchestrating' to avoid re-entrancy."
         (my-display-task-at-marker task)
         (my-pulse-highlight-current-line)
         (my-queue-limit-visible-buffers)
-        (my-queue-handle-srs-after-task-display)
+        (my-queue-handle-srs-after-task-display task)
         (my-show-current-flag-status))
     (message "No outstanding tasks found.")))
 
