@@ -48,18 +48,24 @@
 (when (require 'org-web-tools nil t)
   (define-key org-queue-prefix-map (kbd "l") #'org-web-tools-insert-link-for-url)
   (define-key org-queue-prefix-map (kbd "I") #'org-web-tools-insert-web-page-as-entry))
+
 (when (require 'gptel nil t)
   (define-key org-queue-prefix-map (kbd "g") #'gptel))
+
 ;; SRS review commands - bind if functions exist
 (when (fboundp 'org-queue-srs-rate-again)
   (define-key org-queue-prefix-map (kbd "1") #'org-queue-srs-rate-again))
 (when (fboundp 'org-queue-srs-rate-good)
   (define-key org-queue-prefix-map (kbd "3") #'org-queue-srs-rate-good))
-;; Bind cloze command if function exists (works with or without org-srs)
-(when (fboundp 'org-interactive-cloze)
+
+;; Bind S if SRS item creation is available
+(when (fboundp 'org-queue-srs-item-create-card)
   (define-key org-queue-prefix-map (kbd "S") #'org-queue-srs-item-create-card))
+
+;; Bind cloze keys if cloze is available
+(when (fboundp 'org-interactive-cloze)
   (define-key org-queue-prefix-map (kbd "z") #'org-interactive-cloze)
-  (define-key org-queue-prefix-map (kbd "Z") #'org-interactive-cloze-prefix-only))
+  (define-key org-queue-prefix-map (kbd "Z") #'org-interactive-cloze-prefix))
 
 ;; Bind the prefix globally to C-c q
 (global-set-key (kbd "C-c q") org-queue-prefix-map)

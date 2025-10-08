@@ -615,12 +615,33 @@ Defaults to 0.2 seconds."
   (when s
     (replace-regexp-in-string "{{clozed:\\([^}]*\\)}}" "\\1" s)))
 
-(defun org-interactive-cloze ()
-  "Create a cloze deletion.
-- On a heading line: child heading title is Front (other clozes unwrapped); Back is the selected text in the child body.
-- In body: child has Front/Back subheadings; Front = whole entry body with […] replacing selection and all other clozes unwrapped; Back = selected text.
-Other cloze markers remain in the original location only."
-  (interactive)
+(defcustom org-interactive-cloze-ellipsis "[...]"
+  "String used to indicate the cloze gap on the Front."
+  :type 'string
+  :group 'org)
+
+(defun org-interactive-cloze (&optional front-context)
+  "Create a cloze deletion with configurable Front context.
+
+Front context options:
+- 'both   : prefix + […] + suffix (default; original behavior)
+- 'prefix : prefix + […]
+- 'suffix : […] + suffix
+
+Behavior:
+- On a heading line: child heading title is the Front; child body is the selected text (Back).
+- In body: child has Front/Back subheadings; Front is built from the entry body around the selection; Back is the selected text.
+Other cloze markers are unwrapped on the Front only; the selection is replaced in-place with {{clozed:...}}.
+
+Interactively:
+- No prefix arg: use 'both.
+- With C-u: prompt for one of (both, prefix, suffix)."
+  (interactive
+   (list (when current-prefix-arg
+           (intern (completing-read
+                    "Front context: "
+                    '("both" "prefix" "suffix") nil t nil nil "both")))))
+  (setq front-context (or front-context 'both))
   (if (not (use-region-p))
       (message "Please select text to create a cloze")
     (let* ((start0 (region-beginning))
@@ -629,35 +650,48 @@ Other cloze markers remain in the original location only."
            (heading-pos (save-excursion (goto-char start0) (org-back-to-heading t) (point)))
            (heading-level (save-excursion (goto-char heading-pos) (org-current-level)))
            (parent-priority-range (save-excursion
-                                   (goto-char heading-pos)
-                                   (my-get-current-priority-range)))
+                                    (goto-char heading-pos)
+                                    (my-get-current-priority-range)))
            (on-heading (save-excursion
                          (goto-char start0) (beginning-of-line) (org-at-heading-p)))
+           (ellipsis org-interactive-cloze-ellipsis)
            front-title front-block)
+
       ;; Build Front BEFORE modifying buffer
       (if on-heading
           (let* ((lb (save-excursion (goto-char start0) (line-beginning-position)))
                  (le (save-excursion (goto-char end0)   (line-end-position)))
-                 (prefix (buffer-substring-no-properties lb start0))
-                 (suffix (buffer-substring-no-properties end0 le)))
+                 (pre-raw (buffer-substring-no-properties lb start0))
+                 (suf-raw (buffer-substring-no-properties end0 le))
+                 (pre (my--strip-clozes-in-string pre-raw))
+                 (suf (my--strip-clozes-in-string suf-raw)))
             (setq front-title
                   (my--strip-leading-stars
-                   (my--strip-clozes-in-string
-                    (concat prefix "[...]" suffix)))))
+                   (pcase front-context
+                     ('both   (concat pre ellipsis suf))
+                     ('prefix (concat pre ellipsis))
+                     ('suffix (concat ellipsis suf))
+                     (_       (concat pre ellipsis suf))))))
         (let* ((bounds (my--org-entry-body-bounds))
                (bbeg (car bounds))
                (bend (cdr bounds))
                (s (max start0 bbeg))
                (e (min end0 bend))
-               (prefix (buffer-substring-no-properties bbeg s))
-               (suffix (buffer-substring-no-properties e bend)))
+               (pre (my--strip-clozes-in-string
+                     (buffer-substring-no-properties bbeg s)))
+               (suf (my--strip-clozes-in-string
+                     (buffer-substring-no-properties e bend))))
           (setq front-block
-                (concat (my--strip-clozes-in-string prefix)
-                        "[...]"
-                        (my--strip-clozes-in-string suffix)))))
+                (pcase front-context
+                  ('both   (concat pre ellipsis suf))
+                  ('prefix (concat pre ellipsis))
+                  ('suffix (concat ellipsis suf))
+                  (_       (concat pre ellipsis suf))))))
+
       ;; Replace selection in-place with {{clozed:...}}
       (delete-region start0 end0)
       (insert (format "{{clozed:%s}}" selected-text))
+
       ;; Create child entry
       (save-excursion
         (goto-char heading-pos)
@@ -686,88 +720,20 @@ Other cloze markers remain in the original location only."
           (org-id-get-create)
           (when (fboundp 'org-srs-item-new)
             (org-srs-item-new 'card))))
-      (message "Created cloze deletion"))))
+      (message "Created cloze (%s)" (symbol-name front-context)))))
 
-(defun org-interactive-cloze-prefix-only ()
-  "Create a cloze whose Front shows only the preceding context.
-Examples:
-  Text:  \"I am a boy.\"
-  Region: \"am\"
-  Front:  \"I [...]\"
-  Back:   \"am\"
-
-Behavior:
-- On a heading line: child heading title becomes the preceding text + [...];
-  child body becomes the selected text (Back).
-- In the body: child gets Front/Back subheadings; Front is the entry body content
-  before the selection + [...]; Back is the selected text.
-Other cloze markers are unwrapped on the Front."
+;; Thin wrappers (no duplicated logic): just pass the option for convenience
+(defun org-interactive-cloze-prefix ()
+  "Create a cloze whose Front shows only the preceding context."
   (interactive)
-  (if (not (use-region-p))
-      (message "Please select text to create a cloze")
-    (let* ((start0 (region-beginning))
-           (end0   (region-end))
-           (selected-text (buffer-substring-no-properties start0 end0))
-           (heading-pos (save-excursion (goto-char start0) (org-back-to-heading t) (point)))
-           (heading-level (save-excursion (goto-char heading-pos) (org-current-level)))
-           (parent-priority-range (save-excursion
-                                    (goto-char heading-pos)
-                                    (my-get-current-priority-range)))
-           (on-heading (save-excursion
-                         (goto-char start0) (beginning-of-line) (org-at-heading-p)))
-           front-title front-block)
+  (org-interactive-cloze 'prefix))
 
-      ;; Build Front BEFORE modifying the buffer
-      (if on-heading
-          (let* ((lb (save-excursion (goto-char start0) (line-beginning-position)))
-                 (prefix (buffer-substring-no-properties lb start0)))
-            (setq front-title
-                  (my--strip-leading-stars
-                   (my--strip-clozes-in-string
-                    (concat prefix "[...]")))))
-        (let* ((bounds (my--org-entry-body-bounds))
-               (bbeg (car bounds))
-               (s (max start0 bbeg))
-               (prefix (buffer-substring-no-properties bbeg s)))
-          (setq front-block
-                (concat (my--strip-clozes-in-string prefix)
-                        "[...]"))))
-
-      ;; Replace selection in-place with {{clozed:...}}
-      (delete-region start0 end0)
-      (insert (format "{{clozed:%s}}" selected-text))
-
-      ;; Create child entry
-      (save-excursion
-        (goto-char heading-pos)
-        (org-end-of-subtree)
-        (let ((new-heading-pos (point)))
-          (insert "\n" (make-string (1+ heading-level) ?*) " ")
-          (if on-heading
-              (progn
-                (insert (if (> (length (string-trim (or front-title ""))) 0)
-                            front-title
-                          "(untitled)"))
-                (insert "\n")
-                (insert selected-text))
-            ;; Body: blank title; Front/Back subheads
-            (insert "\n")
-            (insert (make-string (+ 2 heading-level) ?*) " Front\n")
-            (when front-block (insert front-block))
-            (unless (bolp) (insert "\n"))
-            (insert (make-string (+ 2 heading-level) ?*) " Back\n")
-            (insert selected-text))
-          ;; Priority, ID, SRS
-          (when parent-priority-range
-            (goto-char (1+ new-heading-pos))
-            (my-set-priority-with-heuristics parent-priority-range))
-          (goto-char (1+ new-heading-pos))
-          (org-id-get-create)
-          (when (fboundp 'org-srs-item-new)
-            (org-srs-item-new 'card))))
-      (message "Created cloze (preceding context only)"))))
-
-(defun org-interactive-extract ()
+(defun org-interactive-cloze-suffix ()
+  "Create a cloze whose Front shows only the following context."
+  (interactive)
+  (org-interactive-cloze 'suffix))
+  
+  (defun org-interactive-extract ()
   "Create a SuperMemo-style extract from selected text and generate a child heading."
   (interactive)
   (if (not (use-region-p))
