@@ -73,6 +73,27 @@ Uses the in-memory queue; no rebuild/resync."
 (defvar-local org-custom-overlays nil
   "List of overlays for custom syntax highlighting.")
 
+;; ID generator for {{type#ID|...|ID}}
+(defconst org-custom-syntax--id-length 12)
+(defconst org-custom-syntax--id-charset
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
+(defvar org-custom-syntax--rng-seeded nil)
+
+(defun org-custom-syntax--ensure-rng ()
+  (unless org-custom-syntax--rng-seeded
+    (random t)
+    (setq org-custom-syntax--rng-seeded t)))
+
+(defun org-custom-syntax--make-id ()
+  "Generate a short ID."
+  (org-custom-syntax--ensure-rng)
+  (let* ((alphabet org-custom-syntax--id-charset)
+         (alen (length alphabet))
+         (len org-custom-syntax--id-length))
+    (apply #'string
+           (cl-loop repeat len
+                    collect (aref alphabet (random alen))))))
+
 ;; Flag display constants and functions
 (defconst my-priority-flag-table
   '((1 . "Flag:1")          ; 1
@@ -456,126 +477,43 @@ Defaults to 0.2 seconds."
     (delete-overlay (pop org-custom-overlays))))
 
 (defun org-highlight-custom-syntax ()
-  "Highlight custom syntax patterns like {{extract:...}} with proper handling of nested structures."
+  "Highlight {{type#ID|PAYLOAD|ID}} markers by displaying PAYLOAD.
+Supports any type matching [A-Za-z0-9_-]+."
   (interactive)
   (when (eq major-mode 'org-mode)
     (org-clear-custom-overlays)
     (save-excursion
       (goto-char (point-min))
-      ;; Simple approach for now - just handle basic cases
-      (while (re-search-forward "{{\\(extract\\|clozed\\|[^}:]*\\):" nil t)
+      (while (search-forward "{{" nil t)
         (let ((start (match-beginning 0))
-              (type (match-string-no-properties 1))
-              (content-start (point))
-              (brace-level 1)
-              (found-end nil)
-              ;; Stack to track nested structures (LaTeX, citations, etc.)
-              (context-stack '())
-              ;; Point where we need to track from
-              (search-start-pos (point)))
-          
-          ;; Process character by character to properly handle all nested structures
-          (while (and (not found-end) (not (eobp)))
-            (let ((char-at-point (char-after)))
-              (cond
-               ;; Track superscript citation patterns
-               ((and (= char-at-point ?^) (looking-at "\\^{"))
-                (push 'citation context-stack)
-                (forward-char 2)  ; Skip ^{
-                (setq search-start-pos (point)))
-               
-               ;; Handle square brackets in citations
-               ((and (eq (car-safe context-stack) 'citation)
-                     (= char-at-point ?\[))
-                (push 'bracket context-stack)
-                (forward-char 1))
-               
-               ;; Handle closing square brackets in citations
-               ((and (eq (car-safe context-stack) 'bracket)
-                     (= char-at-point ?\]))
-                (pop context-stack)  ; Remove the bracket context
-                (forward-char 1))
-               
-               ;; Handle closing brace for citations
-               ((and (eq (car-safe context-stack) 'citation)
-                     (= char-at-point ?}))
-                (pop context-stack)  ; Remove the citation context
-                (forward-char 1))
-               
-               ;; Handle LaTeX inline math \( ... \)
-               ((looking-at "\\\\(")
-                (push 'latex-inline context-stack)
-                (forward-char 2))
-               
-               ((and (eq (car-safe context-stack) 'latex-inline)
-                     (looking-at "\\\\)"))
-                (pop context-stack)  ; End of inline math
-                (forward-char 2))
-               
-               ;; Handle LaTeX environments
-               ((looking-at "\\\\begin{\\([^}]+\\)}")
-                (push (cons 'latex-env (match-string-no-properties 1)) context-stack)
-                (goto-char (match-end 0)))
-               
-               ((and (looking-at "\\\\end{\\([^}]+\\)}")
-                     (eq (car-safe (car-safe context-stack)) 'latex-env))
-                (let ((env (match-string-no-properties 1)))
-                  (when (string= env (cdr (car context-stack)))
-                    (pop context-stack)))
-                (goto-char (match-end 0)))
-               
-               ;; Handle dollar sign math delimiters
-               ((= char-at-point ?$)
-                (if (eq (car-safe context-stack) 'latex-dollar)
-                    (pop context-stack)
-                  (push 'latex-dollar context-stack))
-                (forward-char 1))
-               
-               ;; Handle double dollar sign math delimiters
-               ((looking-at "\\$\\$")
-                (if (eq (car-safe context-stack) 'latex-double-dollar)
-                    (pop context-stack)
-                  (push 'latex-double-dollar context-stack))
-                (forward-char 2))
-               
-               ;; Handle opening braces - only count when not in a special context
-               ((and (= char-at-point ?{) (looking-at "{{")
-                     (not context-stack))
-                (setq brace-level (1+ brace-level))
-                (forward-char 2))
-               
-               ;; Handle closing braces - only count when not in special context
-               ((and (= char-at-point ?}) (looking-at "}}")
-                     (not context-stack))
-                (setq brace-level (1- brace-level))
-                (if (zerop brace-level)
-                    (progn
-                      (setq found-end (+ (point) 2))
-                      (forward-char 2))
-                  (forward-char 2)))
-               
-               ;; Default: just move forward one character
-               (t
-                (forward-char 1)))))
-          
-          ;; Apply highlighting if we found the end
+              type id content-beg content-end found-end)
+          (cond
+           ;; ID form: {{type#ID| ... |ID}}
+           ((looking-at "\\([A-Za-z0-9_-]+\\)#\\([A-Za-z0-9_-]+\\)|")
+            (setq type (match-string-no-properties 1))
+            (setq id   (match-string-no-properties 2))
+            (goto-char (match-end 0))
+            (setq content-beg (point))
+            (if (search-forward (format "|%s}}" id) nil t)
+                (progn
+                  (setq found-end (point))
+                  (setq content-end (- found-end (+ 3 (length id)))))
+              ;; malformed; step forward to avoid infinite loops
+              (goto-char (1+ start))))
+           ;; Not our syntax; skip forward safely
+           (t (goto-char (1+ start))))
           (when found-end
-            ;; Create overlay for the entire construct
-            (let ((main-overlay (make-overlay start found-end))
-                  ;; Extract the content between the markers
-                  (content-text (buffer-substring-no-properties content-start (- found-end 2))))
-              
-              ;; Set the face for the overlay
-              (overlay-put main-overlay 'face
+            (let* ((ov (make-overlay start found-end))
+                   (content (buffer-substring-no-properties content-beg content-end)))
+              (overlay-put ov 'face
                            (cond
                             ((string= type "extract") 'org-extract-face)
-                            ((string= type "clozed") 'org-clozed-face)
-                            (t 'org-extract-face)))  ; Default to extract face
-              
-              ;; Hide the opening and closing markers, show only content
-              (overlay-put main-overlay 'display content-text)
-              
-              (push main-overlay org-custom-overlays))))))))
+                            ((string= type "clozed")  'org-clozed-face)
+                            (t 'org-extract-face)))
+              (overlay-put ov 'display content)
+              (overlay-put ov 'org-custom-syntax t)
+              (push ov org-custom-overlays))
+            (goto-char found-end)))))))
 
 (defun org-refresh-all-custom-highlighting ()
   "Refresh custom syntax highlighting in all org-mode buffers."
@@ -611,9 +549,27 @@ Defaults to 0.2 seconds."
       (cons beg end))))
 
 (defun my--strip-clozes-in-string (s)
-  "Return S with all {{clozed:...}} unwrapped to inner text."
+  "Return S with all {{clozed#ID|...|ID}} unwrapped to inner text."
   (when s
-    (replace-regexp-in-string "{{clozed:\\([^}]*\\)}}" "\\1" s)))
+    (with-temp-buffer
+      (insert s)
+      (goto-char (point-min))
+      (while (search-forward "{{clozed#" nil t)
+        (let ((start (match-beginning 0)))
+          (if (looking-at "\\([A-Za-z0-9_-]+\\)|")
+              (let ((id (match-string-no-properties 1)))
+                (goto-char (match-end 0))
+                (let ((content-beg (point)))
+                  (if (search-forward (format "|%s}}" id) nil t)
+                      (let ((content (buffer-substring-no-properties
+                                      content-beg
+                                      (- (point) (+ 3 (length id))))))
+                        (delete-region start (point))
+                        (goto-char start)
+                        (insert content))
+                    (goto-char (1+ start)))))
+            (goto-char (1+ start)))))
+      (buffer-string))))
 
 (defcustom org-interactive-cloze-ellipsis "[...]"
   "String used to indicate the cloze gap on the Front."
@@ -621,21 +577,17 @@ Defaults to 0.2 seconds."
   :group 'org)
 
 (defun org-interactive-cloze (&optional front-context)
-  "Create a cloze deletion with configurable Front context.
+  "Create a cloze deletion using {{clozed#ID|SELECTION|ID}} and a child entry.
 
 Front context options:
-- 'both   : prefix + […] + suffix (default; original behavior)
+- 'both   : prefix + […] + suffix (default)
 - 'prefix : prefix + […]
 - 'suffix : […] + suffix
 
 Behavior:
 - On a heading line: child heading title is the Front; child body is the selected text (Back).
 - In body: child has Front/Back subheadings; Front is built from the entry body around the selection; Back is the selected text.
-Other cloze markers are unwrapped on the Front only; the selection is replaced in-place with {{clozed:...}}.
-
-Interactively:
-- No prefix arg: use 'both.
-- With C-u: prompt for one of (both, prefix, suffix)."
+Other cloze markers are unwrapped on the Front only."
   (interactive
    (list (when current-prefix-arg
            (intern (completing-read
@@ -688,9 +640,10 @@ Interactively:
                   ('suffix (concat ellipsis suf))
                   (_       (concat pre ellipsis suf))))))
 
-      ;; Replace selection in-place with {{clozed:...}}
-      (delete-region start0 end0)
-      (insert (format "{{clozed:%s}}" selected-text))
+      ;; Replace selection in-place with ID-form {{clozed#ID|...|ID}}
+      (let ((id (org-custom-syntax--make-id)))
+        (delete-region start0 end0)
+        (insert (format "{{clozed#%s|%s|%s}}" id selected-text id)))
 
       ;; Create child entry
       (save-excursion
@@ -733,8 +686,8 @@ Interactively:
   (interactive)
   (org-interactive-cloze 'suffix))
   
-  (defun org-interactive-extract ()
-  "Create a SuperMemo-style extract from selected text and generate a child heading."
+(defun org-interactive-extract ()
+  "Create an extract using {{extract#ID|SELECTION|ID}} and a child heading."
   (interactive)
   (if (not (use-region-p))
       (message "Please select text to extract")
@@ -753,18 +706,19 @@ Interactively:
                                    (my-get-current-priority-range)))
            (cleaned-text selected-text)
            (ends-with-newline (and (> end start)
-                                  (= (char-before end) ?\n))))
+                                   (= (char-before end) ?\n)))
+           (id (org-custom-syntax--make-id)))
       
-      ;; Clean the text
+      ;; Clean the text (retain your previous cleanups)
       (setq cleaned-text (replace-regexp-in-string "\\^{[^}]*}" "" cleaned-text))
       (setq cleaned-text (replace-regexp-in-string "  +" " " cleaned-text))
       
-      ;; Replace original text with extract marker
+      ;; Replace original text with ID-form extract marker
       (delete-region start end)
       (if ends-with-newline
           (let ((text-without-newline (substring selected-text 0 -1)))
-            (insert (format "{{extract:%s}}\n" text-without-newline)))
-        (insert (format "{{extract:%s}}" selected-text)))
+            (insert (format "{{extract#%s|%s|%s}}\n" id text-without-newline id)))
+        (insert (format "{{extract#%s|%s|%s}}" id selected-text id)))
       
       ;; Create child heading with cleaned text
       (save-excursion
@@ -780,29 +734,27 @@ Interactively:
       (message "Created extract from selected text"))))
 
 (defun org-remove-all-extract-blocks ()
-  "Remove all extract blocks entirely from the current buffer (including their content).
-This is useful after extracting content to child headings - removes the extracted text 
-from the original location to help focus on remaining unprocessed text."
+  "Remove all {{extract#ID|...|ID}} blocks entirely from the current buffer."
   (interactive)
   (when (eq major-mode 'org-mode)
-    ;; Clear overlays first so we can see the actual text
     (org-clear-custom-overlays)
     (save-excursion
       (goto-char (point-min))
       (let ((count 0))
-        ;; Simple approach: find {{extract:...}} blocks and remove them entirely
-        (while (re-search-forward "{{extract:[^}]*}}" nil t)
-          (delete-region (match-beginning 0) (match-end 0))
-          (setq count (1+ count)))
-        
-        ;; Clean up consecutive empty lines after removal  
+        (while (re-search-forward "{{extract#\\([A-Za-z0-9_-]+\\)|" nil t)
+          (let* ((start (match-beginning 0))
+                 (id (match-string-no-properties 1)))
+            (if (search-forward (format "|%s}}" id) nil t)
+                (progn
+                  (delete-region start (point))
+                  (cl-incf count))
+              (goto-char (1+ start)))))
+        ;; Clean up multiple empty lines
         (goto-char (point-min))
         (while (re-search-forward "\n\n\n+" nil t)
           (replace-match "\n\n"))
-        
-        (message "Removed %d extract blocks and cleaned up empty lines" count))
-      ;; Refresh highlighting after removal
-      (org-highlight-custom-syntax))))
+        (message "Removed %d extract blocks" count)))
+    (org-highlight-custom-syntax)))
 
 ;; Help function
 (defun org-queue-show-help ()
