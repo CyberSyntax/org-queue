@@ -4,6 +4,20 @@
 
 (require 'org-queue-config)
 
+(defun org-queue--maybe-save (&optional buffer)
+  "Save BUFFER (or current buffer) if it visits a file and is modified.
+No-op when `org-queue--suppress-save` is non-nil."
+  (unless org-queue--suppress-save
+    (let ((buf (or buffer (current-buffer))))
+      (when (buffer-live-p buf)
+        (with-current-buffer buf
+          (when (and buffer-file-name (buffer-modified-p))
+            (save-buffer)))))))
+
+(defun org-queue--autosave-current ()
+  "Best-effort save of the current buffer if it visits a file."
+  (org-queue--maybe-save (current-buffer)))
+
 ;; Map helpers that never rely on 'agenda
 (defun org-queue-file-list ()
   "Always reindex and return org-queue's file roster (absolute paths)."

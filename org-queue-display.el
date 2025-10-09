@@ -12,55 +12,6 @@
 (require 'org-queue-tasks)
 (require 'org-queue-priority)
 
-(defun my--queue-task-candidates ()
-  "Return an ordered list of (display . index) for the current queue.
-Display shows \"NN. Title — file\". Titles may be \"(untitled)\"."
-  (let ((cands nil)
-        (len (length my-outstanding-tasks-list)))
-    (dotimes (i len)
-      (let* ((task (nth i my-outstanding-tasks-list))
-             (buf (my-safe-marker-buffer task))
-             (head (with-current-buffer (or buf (current-buffer))
-                     (save-excursion
-                       (let ((m (my-extract-marker task)))
-                         (when (markerp m)
-                           (goto-char (marker-position m))
-                           (or (org-get-heading t t t t) ""))))))
-             (title (if (and head (> (length head) 0)) head "(untitled)"))
-             (file (plist-get task :file))
-             (file-short (and file (file-name-nondirectory file)))
-             (disp (format "%4d. %s — %s"
-                           (1+ i)
-                           title
-                           (or file-short ""))))
-        (push (cons disp i) cands)))
-    (nreverse cands)))
-
-(defun my--completion-table-preserve-order (candidates)
-  "Completion table over CANDIDATES that preserves their order."
-  (lambda (string pred action)
-    (if (eq action 'metadata)
-        '(metadata (display-sort-function . identity)
-                   (cycle-sort-function . identity))
-      (complete-with-action action candidates string pred))))
-
-(defun my-queue-switch-to-task ()
-  "Choose a task from the queue in queue order and jump to it.
-Uses the in-memory queue; no rebuild/resync."
-  (interactive)
-  (my-ensure-task-list-present)
-  (if (null my-outstanding-tasks-list)
-      (message "Queue is empty.")
-    (let* ((pairs (my--queue-task-candidates))
-           (table (my--completion-table-preserve-order (mapcar #'car pairs)))
-           (default (caar pairs))
-           (choice (completing-read "Switch to task: " table nil t nil nil default))
-           (idx (cdr (assoc choice pairs))))
-      (when (numberp idx)
-        (setq my-outstanding-tasks-index idx)
-        (my-save-index-to-file)
-        (my-show-current-outstanding-task)))))
-
 ;; Display and UI faces
 (defface org-clozed-face
   '((t (:background "#E67300" :foreground "black")))
@@ -154,42 +105,36 @@ Uses the in-memory queue; no rebuild/resync."
 
 (defun my-current-flag-counts ()
   "Calculate flag metrics for the current outstanding task.
-Returns a plist:
+Returns a plist or nil:
   :flag-name  Human name (e.g., \"Flag:3\")
   :flag-num   Numeric flag id
   :flag-count Total tasks with this flag
   :flag-pos   Position (1-based) of current among same-flag tasks
-  :flag-left  Remaining same-flag tasks including current
-Returns nil if no valid current task or flag cannot be determined."
-  ;; Validate task list and index
-  (unless (and my-outstanding-tasks-list
-               (>= my-outstanding-tasks-index 0)
-               (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
-    (message "No valid task at current position")
-    (cl-return nil))
-  ;; Get current task information
-  (let* ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list))
-         (current-flag (my-get-marker-flag task-or-marker))
-         (flag-name (alist-get current-flag my-priority-flag-table)))
-    (unless current-flag
-      (message "Cannot determine flag for current task")
-      (cl-return nil))
-    ;; Count same-flag tasks and current position
-    (let ((same-flag-count 0)
-          (position 0))
-      (dotimes (i (length my-outstanding-tasks-list))
-        (let* ((m (nth i my-outstanding-tasks-list))
-               (flag (my-get-marker-flag m)))
-          (when (and flag (= flag current-flag))
-            (setq same-flag-count (1+ same-flag-count))
-            (when (= i my-outstanding-tasks-index)
-              (setq position same-flag-count)))))
-      (let ((remaining (- same-flag-count (1- position))))
-        (list :flag-name flag-name
-              :flag-num current-flag
-              :flag-count same-flag-count
-              :flag-pos position
-              :flag-left remaining)))))
+  :flag-left  Remaining same-flag tasks including current"
+  (if (not (and my-outstanding-tasks-list
+                (>= my-outstanding-tasks-index 0)
+                (< my-outstanding-tasks-index (length my-outstanding-tasks-list))))
+      nil
+    (let* ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list))
+           (current-flag (my-get-marker-flag task-or-marker))
+           (flag-name (alist-get current-flag my-priority-flag-table)))
+      (if (not current-flag)
+          nil
+        (let ((same-flag-count 0)
+              (position 0))
+          (dotimes (i (length my-outstanding-tasks-list))
+            (let* ((m (nth i my-outstanding-tasks-list))
+                   (flag (my-get-marker-flag m)))
+              (when (and flag (= flag current-flag))
+                (setq same-flag-count (1+ same-flag-count))
+                (when (= i my-outstanding-tasks-index)
+                  (setq position same-flag-count)))))
+          (let ((remaining (- same-flag-count (1- position))))
+            (list :flag-name flag-name
+                  :flag-num current-flag
+                  :flag-count same-flag-count
+                  :flag-pos position
+                  :flag-left remaining)))))))
 
 (defun my-show-current-flag-status ()
   "Show flag info, TODO status, and current outstanding task index."
@@ -614,12 +559,10 @@ Other cloze markers are unwrapped on the Front only."
                                     (my-get-current-priority-range)))
            (on-heading (save-excursion
                          (goto-char start0) (beginning-of-line) (org-at-heading-p)))
-           ;; Generate one ID and reuse it for both Back (clozed) and Front (cloze)
            (id (org-custom-syntax--make-id))
            (ellipsis org-interactive-cloze-ellipsis)
            (ellipsis-mark (format "{{cloze#%s|%s|%s}}" id ellipsis id))
            front-title front-block)
-
       ;; Build Front BEFORE modifying buffer
       (if on-heading
           (let* ((lb (save-excursion (goto-char start0) (line-beginning-position)))
@@ -650,11 +593,9 @@ Other cloze markers are unwrapped on the Front only."
                   ('prefix (concat pre ellipsis-mark))
                   ('suffix (concat ellipsis-mark suf))
                   (_       (concat pre ellipsis-mark suf))))))
-
-      ;; Replace selection in-place with ID-form {{clozed#ID|...|ID}}
+      ;; Replace selection with clozed marker
       (delete-region start0 end0)
       (insert (format "{{clozed#%s|%s|%s}}" id selected-text id))
-
       ;; Create child entry
       (save-excursion
         (goto-char heading-pos)
@@ -668,11 +609,10 @@ Other cloze markers are unwrapped on the Front only."
                           "(untitled)"))
                 (insert "\n")
                 (insert selected-text))
-            ;; Body: blank title; Front/Back subheads
-            (insert "\n") ; end empty title line
+            (insert "\n")
             (insert (make-string (+ 2 heading-level) ?*) " Front\n")
             (when front-block (insert front-block))
-            (unless (bolp) (insert "\n")) ; exactly one newline before Back
+            (unless (bolp) (insert "\n"))
             (insert (make-string (+ 2 heading-level) ?*) " Back\n")
             (insert selected-text))
           ;; Priority, ID, SRS
@@ -683,7 +623,8 @@ Other cloze markers are unwrapped on the Front only."
           (org-id-get-create)
           (when (fboundp 'org-srs-item-new)
             (org-srs-item-new 'card))))
-      (message "Created cloze (%s)" (symbol-name front-context)))))
+      (message "Created cloze (%s)" (symbol-name front-context))
+      (save-buffer))))
 
 ;; Thin wrappers (no duplicated logic): just pass the option for convenience
 (defun org-interactive-cloze-prefix ()
@@ -718,19 +659,13 @@ Other cloze markers are unwrapped on the Front only."
            (ends-with-newline (and (> end start)
                                    (= (char-before end) ?\n)))
            (id (org-custom-syntax--make-id)))
-      
-      ;; Clean the text (retain your previous cleanups)
       (setq cleaned-text (replace-regexp-in-string "\\^{[^}]*}" "" cleaned-text))
       (setq cleaned-text (replace-regexp-in-string "  +" " " cleaned-text))
-      
-      ;; Replace original text with ID-form extract marker
       (delete-region start end)
       (if ends-with-newline
           (let ((text-without-newline (substring selected-text 0 -1)))
             (insert (format "{{extract#%s|%s|%s}}\n" id text-without-newline id)))
         (insert (format "{{extract#%s|%s|%s}}" id selected-text id)))
-      
-      ;; Create child heading with cleaned text
       (save-excursion
         (goto-char heading-pos)
         (org-end-of-subtree)
@@ -740,8 +675,8 @@ Other cloze markers are unwrapped on the Front only."
           (when parent-priority-range
             (goto-char (1+ new-heading-pos))
             (my-set-priority-with-heuristics parent-priority-range))))
-      
-      (message "Created extract from selected text"))))
+      (message "Created extract from selected text")
+      (save-buffer))))
 
 (defun org-remove-all-extract-blocks ()
   "Remove all {{extract#ID|...|ID}} blocks entirely from the current buffer."
@@ -759,96 +694,14 @@ Other cloze markers are unwrapped on the Front only."
                   (delete-region start (point))
                   (cl-incf count))
               (goto-char (1+ start)))))
-        ;; Clean up multiple empty lines
         (goto-char (point-min))
         (while (re-search-forward "\n\n\n+" nil t)
           (replace-match "\n\n"))
-        (message "Removed %d extract blocks" count)))
+        (message "Removed %d extract blocks" count)
+        (when (and (called-interactively-p 'interactive)
+                   (not org-queue--suppress-save))
+          (org-queue--maybe-save))))
     (org-highlight-custom-syntax)))
-
-;; Help function
-(defun org-queue-show-help ()
-  "Display comprehensive help documentation for org-queue-mode.
-Includes all commands, access methods, and usage examples."
-  (interactive)
-  (with-help-window "*Org Queue Help*"
-    (princ "Org Queue Mode - Comprehensive Help\n")
-    (princ "====================================\n\n")
-    (princ "Org Queue is a comprehensive task management system for Org mode.\n")
-    (princ "It provides intelligent task navigation, priority management, and learning tools.\n\n")
-    
-    (princ "Navigation Commands:\n")
-    (princ "  f - Next outstanding task\n")
-    (princ "  b - Previous outstanding task\n")
-    (princ "  c - Show current outstanding task\n")
-    (princ "  u - Show parent heading context\n\n")
-    
-    (princ "View Control:\n")
-    (princ "  w - Widen and recenter view\n")
-    (princ "  n - Narrow to current subtree\n\n")
-    
-    (princ "Task Operations:\n")
-    (princ "  r - Remove current task from queue\n")
-    (princ "  R - Reset and show current task\n\n")
-    
-    (princ "Structure Editing:\n")
-    (princ "  W - Cut subtree\n")
-    (princ "  Y - Paste subtree\n")
-    (princ "  D - Demote subtree level\n")
-    (princ "  P - Promote subtree level\n\n")
-    
-    (princ "Content Creation:\n")
-    (princ "  x - Create extract block (SuperMemo-style)\n")
-    (princ "  X - Remove all extract blocks\n\n")
-    
-    (when (featurep 'org-srs)
-      (princ "SRS & Review:\n")
-      (princ "  z - Create cloze deletion\n")
-      (princ "  Z - Create SRS card in current entry\n")
-      (princ "  1 - Rate again (difficult)\n")
-      (princ "  2 - Rate hard (if available)\n")
-      (princ "  3 - Rate good (easy)\n\n"))
-    
-    (princ "Priority Control:\n")
-    (princ "  , - Set priority with heuristics\n")
-    (princ "  i - Increase priority range (lower numbers)\n")
-    (princ "  d - Decrease priority range (higher numbers)\n\n")
-    
-    (princ "Schedule Control:\n")
-    (princ "  s - Schedule task with priority\n")
-    (princ "  a - Advance current schedule\n")
-    (princ "  p - Postpone current schedule\n\n")
-    
-    (when (featurep 'org-web-tools)
-      (princ "Web Integration:\n")
-      (princ "  I - Insert web page as org entry\n")
-      (princ "  l - Insert link for URL\n\n"))
-    
-    (when (featurep 'gptel)
-      (princ "AI Integration:\n")
-      (princ "  g - Start GPT chat session\n\n"))
-    
-    (princ "System Commands:\n")
-    (princ "  t - Toggle auto-enable mode\n")
-    (princ "  e - Exit org-queue-mode\n")
-    (princ "  ? - Show this help\n\n")
-    
-    (princ "Access Methods:\n")
-    (princ "  • Direct keys: Use commands directly in org buffers\n")
-    (princ "  • Prefix key: C-; followed by command key\n")
-    (princ "  • Menu Bar: 'Org Queue' menu when mode is active\n")
-    (princ "  • Context menu: Right-click in org-mode buffers\n")
-    (princ "  • Toolbar: GUI navigation buttons (if available)\n\n")
-    
-    (princ "Usage Tips:\n")
-    (princ "  • Use heuristic priority setting for smart task ordering\n")
-    (princ "  • Extract blocks help with incremental reading workflows\n")
-    (princ "  • Schedule management supports spaced repetition patterns\n")
-    (princ "  • All features integrate seamlessly with standard org-mode\n")
-    (princ "  • Detailed categorization in menu helps discover features\n\n")
-    
-    (princ "For detailed information about specific commands:\n")
-    (princ "  M-x describe-function RET <command-name> RET\n")))
 
 (defvar org-custom-syntax-timer nil
   "Timer for delayed custom syntax highlighting.")

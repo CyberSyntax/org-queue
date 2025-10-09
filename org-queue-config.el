@@ -27,6 +27,39 @@
   :type 'boolean
   :group 'org-queue)
 
+(defcustom org-queue-non-srs-snooze-base-minutes 0
+  "Base minutes added to non-SRS deferral when snoozed.
+Used by the non-SRS Next Repetition action to compute available-at."
+  :type 'integer
+  :group 'org-queue)
+
+(defcustom org-queue-non-srs-snooze-slope-minutes 10
+  "Slope minutes multiplied by numeric priority for non-SRS snooze.
+Deferral is computed as f(p) = BASE + SLOPE * p, where p is the numeric priority (1..64)."
+  :type 'integer
+  :group 'org-queue)
+
+(defcustom org-queue-qforce-ignores-last-repeat nil
+  "If non-nil, QFORCE entries ignore LAST_REPEAT deferral and are always available immediately.
+When enabled, QFORCE tasks set available-at = now regardless of LAST_REPEAT."
+  :type 'boolean
+  :group 'org-queue)
+
+(defvar org-queue--suppress-ui nil
+  "When non-nil (dynamically bound), suppresses queue UI updates like
+reassign/show-top during batch operations (e.g., chooser bulk actions).")
+
+(defvar org-queue--suppress-save nil
+  "When non-nil (dynamically bound), suppress opportunistic saves during
+org-queue operations. Bind with (let ((org-queue--suppress-save t)) ...)
+to batch changes and save once at the end.")
+
+(defcustom org-queue-auto-show-top-after-change nil
+  "If non-nil, automatically call `org-queue-show-top` after operations
+that change schedule/priority (advance, postpone, schedule, stamp)."
+  :type 'boolean
+  :group 'org-queue)
+
 (defcustom org-queue-night-shift-start "22:00"
   "Local time-of-day when night shift begins (HH:MM, 24h)."
   :type 'string
@@ -68,6 +101,18 @@ Uses `org-queue-night-shift-enabled', `org-queue-night-shift-start', and
   :type '(cons (integer :tag "Non-SRS") (integer :tag "SRS"))
   :group 'org-queue)
 
+;; Head start policy for interleaving
+(defcustom org-queue-mix-start 'rotate
+  "Which pool starts the interleave when building the head of the queue.
+- 'non-srs  : start with non-SRS block
+- 'srs      : start with SRS block
+- 'rotate   : alternate the start across head consumptions, keeping the ratio
+- 'auto     : pick the pool whose earliest item is due earlier"
+  :type '(choice (const non-srs) (const srs) (const rotate) (const auto))
+  :group 'org-queue)
+
+(defvar org-queue--mix-phase 0
+  "Phase counter used by 'rotate to decide which pool starts at the head.")
 (defcustom org-queue-srs-conceal-answer t
   "If non-nil, conceal the answer (Back) when visiting SRS items."
   :type 'boolean
@@ -91,6 +136,23 @@ and the cdr is a cons cell representing the minimum and maximum priority values.
   :group 'org-queue)
 
 ;;; Directory Configuration
+(defcustom org-queue-cache-dir
+  (let* ((base (cond
+                ;; Respect no-littering if present
+                ((boundp 'no-littering-var-directory) (file-name-as-directory no-littering-var-directory))
+                ;; Fallback under user-emacs-directory/var/
+                (t (file-name-as-directory (expand-file-name "var/" user-emacs-directory)))))
+         (dir (expand-file-name "org-queue/" base)))
+    dir)
+  "Directory where org-queue stores its cache files."
+  :type 'directory
+  :group 'org-queue)
+
+;; Ensure the cache directory exists at load time (best-effort).
+(ignore-errors
+  (unless (file-directory-p org-queue-cache-dir)
+    (make-directory org-queue-cache-dir t)))
+
 (defcustom org-queue-directory nil
   "Base directory for org-queue files (searched recursively). Set this or `org-queue-file-roots`."
   :type '(choice (const :tag "Unset" nil) directory)

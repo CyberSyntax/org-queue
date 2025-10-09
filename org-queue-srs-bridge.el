@@ -9,104 +9,6 @@
 (require 'org-queue-config)
 (require 'org-queue-utils)
 
-(defcustom org-queue-preinit-srs nil
-  "If non-nil, attempt to pre-initialize org-srs during startup."
-  :type 'boolean
-  :group 'org-queue)
-
-(defvar my-srs-reviews-per-task 4)
-(defvar my-srs-review-count 0)
-
-(defun my-srs--ensure-loaded ()
-  "Try to load org-srs and org-srs-review. Return non-nil on success."
-  (and
-   (or (featurep 'org-srs)     (require 'org-srs nil t))
-   (or (featurep 'org-srs-log) (require 'org-srs-log nil t))
-   (or (featurep 'org-srs-review) (require 'org-srs-review nil t))))
-
-(defun my-srs--on-review-done (&rest _)
-  (save-some-buffers t (lambda () (and buffer-file-name (string-match-p "\\.org$" buffer-file-name))))
-  (run-at-time 0.05 nil
-               (lambda ()
-                 (when (and (boundp 'my-outstanding-tasks-list)
-                            my-outstanding-tasks-list)
-                   (my-show-current-outstanding-task-no-srs t))))
-  (message "No more cards to review in this session."))
-
-(defun my-srs-start-reviews ()
-  "Start SRS review session; do not call task display or Anki here."
-  (interactive)
-  (if (not (my-srs--ensure-loaded))
-      (message "org-srs not available; skipping SRS.")
-    (condition-case err
-        (progn
-          (setq my-srs-review-count 0)
-          (dolist (fn '(org-srs-review-rate-easy
-                        org-srs-review-rate-good
-                        org-srs-review-rate-hard
-                        org-srs-review-rate-again))
-            (when (and (fboundp fn)
-                       (not (advice-member-p #'my-srs-count-review fn)))
-              (advice-add fn :after #'my-srs-count-review)))
-          (when (and (fboundp 'org-srs-review-message-review-done)
-                     (not (advice-member-p #'my-srs--on-review-done
-                                           'org-srs-review-message-review-done)))
-            (advice-add 'org-srs-review-message-review-done :before #'my-srs--on-review-done))
-          (if (fboundp 'org-srs-review-start)
-              (progn
-                (org-srs-review-start default-directory)
-                (run-at-time 0.02 nil
-                             (lambda ()
-                               (when (and (fboundp 'org-srs-reviewing-p)
-                                          (not (org-srs-reviewing-p)))
-                                 (message "No SRS cards to review right now.")))))
-            (message "org-srs-review-start not found; cannot start SRS.")))
-      (error
-       (my-srs-remove-advice)
-       (message "SRS error: %s" (error-message-string err))))))
-
-(defun my-srs-count-review (&rest _)
-  (setq my-srs-review-count (1+ my-srs-review-count))
-  (when (>= my-srs-review-count my-srs-reviews-per-task)
-    (message "Completed target of %d reviews." my-srs-reviews-per-task)
-    (my-srs-exit-reviews)))
-
-(defun my-srs-exit-reviews ()
-  (my-srs-remove-advice)
-  (save-some-buffers t (lambda () (and buffer-file-name (string-match-p "\\.org$" buffer-file-name))))
-  (condition-case nil
-      (when (and (fboundp 'org-srs-reviewing-p)
-                 (org-srs-reviewing-p)
-                 (fboundp 'org-srs-review-quit))
-        (org-srs-review-quit))
-    (error nil)))
-
-(defun my-srs-remove-advice ()
-  (dolist (fn '(org-srs-review-rate-easy
-                org-srs-review-rate-good
-                org-srs-review-rate-hard
-                org-srs-review-rate-again))
-    (ignore-errors (advice-remove fn #'my-srs-count-review)))
-  (ignore-errors
-    (advice-remove 'org-srs-review-message-review-done #'my-srs--on-review-done)))
-
-(defun my-srs-force-reset () (interactive)
-  (setq my-srs-review-count 0)
-  (my-srs-remove-advice)
-  (condition-case nil
-      (when (fboundp 'org-srs-review-quit) (org-srs-review-quit))
-    (error nil))
-  (message "SRS integration state completely reset"))
-
-(defun my-srs-quit-reviews () (interactive)
-  (my-srs-remove-advice)
-  (condition-case nil
-      (when (and (fboundp 'org-srs-reviewing-p)
-                 (org-srs-reviewing-p)
-                 (fboundp 'org-srs-review-quit))
-        (org-srs-review-quit))
-    (error nil)))
-
 (defun org-srs-entry-p (pos)
   ;; unchanged logic from your file, but keep requiring org-srs-log if available
   (interactive (list (point)))
@@ -152,28 +54,54 @@
        (org-srs-item-at-point)))))
 
 (defun org-queue-srs-rate-again ()
-  "Rate current entry as 'again' using org-srs-review-rate-entry."
+  "Rate current entry as 'again' using org-srs-review-rate-entry.
+Advances the interleave phase after consuming the head, then reassigns the top."
   (interactive)
   (if (not (require 'org-srs nil t))
       (message "org-srs package not available")
-    (condition-case err
-        (progn
-          (org-srs-review-rate-entry :again)
-          (message "Rated as 'again'"))
-      (error 
-       (message "Error rating entry: %s" (error-message-string err))))))
+    (let ((orig-buf (current-buffer)))
+      (condition-case err
+          (progn
+            (org-srs-review-rate-entry :again)
+            (message "Rated as '%s'" "again")
+            ;; Consuming head: advance phase once
+            (let* ((ratio (or (and (boundp 'org-queue-srs-mix-ratio)
+                                   org-queue-srs-mix-ratio)
+                              '(1 . 4))))
+              (org-queue--advance-mix-phase (car ratio) (cdr ratio)))
+            ;; Reassign the top (no file rescan)
+            (ignore-errors (org-queue--reassign-top-after-change 'review))
+            ;; Save the changed buffer once when invoked interactively
+            (when (and (called-interactively-p 'interactive)
+                       (not org-queue--suppress-save))
+              (org-queue--maybe-save orig-buf)))
+        (error
+         (message "Error rating entry: %s" (error-message-string err)))))))
 
 (defun org-queue-srs-rate-good ()
-  "Rate current entry as 'good' using org-srs-review-rate-entry."
+  "Rate current entry as 'good' using org-srs-review-rate-entry.
+Advances the interleave phase after consuming the head, then reassigns the top."
   (interactive)
   (if (not (require 'org-srs nil t))
       (message "org-srs package not available")
-    (condition-case err
-        (progn
-          (org-srs-review-rate-entry :good)
-          (message "Rated as 'good'"))
-      (error 
-       (message "Error rating entry: %s" (error-message-string err))))))
+    (let ((orig-buf (current-buffer)))
+      (condition-case err
+          (progn
+            (org-srs-review-rate-entry :good)
+            (message "Rated as '%s'" "good")
+            ;; Consuming head: advance phase once
+            (let* ((ratio (or (and (boundp 'org-queue-srs-mix-ratio)
+                                   org-queue-srs-mix-ratio)
+                              '(1 . 4))))
+              (org-queue--advance-mix-phase (car ratio) (cdr ratio)))
+            ;; Reassign the top (no file rescan)
+            (ignore-errors (org-queue--reassign-top-after-change 'review))
+            ;; Save the changed buffer once when invoked interactively
+            (when (and (called-interactively-p 'interactive)
+                       (not org-queue--suppress-save))
+              (org-queue--maybe-save orig-buf)))
+        (error
+         (message "Error rating entry: %s" (error-message-string err)))))))
 
 (defun org-queue-srs-item-create-card ()
   "Create an org-srs review item of type 'card' at the current entry without prompting.
@@ -275,6 +203,61 @@ Prefer the row with mark \"*\" in the first column; else the earliest valid time
       (sort items (lambda (a b)
                     (time-less-p (plist-get a :srs-due)
                                  (plist-get b :srs-due)))))))
+
+(defun org-queue-collect-srs-today ()
+  "Return a cons (DUE-NOW . PENDING-TODAY) of SRS entries for today.
+
+DUE-NOW:
+- SRS entries whose next-due timestamp is today and <= now.
+- Suppressed during night shift (empty when `org-queue-night-shift-p' is non-nil).
+
+PENDING-TODAY:
+- SRS entries whose next-due timestamp's date is today and > now.
+- Additionally, when night shift is active, includes entries due<=now (today)
+  so they can be promoted automatically once night shift ends.
+
+Each element is a task plist with keys:
+  :id :marker :priority :flag :file :is-todo :heading :pos
+  :srs t :srs-due <time> :available-at <time>"
+  (let* ((now (current-time))
+         (today (format-time-string "%Y-%m-%d" now))
+         (night (org-queue-night-shift-p))
+         (due-now '())
+         (pending '()))
+    (org-queue-map-entries
+     (lambda ()
+       (when (eq (org-srs-entry-p (point)) 'current)
+         (let ((due (org-queue-srs-next-due-time (point))))
+           (when due
+             (let ((due-date (format-time-string "%Y-%m-%d" due)))
+               (when (string= due-date today)
+                 (let* ((marker (point-marker))
+                        (id (or (org-entry-get nil "ID") (org-id-get-create)))
+                        (priority (or (and (fboundp 'my-get-raw-priority-value)
+                                           (my-get-raw-priority-value))
+                                      (let ((ps (org-entry-get nil "PRIORITY")))
+                                        (if ps (string-to-number ps) org-priority-default))))
+                        (flag (and (fboundp 'my-priority-flag) (my-priority-flag priority)))
+                        (file (buffer-file-name))
+                        (heading (org-get-heading t t t t))
+                        (pos (point))
+                        (task (list :id id :marker marker :priority priority
+                                    :flag flag :file file :is-todo nil
+                                    :heading heading :pos pos
+                                    :srs t :srs-due due :available-at due)))
+                   (cond
+                    ;; Night shift: never put into DUE-NOW; all of today's go to pending
+                    (night (push task pending))
+                    ;; Daytime:
+                    ((not (time-less-p now due)) (push task due-now))  ;; due <= now
+                    (t (push task pending)))))))))) ;; due > now
+     nil)
+    ;; Sort both lists by due time ascending
+    (setq due-now (sort due-now (lambda (a b) (time-less-p (plist-get a :srs-due)
+                                                           (plist-get b :srs-due)))))
+    (setq pending (sort pending (lambda (a b) (time-less-p (plist-get a :srs-due)
+                                                           (plist-get b :srs-due)))))
+    (cons due-now pending)))
 
 (provide 'org-queue-srs-bridge)
 ;;; org-queue-srs-bridge.el ends here

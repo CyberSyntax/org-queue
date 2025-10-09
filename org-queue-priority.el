@@ -11,90 +11,92 @@
 Optional RETRIED is used internally to prevent infinite recursion."
   (interactive)
   (let* ((priority-ranges my-priority-ranges)
-	   (max-retries 3)
-	   (retry-delay 0.01)
-	   (range
-	    (cond
-	     (specific-range
-	      (cdr (assoc specific-range priority-ranges)))
-	     ((called-interactively-p 'any)
-	      (let* ((default-range (or (my-get-current-priority-range) (+ 6 (random 4))))
-		     (user-choice (read-number
-				   "Select a priority range (0-9): "
-				   default-range)))
-		(cdr (assoc user-choice priority-ranges))))
-	     (t
-	      (cdr (assoc (or (my-get-current-priority-range) (+ 6 (random 4))) priority-ranges)))))
-	   (success nil)
-	   (attempt 0)
-	   random-priority)
+         (max-retries 3)
+         (retry-delay 0.01)
+         (range
+          (cond
+           (specific-range
+            (cdr (assoc specific-range priority-ranges)))
+           ((called-interactively-p 'any)
+            (let* ((default-range (or (my-get-current-priority-range) (+ 6 (random 4))))
+                   (user-choice (read-number
+                                 "Select a priority range (0-9): "
+                                 default-range)))
+              (cdr (assoc user-choice priority-ranges))))
+           (t
+            (cdr (assoc (or (my-get-current-priority-range) (+ 6 (random 4))) priority-ranges)))))
+         (success nil)
+         (attempt 0)
+         random-priority)
     (if range
-	  (let* ((min-priority (car range))
-		 (max-priority (cdr range))
-		 (desired-priority (+ min-priority
-				      (random (1+ (- max-priority min-priority)))))
-		 final-priority)
-	    (setq random-priority desired-priority)
-	    (while (and (not success) (< attempt max-retries))
-	      (condition-case err
-		  (progn
-		    ;; Ensure heading state consistency
-		    (when (org-at-heading-p) 
-		      (org-back-to-heading t)
-		      (org-show-entry)
-		      (redisplay))
-		    ;; Original priority adjustment logic
-		    (let* ((current-priority (string-to-number
-					     (or (org-entry-get nil "PRIORITY")
-						 (number-to-string org-priority-default))))
-			   (delta (- desired-priority current-priority)))
-		      (cond
-		       ((< delta 0)
-			(dotimes (_ (abs delta))
-			  (org-priority-up)))
-		       ((> delta 0)
-			(dotimes (_ delta)
-			  (org-priority-down)))
-		       (t
-			(if (= current-priority org-priority-highest)
-			    (progn
-			      (org-priority-down)
-			      (org-priority-up))
-			  (if (= current-priority org-priority-lowest)
-			      (progn
-				(org-priority-up)
-				(org-priority-down))
-			    (progn
-			      (org-priority-up)
-			      (org-priority-down))))))
-		      ;; Priority validation
-		      (setq final-priority (string-to-number
-					   (or (org-entry-get nil "PRIORITY")
-					       (number-to-string org-priority-default))))
-		      (unless (and final-priority 
-				   (integerp final-priority)
-				   (= final-priority desired-priority))
-			(error "Priority validation failed")))
-		    (setq success t))
-		;; Error handling with automatic retry
-		(error 
-		 (setq attempt (1+ attempt))
-		 (when (and (< attempt max-retries) 
-			    (not (org-entry-get nil "PRIORITY")))
-		   (org-entry-put nil "PRIORITY" 
-				 (number-to-string org-priority-default)))
-		 (if (< attempt max-retries)
-		     (progn (message "Retrying (%d/%d)..." attempt max-retries)
-			    (sleep-for retry-delay))
-		   ;; Trigger auto-retry if not already retried
-		   (message "Failed after %d attempts: %s" 
-			    max-retries (error-message-string err))
-		   (unless retried
-		     (message "Auto-retrying...")
-		     (my-set-priority-with-heuristics specific-range t))))))
-	    (when success 
-	      (message "Priority set to: %d" random-priority)))
-	(message "Invalid range."))))
+        (let* ((min-priority (car range))
+               (max-priority (cdr range))
+               (desired-priority (+ min-priority
+                                    (random (1+ (- max-priority min-priority)))))
+               final-priority)
+          (setq random-priority desired-priority)
+          (while (and (not success) (< attempt max-retries))
+            (condition-case err
+                (progn
+                  ;; Ensure heading state consistency
+                  (when (org-at-heading-p) 
+                    (org-back-to-heading t)
+                    (org-show-entry)
+                    (redisplay))
+                  ;; Original priority adjustment logic
+                  (let* ((current-priority (string-to-number
+                                            (or (org-entry-get nil "PRIORITY")
+                                                (number-to-string org-priority-default))))
+                         (delta (- desired-priority current-priority)))
+                    (cond
+                     ((< delta 0)
+                      (dotimes (_ (abs delta))
+                        (org-priority-up)))
+                     ((> delta 0)
+                      (dotimes (_ delta)
+                        (org-priority-down)))
+                     (t
+                      (if (= current-priority org-priority-highest)
+                          (progn
+                            (org-priority-down)
+                            (org-priority-up))
+                        (if (= current-priority org-priority-lowest)
+                            (progn
+                              (org-priority-up)
+                              (org-priority-down))
+                          (progn
+                            (org-priority-up)
+                            (org-priority-down))))))
+                    ;; Priority validation
+                    (setq final-priority (string-to-number
+                                          (or (org-entry-get nil "PRIORITY")
+                                              (number-to-string org-priority-default))))
+                    (unless (and final-priority 
+                                 (integerp final-priority)
+                                 (= final-priority desired-priority))
+                      (error "Priority validation failed")))
+                  (setq success t))
+              ;; Error handling with automatic retry
+              (error 
+               (setq attempt (1+ attempt))
+               (when (and (< attempt max-retries) 
+                          (not (org-entry-get nil "PRIORITY")))
+                 (org-entry-put nil "PRIORITY" 
+                                (number-to-string org-priority-default)))
+               (if (< attempt max-retries)
+                   (progn (message "Retrying (%d/%d)..." attempt max-retries)
+                          (sleep-for retry-delay))
+                 (message "Failed after %d attempts: %s" 
+                          max-retries (error-message-string err))
+                 (unless retried
+                   (message "Auto-retrying...")
+                   (my-set-priority-with-heuristics specific-range t))))))
+          (when success
+            (message "Priority set to: %d" random-priority)
+            (when (and (called-interactively-p 'interactive)
+                       (not org-queue--suppress-save))
+              (org-queue--maybe-save))))
+      (message "Invalid range."))))
 
 (defun my-increase-priority-range ()
   "Increase the priority range by moving to a lower number (0 is the highest priority).
@@ -102,8 +104,11 @@ Adjusts the priority within the new range, even if already at the highest."
   (interactive)
   (let ((current-range (or (my-get-current-priority-range) 9)))
     (let ((new-range (max 0 (1- current-range))))
-	(my-set-priority-with-heuristics new-range)
-	(message "Priority range increased to %d" new-range))))
+      (my-set-priority-with-heuristics new-range)
+      (message "Priority range increased to %d" new-range)
+      (when (and (called-interactively-p 'interactive)
+                 (not org-queue--suppress-save))
+        (org-queue--maybe-save)))))
 
 (defun my-decrease-priority-range ()
   "Decrease the priority range by moving to a higher number (9 is the lowest priority).
@@ -111,8 +116,11 @@ Adjusts the priority within the new range, even if already at the lowest."
   (interactive)
   (let ((current-range (or (my-get-current-priority-range) 9)))
     (let ((new-range (min 9 (1+ current-range))))
-	(my-set-priority-with-heuristics new-range)
-	(message "Priority range decreased to %d" new-range))))
+      (my-set-priority-with-heuristics new-range)
+      (message "Priority range decreased to %d" new-range)
+      (when (and (called-interactively-p 'interactive)
+                 (not org-queue--suppress-save))
+        (org-queue--maybe-save)))))
 
 (defun my-ensure-priority-set (&optional max-attempts)
   "Ensure the current heading has a priority set.

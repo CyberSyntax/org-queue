@@ -124,20 +124,11 @@
     (define-key map (kbd "O") #'org-queue-chooser-add-to-outstanding)
     ;; Subset from current buffer/visible region
     (define-key map (kbd "C") #'org-queue-open-chooser-from-buffer)
-    ;; Tabs
-    (define-key map (kbd "T")     #'org-queue-chooser-visit-in-new-tab)
-    (define-key map (kbd "C-c t") #'org-queue-chooser-visit-in-new-tab-foreground)
     ;; Refresh
     (define-key map (kbd "g") #'org-queue-chooser-refresh)
     (define-key map (kbd "G") #'org-queue-chooser-hard-refresh)
     ;; Open chooser in its own tab (foreground)
     (define-key map (kbd "C-c T") #'org-queue-chooser-open-in-tab)
-    ;; Reorder tasks (global queue only)
-    (define-key map (kbd "M-n")      #'org-queue-chooser-move-down)
-    (define-key map (kbd "M-p")      #'org-queue-chooser-move-up)
-    (define-key map (kbd "M-<down>") #'org-queue-chooser-move-down)
-    (define-key map (kbd "M-<up>")   #'org-queue-chooser-move-up)
-    (define-key map (kbd "M-g M-g")  #'org-queue-chooser-move-to-position)
     ;; Quit
     (define-key map (kbd "q") #'quit-window)
     ;; Disable 'n' to prevent conflict with next-line
@@ -535,17 +526,14 @@ In subset mode, only refresh the subset view (no global rebuild)."
         (org-queue-chooser--goto-index my-outstanding-tasks-index)))))
 
 (defun org-queue-chooser-visit ()
-  "Visit the task on the current row. In global mode, update my-outstanding-tasks-index."
+  "Visit the task on the current row in-place without changing the global head."
   (interactive)
   (let* ((id (tabulated-list-get-id))
          (lst (org-queue-chooser--task-list)))
     (if (not (and (numberp id) (< id (length lst))))
         (message "No task on this row")
       (let* ((task (nth id lst)))
-        (when (and (not org-queue-chooser--subset-p)
-                   (eq lst my-outstanding-tasks-list))
-          (setq my-outstanding-tasks-index id)
-          (my-save-index-to-file))
+        ;; Do NOT set my-outstanding-tasks-index here.
         (my-display-task-at-marker task)
         (my-pulse-highlight-current-line)))))
 
@@ -575,135 +563,6 @@ In subset mode, only refresh the subset view (no global rebuild)."
                 (org-show-entry)
                 (org-show-children))
               (recenter))))))))
-
-(defun org-queue-chooser--tab-name-for-index (idx)
-  "Return a meaningful tab name for queue index IDX."
-  (let* ((lst (org-queue-chooser--task-list))
-         (task (and (numberp idx) (nth idx lst)))
-         (title-raw (plist-get task :heading))
-         (title (org-queue-chooser--asciiize
-                 (org-queue-chooser--heading-as-plain (or title-raw ""))))
-         (file (and task (plist-get task :file)))
-         (base (cond ((and title (> (length title) 0)) title)
-                     (file (file-name-nondirectory file))
-                     (t "Untitled"))))
-    (format "#%d %s" (1+ idx)
-            (if (> (length base) 40)
-                (concat (substring base 0 39) "...")
-              base))))
-
-(defun org-queue-chooser-visit-in-new-tab ()
-  "Open current row task in a new tab, then return to chooser (background)."
-  (interactive)
-  (let* ((idx (tabulated-list-get-id))
-         (lst (org-queue-chooser--task-list)))
-    (if (not (and (numberp idx) (< idx (length lst))))
-        (message "No task on this row")
-      (if (fboundp 'tab-bar-new-tab)
-          (progn
-            (tab-bar-mode 1)
-            (tab-bar-new-tab)
-            (tab-bar-rename-tab (org-queue-chooser--tab-name-for-index idx))
-            (let ((task (nth idx lst)))
-              (my-display-task-at-marker task))
-            (ignore-errors (tab-bar-switch-to-prev-tab)))
-        (org-queue-chooser-visit)))))
-
-(defun org-queue-chooser-visit-in-new-tab-foreground ()
-  "Open current row task in a new tab and select it (foreground)."
-  (interactive)
-  (let* ((idx (tabulated-list-get-id))
-         (lst (org-queue-chooser--task-list)))
-    (if (not (and (numberp idx) (< idx (length lst))))
-        (message "No task on this row")
-      (if (fboundp 'tab-bar-new-tab)
-          (progn
-            (tab-bar-mode 1)
-            (tab-bar-new-tab)
-            (tab-bar-rename-tab (org-queue-chooser--tab-name-for-index idx))
-            (let ((task (nth idx lst)))
-              (my-display-task-at-marker task)))
-        (org-queue-chooser-visit)))))
-
-;; Reorder global queue only (not allowed in subset)
-(defun org-queue-chooser--require-global ()
-  (when org-queue-chooser--subset-p
-    (user-error "Reordering is only available for the global queue")))
-
-(defun org-queue-chooser--move-element (list from to)
-  (let* ((len (length list))
-         (from (max 0 (min (1- len) from)))
-         (to   (max 0 (min (1- len) to))))
-    (if (= from to)
-        list
-      (let* ((elem (nth from list))
-             (rest (append (seq-take list from) (seq-drop list (1+ from)))))
-        (append (seq-take rest to) (list elem) (seq-drop rest to))))))
-
-(defun org-queue-chooser--adjust-index-after-move (old-idx from to)
-  (cond
-   ((= old-idx from) to)
-   ((and (> from old-idx) (>= to old-idx)) old-idx)
-   ((and (< from old-idx) (<= to old-idx)) (1+ old-idx))
-   ((and (> from old-idx) (< to old-idx)) (1- old-idx))
-   (t old-idx)))
-
-(defun org-queue-chooser-move-up ()
-  (interactive)
-  (org-queue-chooser--require-global)
-  (let* ((from (tabulated-list-get-id)))
-    (unless (and (numberp from) (> from 0))
-      (user-error "Cannot move further up"))
-    (let* ((to (1- from))
-           (old-list my-outstanding-tasks-list))
-      (setq my-outstanding-tasks-list (org-queue-chooser--move-element old-list from to))
-      (setq my-outstanding-tasks-index (org-queue-chooser--adjust-index-after-move
-                                        my-outstanding-tasks-index from to))
-      (my-save-outstanding-tasks-to-file)
-      (my-queue-limit-visible-buffers)
-      (org-queue-chooser-refresh)
-      (org-queue-chooser--goto-index to)
-      (message "Moved to position %d" (1+ to)))))
-
-(defun org-queue-chooser-move-down ()
-  (interactive)
-  (org-queue-chooser--require-global)
-  (let* ((from (tabulated-list-get-id)))
-    (unless (and (numberp from) (< from (1- (length my-outstanding-tasks-list))))
-      (user-error "Cannot move further down"))
-    (let* ((to (1+ from))
-           (old-list my-outstanding-tasks-list))
-      (setq my-outstanding-tasks-list (org-queue-chooser--move-element old-list from to))
-      (setq my-outstanding-tasks-index (org-queue-chooser--adjust-index-after-move
-                                        my-outstanding-tasks-index from to))
-      (my-save-outstanding-tasks-to-file)
-      (my-queue-limit-visible-buffers)
-      (org-queue-chooser-refresh)
-      (org-queue-chooser--goto-index to)
-      (message "Moved to position %d" (1+ to)))))
-
-(defun org-queue-chooser-move-to-position (pos)
-  "Move the selected task to POS (1-based) in the global queue."
-  (interactive "nMove to position (1-based): ")
-  (org-queue-chooser--require-global)
-  (let* ((from (tabulated-list-get-id))
-         (len (length my-outstanding-tasks-list))
-         (to  (1- (max 1 (min len pos)))))
-    (unless (numberp from)
-      (user-error "No task selected"))
-    (if (= from to)
-        (message "Already at that position")
-      (let ((old-list my-outstanding-tasks-list))
-        (setq my-outstanding-tasks-list
-              (org-queue-chooser--move-element old-list from to))
-        (setq my-outstanding-tasks-index
-              (org-queue-chooser--adjust-index-after-move
-               my-outstanding-tasks-index from to))
-        (my-save-outstanding-tasks-to-file)
-        (my-queue-limit-visible-buffers)
-        (org-queue-chooser-refresh)
-        (org-queue-chooser--goto-index to)
-        (message "Moved to position %d" (1+ to))))))
 
 ;; Mark helpers
 (defun org-queue-chooser--make-row (i)
@@ -884,6 +743,8 @@ Selection:
                  (ds (format-time-string "%Y-%m-%d" target))
                  (task (nth id (org-queue-chooser--task-list))))
             (org-queue-chooser--task-schedule-set task ds)))
+      ;; Save once after user batch
+      (save-some-buffers t)
       (org-queue-chooser-refresh)
       (message "Rescheduled %d item(s) across %d day(s), %d per day"
                n days per-day))))
@@ -917,38 +778,52 @@ Selection is: marked rows if any; else rows in active region; else the current r
                           (org-entry-put nil "PRIORITY" (number-to-string newp)))
                         (plist-put task :priority newp)
                         (plist-put task :flag (my-priority-flag newp)))))
+        ;; Save once after user batch
+        (save-some-buffers t)
         (org-queue-chooser-refresh)
         (message "Spread priorities %d..%d over %d items" lo hi n)))))
 
 (defun org-queue-chooser-advance-marked ()
-  "Advance schedule for selection using my-advance-schedule."
+  "Advance schedule for selection using my-advance-schedule without stealing focus.
+Performs one queue promotion at the end; saves modified buffers once."
   (interactive)
   (let* ((ids (org-queue-chooser--selected-indices))
          (lst (org-queue-chooser--task-list))
          (count 0))
-    (dolist (id ids)
-      (let* ((task (nth id lst))
-             (m (my-extract-marker task)))
-        (when (and (markerp m) (marker-buffer m))
-          (org-with-point-at m
-            (my-advance-schedule))
-          (setq count (1+ count)))))
+    (let ((org-queue--suppress-ui t))
+      (dolist (id ids)
+        (let* ((task (nth id lst))
+               (m (my-extract-marker task)))
+          (when (and (markerp m) (marker-buffer m))
+            (org-with-point-at m
+              (my-advance-schedule))
+            (setq count (1+ count)))))
+      ;; Promote once after batch
+      (ignore-errors (org-queue-rebuild-soft)))
+    ;; Save once after user batch
+    (save-some-buffers t)
     (org-queue-chooser-refresh)
     (message "Advanced %d item(s)" count)))
 
 (defun org-queue-chooser-postpone-marked ()
-  "Postpone schedule for selection using my-postpone-schedule."
+  "Postpone schedule for selection using my-postpone-schedule without stealing focus.
+Performs one queue promotion at the end; saves modified buffers once."
   (interactive)
   (let* ((ids (org-queue-chooser--selected-indices))
          (lst (org-queue-chooser--task-list))
          (count 0))
-    (dolist (id ids)
-      (let* ((task (nth id lst))
-             (m (my-extract-marker task)))
-        (when (and (markerp m) (marker-buffer m))
-          (org-with-point-at m
-            (my-postpone-schedule))
-          (setq count (1+ count)))))
+    (let ((org-queue--suppress-ui t))
+      (dolist (id ids)
+        (let* ((task (nth id lst))
+               (m (my-extract-marker task)))
+          (when (and (markerp m) (marker-buffer m))
+            (org-with-point-at m
+              (my-postpone-schedule))
+            (setq count (1+ count)))))
+      ;; Promote once after batch
+      (ignore-errors (org-queue-rebuild-soft)))
+    ;; Save once after user batch
+    (save-some-buffers t)
     (org-queue-chooser-refresh)
     (message "Postponed %d item(s)" count)))
 
@@ -978,6 +853,8 @@ Rebuilds and saves the global queue afterwards."
                      (new (max org-priority-highest (1- cur))))
                 (my-set-numeric-priority-here new))))
           (setq count (1+ count)))))
+    ;; Save once after user batch
+    (save-some-buffers t)
     ;; Rebuild global queue now
     (my-get-outstanding-tasks)
     (my-save-outstanding-tasks-to-file)

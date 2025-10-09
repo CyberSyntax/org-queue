@@ -5,6 +5,7 @@
 (require 'org-queue-config)
 (require 'org-queue-utils)
 (require 'org-queue-srs-bridge)
+(require 'org-queue-tasks)
 
 (defcustom my-random-schedule-default-months 3
   "Default number of months to schedule if none is specified."
@@ -18,11 +19,6 @@
 									    - n = 2: Cubic distribution (stronger bias towards later dates)."
   :type 'integer
   :group 'org-queue)
-
-(defun my-round-to-decimals (number decimals)
-  "Round NUMBER to DECIMALS decimal places."
-  (/ (float (round (* number (expt 10 decimals))))
-     (expt 10 decimals)))
 
 (defun my-find-schedule-weight ()
   "Calculate schedule weight based on SCHEDULED date in org header.
@@ -106,82 +102,62 @@ Skips scheduling if the current heading or its parent has an SRS drawer."
 (defun my-advance-schedule ()
   "Advance the current Org heading by a mathematically adjusted number of months.
 Uses priority-based factor multiplied with existing mathematical logic.
-- High priority tasks: enhanced advancement via priority factor
-- Low priority tasks: minimal advancement
-- Already near tasks: diminishing advancement (existing logic)
 Does not schedule tasks to dates before today.
-Skips scheduling if the current heading or its parent is an SRS entry
-(contains the org-srs-log-drawer-name drawer)."
+Skips scheduling if the current heading or its parent is an SRS entry."
   (interactive)
   (when (and (not noninteractive)
              (eq major-mode 'org-mode))
-    ;; Check if this is an SRS entry
     (unless (org-srs-entry-p (point)) ; Only continue if NOT an SRS entry
-      (let* ((e (exp 1))  ; e ≈ 2.71828
-             ;; Get the current scheduled months ahead
-             (current-weight (max 0 (my-find-schedule-weight)))  ; Ensure non-negative value
-             
-             ;; Get priority and calculate priority factor
+      (let* ((orig-buf (current-buffer))
+             (e (exp 1))
+             (current-weight (max 0 (my-find-schedule-weight)))
              (priority-str (org-entry-get nil "PRIORITY"))
              (priority (if priority-str 
-                          (string-to-number priority-str)
-                        org-priority-default))
-             ;; Priority factor: 1.0 for highest priority, approaches 0.1 for lowest priority
+                           (string-to-number priority-str)
+                         org-priority-default))
              (priority-ratio (/ (float (- org-priority-lowest priority))
-                               (float (- org-priority-lowest org-priority-highest))))
-             (priority-factor (+ 0.1 (* 0.9 priority-ratio)))  ; Range: 0.1 to 1.0
-             
-             ;; EXISTING mathematical logic: f(x) = x - 1 / ln(x + e)
+                                (float (- org-priority-lowest org-priority-highest))))
+             (priority-factor (+ 0.1 (* 0.9 priority-ratio)))
              (base-adjusted-months (max 0 (- current-weight
                                              (/ 1 (log (+ current-weight e))))))
-             
-             ;; Apply priority factor to enhance advancement for high priority
              (priority-adjusted-months (* base-adjusted-months priority-factor))
-             
-             ;; Generate a random value between current-weight and priority-adjusted-months
              (min-months (min current-weight priority-adjusted-months))
              (max-months (max current-weight priority-adjusted-months))
              (random-months (random-float min-months max-months))
-             ;; Convert random-months to days
              (adjusted-days (* random-months 30.4375)))
-        ;; Schedule the task to the adjusted date, ensuring it is not before today
         (org-schedule nil (format-time-string "%Y-%m-%d"
-                                             (time-add (current-time)
-                                                       (days-to-time adjusted-days))))
+                                              (time-add (current-time)
+                                                        (days-to-time adjusted-days))))
         (message "Advanced: Priority %d (factor %.2f) → %.2f months" 
                  priority priority-factor random-months)
-        ;; If now due, inject; if no longer due, prune.
-        (ignore-errors (org-queue--inject-current-if-outstanding t))
-        (ignore-errors (org-queue--maybe-prune-current-after-schedule t))))))
-
+        (when (and (called-interactively-p 'interactive)
+                   (not org-queue--suppress-save))
+          (org-queue--maybe-save orig-buf))
+        (unless org-queue--suppress-ui
+          (ignore-errors (org-queue--reassign-top-after-change 'advance)))))))
 
 (defun my-postpone-schedule ()
   "Postpone the current Org heading by a mathematically adjusted number of months.
 Uses priority-based factor multiplied with existing mathematical logic.
-- For overdue tasks: Allows scheduling for today (more urgent rescheduling)
-- For future tasks: Ensures minimum of tomorrow (true postponement)
 Skip postponing if the current entry or its parent contains an SRS drawer."
   (interactive)
   (when (and (not noninteractive)
              (eq major-mode 'org-mode))
     (let ((srs-status (org-srs-entry-p (point))))
       (unless srs-status
-        (let* ((e (exp 1))
+        (let* ((orig-buf (current-buffer))
+               (e (exp 1))
                (current-weight (max 0 (my-find-schedule-weight)))
                (is-overdue (my-is-overdue-task))
-               
-               ;; Priority calculations (unchanged)
                (priority-str (org-entry-get nil "PRIORITY"))
                (priority (if priority-str 
-                            (string-to-number priority-str)
-                          org-priority-default))
+                             (string-to-number priority-str)
+                           org-priority-default))
                (priority-ratio (/ (float (- priority org-priority-highest))
-                                 (float (- org-priority-lowest org-priority-highest))))
+                                  (float (- org-priority-lowest org-priority-highest))))
                (priority-factor (+ 0.1 (* 0.9 priority-ratio)))
-               
-               ;; Mathematical logic (unchanged)
                (base-adjusted-months (+ current-weight
-                                       (/ 1 (log (+ current-weight e)))))
+                                        (/ 1 (log (+ current-weight e)))))
                (priority-adjusted-months (* base-adjusted-months priority-factor))
                (min-months (min current-weight priority-adjusted-months))
                (max-months (max current-weight priority-adjusted-months))
@@ -189,38 +165,25 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
                (adjusted-days (* random-months 30.4375))
                (now (current-time))
                (proposed-new-time (time-add now (days-to-time adjusted-days)))
-               
-               ;; Smart minimum time based on overdue status
                (minimum-time (if is-overdue
-                                now  ; Overdue: allow today
-                              ;; Future: tomorrow minimum
-                              (let* ((now-decoded (decode-time now))
-                                     (year (nth 5 now-decoded))
-                                     (month (nth 4 now-decoded))
-                                     (day (nth 3 now-decoded)))
-                                (encode-time 0 0 0 (1+ day) month year))))
-               
+                                 now
+                               (let* ((now-decoded (decode-time now))
+                                      (year (nth 5 now-decoded))
+                                      (month (nth 4 now-decoded))
+                                      (day (nth 3 now-decoded)))
+                                 (encode-time 0 0 0 (1+ day) month year))))
                (new-time (if (time-less-p proposed-new-time minimum-time)
                              minimum-time
                            proposed-new-time)))
-          
           (org-schedule nil (format-time-string "%Y-%m-%d" new-time))
           (message "Postponed: Priority %d (factor %.2f) → %.2f months%s" 
                    priority priority-factor random-months
                    (if is-overdue " (overdue→today allowed)" ""))
-          ;; If now due (e.g., overdue→today), inject; if not, prune.
-          (ignore-errors (org-queue--inject-current-if-outstanding t))
-          (ignore-errors (org-queue--maybe-prune-current-after-schedule t)))))))
-
-(defun my-custom-shuffle (list)
-  "Fisher-Yates shuffle implementation for Emacs Lisp."
-  (let ((vec (vconcat list)) (i (length list)))
-    (while (> i 1)
-	(let* ((j (random i))
-	       (temp (aref vec (setq i (1- i)))))
-	  (aset vec i (aref vec j))
-	  (aset vec j temp)))
-    (append vec nil)))
+          (when (and (called-interactively-p 'interactive)
+                     (not org-queue--suppress-save))
+            (org-queue--maybe-save orig-buf))
+          (unless org-queue--suppress-ui
+            (ignore-errors (org-queue--reassign-top-after-change 'postpone))))))))
 
 (defun my-auto-advance-schedules (&optional power)
   "Advance 2^POWER random tasks (default: 64) across org-queue files."
@@ -233,12 +196,13 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
          (processed 0)
          (count 0))
     (save-some-buffers t)
-    (catch 'break
-      (dolist (m shuffled)
-        (when (>= count limit) (throw 'break nil))
-        (setq count (1+ count))
-        (org-with-point-at m
-          (when (my-advance-schedule)
+    (let ((org-queue--suppress-ui t))
+      (catch 'break
+        (dolist (m shuffled)
+          (when (>= count limit) (throw 'break nil))
+          (setq count (1+ count))
+          (org-with-point-at m
+            (my-advance-schedule)
             (setq processed (1+ processed))))))
     (save-some-buffers t)
     (message "Advanced %d/%d (2^%d=%d)" processed total n limit)))
@@ -254,12 +218,13 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
          (processed 0)
          (count 0))
     (save-some-buffers t)
-    (catch 'break
-      (dolist (m shuffled)
-        (when (>= count limit) (throw 'break nil))
-        (setq count (1+ count))
-        (org-with-point-at m
-          (when (my-postpone-schedule)
+    (let ((org-queue--suppress-ui t))
+      (catch 'break
+        (dolist (m shuffled)
+          (when (>= count limit) (throw 'break nil))
+          (setq count (1+ count))
+          (org-with-point-at m
+            (my-postpone-schedule)
             (setq processed (1+ processed))))))
     (save-some-buffers t)
     (message "Postponed %d/%d (2^%d=%d)" processed total n limit)))
@@ -270,12 +235,57 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
    (list (read-number
           "Enter the upper month limit: "
           (my-find-schedule-weight))))
-  ;; Schedule the current heading
-  (my-random-schedule (or months (my-find-schedule-weight)))
-  (my-ensure-priority-set)
-  ;; Update in-memory queue minimally (no resort/mix)
-  (ignore-errors (org-queue--inject-current-if-outstanding t))
-  (ignore-errors (org-queue--maybe-prune-current-after-schedule t)))
+  (let ((orig-buf (current-buffer)))
+    ;; Suppress nested saves and perform a single save at the end
+    (let ((org-queue--suppress-save t))
+      (my-random-schedule (or months (my-find-schedule-weight)))
+      (my-set-priority-with-heuristics)
+      (my-ensure-priority-set))
+    (when (and (called-interactively-p 'interactive)
+               (not org-queue--suppress-save))
+      (org-queue--maybe-save orig-buf))
+    (unless org-queue--suppress-ui
+      (ignore-errors (org-queue--reassign-top-after-change 'schedule)))))
+
+(defun org-queue-stamp-last-repeat-top ()
+  "Stamp :LAST_REPEAT: now on the queue head (index 0) for non-SRS.
+After stamping, re-place the item in the in-memory two-queue (no file scan),
+advance the interleave phase once, then show the new top. Saves the modified Org buffer only when invoked interactively.
+
+If the head is an SRS entry, do not stamp; use SRS review instead."
+  (interactive)
+  (my-ensure-task-list-present)
+  (if (or (null my-outstanding-tasks-list)
+          (zerop (length my-outstanding-tasks-list)))
+      (message "No outstanding tasks.")
+    (let* ((top (nth 0 my-outstanding-tasks-list))
+           (m   (my-extract-marker top)))
+      (unless (and (markerp m) (marker-buffer m) (buffer-live-p (marker-buffer m)))
+        (user-error "Cannot resolve the top task's marker"))
+      (if (plist-get top :srs)
+          (message "Head is SRS. Use review (C-c q 1/3) to rate.")
+        (with-current-buffer (marker-buffer m)
+          (org-with-point-at m
+            (org-back-to-heading t)
+            (let* ((priority (or (plist-get top :priority)
+                                 (and (org-entry-get nil "PRIORITY")
+                                      (string-to-number (org-entry-get nil "PRIORITY")))
+                                 org-priority-default))
+                   (now     (current-time))
+                   (now-str (format-time-string "[%Y-%m-%d %a %H:%M]" now)))
+              (org-entry-put nil "LAST_REPEAT" now-str)
+              (let ((verify (org-entry-get nil "LAST_REPEAT")))
+                (unless (and verify (string= (string-trim verify) now-str))
+                  (org-set-property "LAST_REPEAT" now-str)))
+              ;; Advance the interleave phase once (consuming head)
+              (let ((ratio (or (and (boundp 'org-queue-srs-mix-ratio) org-queue-srs-mix-ratio) '(1 . 4))))
+                (org-queue--advance-mix-phase (car ratio) (cdr ratio)))
+              ;; Reassign top in current two-queue
+              (ignore-errors (org-queue--reassign-top-after-change 'stamp))
+              (message "Stamped LAST_REPEAT %s" now-str)
+              (when (and (called-interactively-p 'interactive)
+                         (not org-queue--suppress-save))
+                (org-queue--maybe-save (marker-buffer m))))))))))
 
 (defun my-ensure-priorities-and-schedules-for-all-headings (&optional max-attempts)
   "Ensure priorities and schedules are set for all headings across Org agenda files.
@@ -395,15 +405,13 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
       (message "Warning: Reached maximum attempts (%d). Some entries may still be incomplete." 
                max-attempts))))
 
-(defun my-post-org-insert-heading (&rest _args)
-    "Run after `org-insert-heading` to assign priority and schedule."
-  
-    (when (and (not noninteractive)
-		 (eq major-mode 'org-mode)
-		 (bound-and-true-p org-queue-mode))  ;; 🙌 Only trigger in org-queue-mode
-	(my-random-schedule (my-find-schedule-weight) 0)
-	(call-interactively #'my-set-priority-with-heuristics)
-	(end-of-line)))
+(defun org-queue-stamp-and-show-top ()
+  "Stamp LAST_REPEAT on the head, then show the new top once."
+  (interactive)
+  ;; Prevent double-show if org-queue-auto-show-top-after-change is enabled.
+  (let ((org-queue-auto-show-top-after-change nil))
+    (org-queue-stamp-last-repeat-top))
+  (org-queue-show-top t))
 
 (provide 'org-queue-schedule)
 ;;; org-queue-schedule.el ends here
