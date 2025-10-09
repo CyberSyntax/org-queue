@@ -1056,7 +1056,8 @@ Rules:
                   (error-message-string err)))))))
 
 (defun my-show-next-outstanding-task ()
-  "Show the next outstanding task using the in-memory queue only."
+  "Show the next outstanding task using the in-memory queue only.
+If moving from the last item to the first (wrap-around), perform a soft rebuild."
   (interactive)
   (widen-and-recenter)
   (my-ensure-task-list-present)
@@ -1067,17 +1068,21 @@ Rules:
   (if (and my-outstanding-tasks-list
            (> (length my-outstanding-tasks-list) 0))
       (let* ((len (length my-outstanding-tasks-list))
-             (candidate (mod (1+ my-outstanding-tasks-index) len)))
-        ;; Skip any not-due items we would land on (remove them as we go).
-        (setq candidate (my-queue--skip-not-due-forward candidate t))
-        (setq my-outstanding-tasks-index candidate)
-        (my-save-index-to-file)
-        (let ((task (nth candidate my-outstanding-tasks-list)))
-          (my-display-task-at-marker task)
-          (my-pulse-highlight-current-line)
-          (my-queue-limit-visible-buffers)
-          (my-queue-handle-srs-after-task-display task)
-          (my-show-current-flag-status)))
+             (at-last (= my-outstanding-tasks-index (1- len))))
+        ;; On wrap-around to the first item, do a soft rebuild (same as pressing g).
+        (if at-last
+            (org-queue-rebuild-soft)
+          (let* ((candidate (mod (1+ my-outstanding-tasks-index) len)))
+            ;; Skip any not-due items we would land on (remove them as we go).
+            (setq candidate (my-queue--skip-not-due-forward candidate t))
+            (setq my-outstanding-tasks-index candidate)
+            (my-save-index-to-file)
+            (let ((task (nth candidate my-outstanding-tasks-list)))
+              (my-display-task-at-marker task)
+              (my-pulse-highlight-current-line)
+              (my-queue-limit-visible-buffers)
+              (my-queue-handle-srs-after-task-display task)
+              (my-show-current-flag-status)))))
     (message "No outstanding tasks found.")))
 
 (defun my-show-previous-outstanding-task ()
