@@ -204,8 +204,8 @@ Returns a plist or nil:
         nil)
     (cond
      ;; Android
-     ((and (fboundp 'my-android-p) (my-android-p))
-      (message "Please open the Anki app manually on Android."))
+     ((and (boundp 'my-android-p) my-android-p)
+     (message "Please open the Anki app manually on Android."))
      ;; macOS
      ((eq system-type 'darwin)
       (if (and (fboundp 'my-anki-running-p) (my-anki-running-p))
@@ -228,9 +228,9 @@ Returns a plist or nil:
                 (zerop (call-process "wmctrl" nil nil nil "-a" "Anki"))
                 (message "Anki is running; could not raise via wmctrl.")))
            ((executable-find "xdotool")
-            (start-process "anki-activate" nil "xdotool"
-                           "search" "--onlyvisible" "--class" "anki"
-                           "windowactivate" "--sync"))
+           (start-process
+             "anki-activate" nil "sh" "-c"
+             "xdotool search --onlyvisible --class anki | head -n1 | xargs -r -I{} xdotool windowactivate --sync {}"))
            (t
             (message "Anki is running; install wmctrl/xdotool to raise it.")))
         (let ((exe (or (executable-find "anki")
@@ -703,20 +703,23 @@ Other cloze markers are unwrapped on the Front only."
           (org-queue--maybe-save))))
     (org-highlight-custom-syntax)))
 
-(defvar org-custom-syntax-timer nil
-  "Timer for delayed custom syntax highlighting.")
+;; make the timer buffer-local
+(defvar-local org-custom-syntax-timer nil)
 
 (defun org-update-custom-syntax-after-change (_beg _end _len)
   "Update custom syntax highlighting after buffer changes."
   (when (eq major-mode 'org-mode)
     (when org-custom-syntax-timer
       (cancel-timer org-custom-syntax-timer))
-    (setq org-custom-syntax-timer
-          (run-with-idle-timer 0.2 nil
-                               (lambda ()
-                                 (when (buffer-live-p (current-buffer))
-                                   (with-current-buffer (current-buffer)
-                                     (org-highlight-custom-syntax))))))))
+    (let ((buf (current-buffer)))
+      (setq org-custom-syntax-timer
+            (run-with-idle-timer
+             0.2 nil
+             (lambda (b)
+               (when (buffer-live-p b)
+                 (with-current-buffer b
+                   (org-highlight-custom-syntax))))
+             buf)))))
 
 (add-hook 'org-mode-hook 'org-highlight-custom-syntax)
 (add-hook 'org-mode-hook

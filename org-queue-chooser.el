@@ -359,7 +359,6 @@ This version is deterministic and guarantees exactly WIDTH columns output."
               (string-trim (replace-regexp-in-string "[ \t\n\r]+" " " plain)))))))))
 
 (defun org-queue-chooser--scheduled-string (task)
-  "Return YYYY-MM-DD or empty."
   (let* ((m (my-extract-marker task))
          (buf (and (markerp m) (marker-buffer m))))
     (when (and (markerp m) buf (buffer-live-p buf))
@@ -368,6 +367,7 @@ This version is deterministic and guarantees exactly WIDTH columns output."
           (widen)
           (save-excursion
             (goto-char (marker-position m))
+            (org-back-to-heading t)
             (let ((tm (org-get-scheduled-time nil)))
               (if tm (format-time-string "%Y-%m-%d" tm) ""))))))))
 
@@ -424,8 +424,8 @@ This version is deterministic and guarantees exactly WIDTH columns output."
                        (or (org-queue-chooser--gather-preview task) "")))
              (prio (or (plist-get task :priority)
                        (and (markerp m)
-                            (org-with-point-at m
-                              (my-get-raw-priority-value)))))
+                           (org-with-point-at m
+                             (my-get-raw-priority-value)))))
              (sched (org-queue-chooser--scheduled-string task))
              (marked (gethash i org-queue-chooser--marks))
              (mark-col (org-queue-chooser--truncate-pad (if marked "*" " ") org-queue-chooser-mark-width))
@@ -463,10 +463,10 @@ In subset mode, only refresh the subset view (no global rebuild)."
       (progn
         (org-queue-chooser-refresh)
         (message "Subset view: refreshed entries (global hard refresh not applied)."))
-    ;; Global queue: reindex + rebuild + refresh
-    (org-queue-reindex-files)            ;; optional: log how many files found
-    (my-get-outstanding-tasks)           ;; rebuild queue from files
-    (my-save-outstanding-tasks-to-file)  ;; update cache
+    (org-queue--with-batched-saves
+      (org-queue-reindex-files)            ;; optional: log how many files found
+      (my-get-outstanding-tasks)           ;; rebuild queue from files (may create IDs)
+      (my-save-outstanding-tasks-to-file)) ;; update cache
     (setq org-queue-chooser--tasks nil
           org-queue-chooser--subset-p nil
           org-queue-chooser--marks (make-hash-table :test 'eql))
@@ -490,18 +490,20 @@ In subset mode, only refresh the subset view (no global rebuild)."
               (forward-line 1))))))))
 
 (defun org-queue-open-chooser ()
-  "Open the queue chooser buffer showing the global queue."
   (interactive)
-  (my-launch-anki)
-  (my-ensure-synchronized-task-list)
-  (let ((buf (get-buffer-create org-queue-chooser-buffer-name)))
-    (pop-to-buffer buf)
-    (org-queue-chooser-mode)
-    (setq org-queue-chooser--tasks nil
-          org-queue-chooser--subset-p nil
-          org-queue-chooser--marks (make-hash-table :test 'eql))
-    (org-queue-chooser-refresh)
-    (org-queue-chooser--goto-index my-outstanding-tasks-index)))
+  (if org-queue-chooser-open-in-tab
+      (org-queue-chooser-open-in-tab)
+    (progn
+      (my-launch-anki)
+      (my-ensure-synchronized-task-list)
+      (let ((buf (get-buffer-create org-queue-chooser-buffer-name)))
+        (pop-to-buffer buf)
+        (org-queue-chooser-mode)
+        (setq org-queue-chooser--tasks nil
+              org-queue-chooser--subset-p nil
+              org-queue-chooser--marks (make-hash-table :test 'eql))
+        (org-queue-chooser-refresh)
+        (org-queue-chooser--goto-index my-outstanding-tasks-index)))))
 
 (defun org-queue-chooser-open-in-tab ()
   "Open the queue chooser in a dedicated tab-bar tab named \"Queue\"."
