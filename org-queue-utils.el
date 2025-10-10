@@ -3,6 +3,26 @@
 ;;; Code:
 
 (require 'org-queue-config)
+(require 'cl-lib)
+
+;; Bulk-save control for maintenance and other batch operations
+(defmacro org-queue--without-autosave (&rest body)
+  "Run BODY with all explicit saves suppressed.
+Disables save-buffer/save-some-buffers and sets org-queue--suppress-save."
+  (declare (indent 0) (debug t))
+  `(let ((org-queue--suppress-save t))
+     (cl-letf (((symbol-function 'save-buffer) (lambda (&rest _args) nil))
+               ((symbol-function 'save-some-buffers) (lambda (&rest _args) nil)))
+       ,@body)))
+
+(defmacro org-queue--with-batched-saves (&rest body)
+  "Run BODY with autosaves disabled and flush a single save at the end."
+  (declare (indent 0) (debug t))
+  `(org-queue--without-autosave
+     (unwind-protect
+         (progn ,@body)
+       ;; Single flush at the very end
+       (save-some-buffers t))))
 
 (defun org-queue--maybe-save (&optional buffer)
   "Save BUFFER (or current buffer) if it visits a file and is modified.

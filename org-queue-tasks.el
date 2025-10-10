@@ -846,7 +846,7 @@ Also saves the index separately."
 
 (defun my-load-outstanding-tasks-from-file ()
   "Load cached tasks stored as (file . id) pairs and rebuild plist tasks with markers.
-Dedupes by ID while reading; dedupes result list; rewrites cache deduped."
+Dedupes by ID; reindexes unresolved IDs' files ONCE (grouped); rewrites cache deduped."
   (when (file-exists-p my-outstanding-tasks-cache-file)
     (let* ((data (with-temp-buffer
                    (insert-file-contents my-outstanding-tasks-cache-file)
@@ -857,8 +857,9 @@ Dedupes by ID while reading; dedupes result list; rewrites cache deduped."
       (when (string= saved-date today)
         (let ((seen-ids (make-hash-table :test 'equal))
               (result-list nil)
-              (resolved 0)
-              (unresolved 0))
+              (files-to-reindex nil)
+              (resolved 0))
+          ;; First pass: resolve what we can; collect files to reindex for the rest
           (dolist (task-pair saved-pairs)
             (let* ((stored-path (car task-pair))
                    (id (cdr task-pair)))
@@ -870,49 +871,75 @@ Dedupes by ID while reading; dedupes result list; rewrites cache deduped."
                                    (expand-file-name stored-path
                                                      (or org-queue-directory default-directory))))
                        (marker (and id (org-id-find id 'marker))))
-                  (unless (and marker (markerp marker)
-                               (marker-buffer marker)
-                               (buffer-live-p (marker-buffer marker)))
-                    (when (and id abs-path (file-exists-p abs-path))
-                      (ignore-errors
-                        (org-id-update-id-locations (list (file-truename abs-path))))
-                      (setq marker (org-id-find id 'marker))))
-                  (if (and marker
-                           (markerp marker)
-                           (marker-buffer marker)
+                  (if (and marker (markerp marker) (marker-buffer marker)
                            (buffer-live-p (marker-buffer marker)))
                       (with-current-buffer (marker-buffer marker)
                         (save-excursion
                           (goto-char (marker-position marker))
                           (let* ((priority (my-get-raw-priority-value))
-                                (flag (my-priority-flag priority))
-                                (file (buffer-file-name))
-                                (heading (org-get-heading t t t t))
-                                (pos (point))
-                                (srs (eq (org-srs-entry-p (point)) 'current))
-                                (task-plist (list :id id
-                                                  :marker marker
-                                                  :priority priority
-                                                  :flag flag
-                                                  :file file
-                                                  :is-todo (my-is-todo-task)
-                                                  :heading heading
-                                                  :pos pos
-                                                  :srs srs)))
+                                 (flag (my-priority-flag priority))
+                                 (file (buffer-file-name))
+                                 (heading (org-get-heading t t t t))
+                                 (pos (point))
+                                 (srs (eq (org-srs-entry-p (point)) 'current))
+                                 (task-plist (list :id id
+                                                   :marker marker
+                                                   :priority priority
+                                                   :flag flag
+                                                   :file file
+                                                   :is-todo (my-is-todo-task)
+                                                   :heading heading
+                                                   :pos pos
+                                                   :srs srs)))
                             (push task-plist result-list)
                             (setq resolved (1+ resolved)))))
-                    (setq unresolved (1+ unresolved))
-                    (message "org-queue: could not resolve ID %s (stored path: %s)" id stored-path))))))
+                    (when (and abs-path (file-exists-p abs-path))
+                      (push (file-truename abs-path) files-to-reindex)))))))
 
+          ;; One-shot reindex (deduped) then retry unresolved IDs
+          (setq files-to-reindex (delete-dups files-to-reindex))
+          (when files-to-reindex
+            (ignore-errors (org-id-update-id-locations files-to-reindex)))
+          (dolist (task-pair saved-pairs)
+            (let* ((stored-path (car task-pair))
+                   (id (cdr task-pair)))
+              (when (and id
+                         (not (cl-find id result-list
+                                       :key (lambda (e) (plist-get e :id))
+                                       :test #'equal)))
+                (let ((marker (org-id-find id 'marker)))
+                  (when (and marker (markerp marker) (marker-buffer marker)
+                             (buffer-live-p (marker-buffer marker)))
+                    (with-current-buffer (marker-buffer marker)
+                      (save-excursion
+                        (goto-char (marker-position marker))
+                        (let* ((priority (my-get-raw-priority-value))
+                               (flag (my-priority-flag priority))
+                               (file (buffer-file-name))
+                               (heading (org-get-heading t t t t))
+                               (pos (point))
+                               (srs (eq (org-srs-entry-p (point)) 'current))
+                               (task-plist (list :id id
+                                                 :marker marker
+                                                 :priority priority
+                                                 :flag flag
+                                                 :file file
+                                                 :is-todo (my-is-todo-task)
+                                                 :heading heading
+                                                 :pos pos
+                                                 :srs srs)))
+                          (push task-plist result-list)
+                          (setq resolved (1+ resolved)))))))))
+
+          ;; Finalize
           (setq my-outstanding-tasks-list (nreverse result-list))
           (my-dedupe-outstanding-tasks)
-          (message "org-queue: resolved %d IDs, %d unresolved (from cache)" resolved unresolved)
+          (message "org-queue: resolved %d IDs (from cache)" resolved)
           (my-save-outstanding-tasks-to-file)
-
           (unless (and (my-load-index-from-file)
                        (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
             (setq my-outstanding-tasks-index 0))
-          t)))))
+          t))))))
 
 (defun my-ensure-task-list-present ()
   "Ensure the task list exists in memory without reordering it.
@@ -985,9 +1012,9 @@ Dedupes by ID while reading; dedupes result list; rewrites cache deduped."
 
 (defun org-queue--earliest-time (tasks)
   "Return earliest of :available-at or :srs-due in TASKS, or nil."
-  (let* ((ts (delq nil (mapcar (lambda (t)
-                                 (or (plist-get t :available-at)
-                                     (plist-get t :srs-due)))
+  (let* ((ts (delq nil (mapcar (lambda (task)
+                                 (or (plist-get task :available-at)
+                                     (plist-get task :srs-due)))
                                tasks))))
     (when ts (car (sort (copy-sequence ts) #'time-less-p)))))
 
@@ -1095,15 +1122,15 @@ Then interleave outstanding SRS with non-SRS by `org-queue-srs-mix-ratio` (SRS s
 
       ;; Build pending-today = non-SRS pending ∪ SRS pending (dedup by task key)
       (let* ((pending (append (nreverse non-srs-pending) (nreverse srs-pending)))
-             (seen (make-hash-table :test 'equal))
-             (acc '()))
-        (dolist (t pending)
-          (let ((k (my--task-unique-key t)))
+            (seen (make-hash-table :test 'equal))
+            (acc '()))
+        (dolist (task pending)
+          (let ((k (my--task-unique-key task)))
             (unless (and k (gethash k seen))
               (when k (puthash k t seen))
               ;; Ensure :available-at is present for pending entries
-              (push (or (and (plist-get t :available-at) t)
-                        (org-queue--update-available-at! t))
+              (push (or (and (plist-get task :available-at) task)
+                        (org-queue--update-available-at! task))
                     acc))))
         (setq my-today-pending-tasks (nreverse acc))))
 
@@ -1120,7 +1147,10 @@ Then interleave outstanding SRS with non-SRS by `org-queue-srs-mix-ratio` (SRS s
                total-count todo-count pending-count))
     ;; Start from top
     (setq my-outstanding-tasks-index 0)
-    (my-queue-limit-visible-buffers)))
+    (my-queue-limit-visible-buffers)
+    ;; Flush any eager ID creations done during this scan, unless we're batching.
+    (unless org-queue--suppress-save
+      (save-some-buffers t))))
 
 (defun my-remove-current-task ()
   "Remove the task at the current index from the queue and keep buffers tidy.
@@ -1236,15 +1266,15 @@ Behavior:
     (message "Processed duplicate outstanding priorities.")))))
 
 (defun my-enforce-priority-constraints ()
-  "Enforce monotone cap: count of lower priorities must not exceed any higher priority count.
-Process priorities from 1 to 64; postpone overflow FIFO within each priority."
+  "Enforce monotone cap: lower priorities can't outnumber any higher priority.
+Walk priorities in ascending order; postpone overflow FIFO within each priority."
   (interactive)
   (let* ((files (org-queue-file-list))
          (priority-counts (make-hash-table :test 'equal))
          (tasks-by-priority (make-hash-table :test 'equal)))
     (unless files
       (user-error "No Org files for org-queue. Configure `org-queue-directory` or `org-queue-file-roots`."))
-    ;; Collect
+    ;; Collect outstanding entries by numeric PRIORITY.
     (dolist (file files)
       (when (file-exists-p file)
         (with-current-buffer (find-file-noselect file)
@@ -1252,8 +1282,8 @@ Process priorities from 1 to 64; postpone overflow FIFO within each priority."
             (org-map-entries
              (lambda ()
                (when (my-is-outstanding-task)
-                 (let* ((pstr (org-entry-get nil "PRIORITY"))
-                        (prio (if pstr (string-to-number pstr) org-priority-default))
+                 (let* ((pstr  (org-entry-get nil "PRIORITY"))
+                        (prio  (if pstr (string-to-number pstr) org-priority-default))
                         (entry (cons (buffer-file-name) (point))))
                    (puthash prio
                             (nconc (gethash prio tasks-by-priority) (list entry))
@@ -1263,34 +1293,39 @@ Process priorities from 1 to 64; postpone overflow FIFO within each priority."
                             priority-counts))))
              nil 'file)))))
 
-    (let* ((sorted (sort (hash-table-keys priority-counts) #'<))
-          (current-max nil))
+    (let* ((sorted (sort (copy-sequence (hash-table-keys priority-counts)) #'<))
+           (current-max nil))
       (if (zerop (length sorted))
           (message "[COMPLETE] No outstanding tasks found")
         (let ((org-queue--suppress-ui t))
           (dolist (prio sorted)
-          (let ((count (gethash prio priority-counts 0))
-                (fifo  (copy-sequence (gethash prio tasks-by-priority '()))))
-            (cond
-             ((zerop count) nil)
-             ((null current-max)
-              (setq current-max count)
-              (message "[CONSTRAINT] Pri %d sets cap to %d" prio current-max))
-             ((> count current-max)
-              (let ((excess (- count current-max)))
-                (message "[ENFORCE] Pri %d overflow (%d > %d). Postponing %d..."
-                         prio count current-max excess)
-                (dotimes (_ excess)
-                  (when-let ((entry (pop fifo)))
-                    (let ((file (car entry)) (pos (cdr entry)))
-                      (with-current-buffer (find-file-noselect file)
-                        (goto-char pos)
-                        (my-postpone-schedule))))))
-            (puthash prio fifo tasks-by-priority))
-          (setq current-max (min current-max (gethash prio priority-counts 0)))))
-      (save-some-buffers t)
-      (message "[COMPLETE] Constraint enforcement done; final cap %s"
-               (or current-max 0))))))))
+            (let* ((count (gethash prio priority-counts 0))
+                   (fifo  (copy-sequence (gethash prio tasks-by-priority))))
+              (cond
+               ((zerop count))  ;; nothing at this priority
+               ((null current-max)
+                (setq current-max count)
+                (message "[CONSTRAINT] Pri %d sets cap to %d" prio current-max))
+               ((> count current-max)
+                (let ((excess (- count current-max)))
+                  (message "[ENFORCE] Pri %d overflow (%d > %d). Postponing %d..."
+                           prio count current-max excess)
+                  (cl-loop repeat excess
+                           for entry = (pop fifo)
+                           while entry
+                           do (pcase-let ((`(,file . ,pos) entry))
+                                (with-current-buffer (find-file-noselect file)
+                                  (goto-char pos)
+                                  (my-postpone-schedule)))))))
+              ;; write back the reduced FIFO for this priority
+              (puthash prio fifo tasks-by-priority))
+            ;; new cap is min(old cap, count at this prio), but keep it numeric
+            (setq current-max (if (numberp current-max)
+                                  (min current-max (gethash prio priority-counts 0))
+                                (gethash prio priority-counts 0)))))
+        (save-some-buffers t)
+        (message "[COMPLETE] Constraint enforcement done; final cap %s"
+                 (or current-max 0))))))
 
 (defun my-postpone-consecutive-same-file-tasks ()
   "Postpone consecutive tasks from the same file, keeping only the first.
@@ -1349,9 +1384,11 @@ Saves buffers and regenerates the task list for consistency."
   "Force reindex + rebuild the queue, refresh chooser if visible, and show current task."
   (interactive)
   (my-launch-anki)
-  (org-queue-reindex-files)             ;; optional: log size
-  (my-get-outstanding-tasks)            ;; rebuild from files
-  (my-save-outstanding-tasks-to-file)   ;; update cache
+  (org-queue--with-batched-saves
+    (org-queue-reindex-files)           ;; optional: log size
+    (my-get-outstanding-tasks)          ;; rebuild from files (may create IDs)
+    (my-save-outstanding-tasks-to-file) ;; update cache
+    )
   ;; refresh chooser buffers if open
   (dolist (b (list "*Org Queue*" "*Org Queue (Subset)*"))
     (when (get-buffer b)
@@ -1436,7 +1473,7 @@ Does not rescan files; does not auto-start SRS/Anki."
 
 ;; Utility functions for task management
 (defun org-queue-startup ()
-  "Minimal org-queue startup:
+  "org-queue startup:
 - Initialize org-id DB,
 - If cache exists for today, use it;
   otherwise, build and save the queue.
@@ -1448,15 +1485,15 @@ Does not rescan files; does not auto-start SRS/Anki."
 
   ;; Try cache first (today)
   (let ((cache-loaded (and (fboundp 'my-load-outstanding-tasks-from-file)
-                           (my-load-outstanding-tasks-from-file))))
+                          (my-load-outstanding-tasks-from-file))))
     (if cache-loaded
         (message "org-queue: cache loaded for today")
       (progn
-        (message "org-queue: cache missing/stale -> minimal maintenance")
-        ;; Build and save queue
-        (my-get-outstanding-tasks)
-        (setq my-outstanding-tasks-index 0)
-        (my-save-outstanding-tasks-to-file)
+        (message "org-queue: cache missing/stale -> maintenance")
+        (org-queue--with-batched-saves
+          (my-get-outstanding-tasks)
+          (setq my-outstanding-tasks-index 0)
+          (my-save-outstanding-tasks-to-file))
         (message "org-queue: queue built and saved"))))
 
   ;; Fast prune current queue (removes SRS during night shift and any not-due items)
@@ -1475,18 +1512,15 @@ Does not rescan files; does not auto-start SRS/Anki."
 ;; Automatic startup
 (add-hook 'emacs-startup-hook #'org-queue-startup 100)
 
-(defun org-queue-maintenance (&optional full)
+(defun org-queue-maintenance ()
   "Run org-queue maintenance.
-Without prefix: quick maintenance (fast).
-With C-u prefix: full maintenance (the heavy pipeline you used to run at startup).
-Usage
-- Quick (fast): M-x org-queue-maintenance
-- Full (heavy pipeline): C-u M-x org-queue-maintenance"
-  (interactive "P")
+Runs the complete maintenance pipeline and flushes a single save at the end."
+  (interactive)
   (my-org-id-initialize-id-locations)
-  (save-some-buffers t)
 
-  (if full
+  ;; Suppress UI refresh during the heavy run; batch-suppress saves and flush once at the end.
+  (let ((org-queue--suppress-ui t))
+    (org-queue--with-batched-saves
       (progn
         ;; Optional: tighten org-roam/IDs if available
         (when (require 'org-roam nil t)
@@ -1498,7 +1532,7 @@ Usage
         (when (fboundp 'my-ensure-priorities-and-schedules-for-all-headings)
           (my-ensure-priorities-and-schedules-for-all-headings))
 
-        ;; Advance near-future schedules so queue is meaningful today
+        ;; Advance near-future schedules so the queue is meaningful today
         (when (fboundp 'my-auto-advance-schedules)
           (my-auto-advance-schedules 8))
 
@@ -1521,18 +1555,16 @@ Usage
         ;; Remove DONE cruft
         (when (fboundp 'my-cleanup-all-done-tasks)
           (my-cleanup-all-done-tasks)))
-    ;; Quick maintenance (fast)
-    (my-auto-postpone-overdue-tasks)
-    (my-postpone-duplicate-priority-tasks))
 
-  (save-some-buffers t)
-  (my-get-outstanding-tasks)
-  (setq my-outstanding-tasks-index 0)
-  (my-save-outstanding-tasks-to-file)
+      ;; Rebuild/refresh lists and caches (cache files are written as usual)
+      (my-get-outstanding-tasks)
+      (setq my-outstanding-tasks-index 0)
+      (my-save-outstanding-tasks-to-file)))
+
+  ;; After the macro exits, a single save-some-buffers t has been executed.
   (delete-other-windows)
   (org-queue-show-top t)
-  (message "org-queue: %s maintenance complete."
-           (if full "full" "quick"))
+  (message "org-queue: maintenance complete.")
   (ignore-errors (org-queue--schedule-midnight-refresh)))
 
 (provide 'org-queue-tasks)
