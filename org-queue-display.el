@@ -49,138 +49,6 @@
            (cl-loop repeat len
                     collect (aref alphabet (random alen))))))
 
-;; Flag display constants and functions
-(defconst my-priority-flag-table
-  '((1 . "Flag:1")          ; 1
-    (2 . "Flag:2")          ; 2
-    (3 . "Flag:3")          ; 3–4
-    (4 . "Flag:4")          ; 5–8
-    (5 . "Flag:5")          ; 9–16
-    (6 . "Flag:6")          ; 17–32
-    (7 . "Flag:7"))         ; 33–64
-  "Mapping from flag group to description for Anki-style flagging.")
-
-(defun my-priority-flag (prio)
-  "Return the flag number for a given PRIORITY."
-  (cond
-   ((= prio 1) 1)
-   ((= prio 2) 2)
-   ((<= prio 4) 3)
-   ((<= prio 8) 4)
-   ((<= prio 16) 5)
-   ((<= prio 32) 6)
-   ((<= prio 64) 7)))
-
-(defun my-get-marker-flag (marker-or-task)
-  "Helper to safely get flag from marker or task."
-  (cond
-   ;; Case 1: It's a marker
-   ((markerp marker-or-task)
-    (when (and (marker-buffer marker-or-task)
-               (buffer-live-p (marker-buffer marker-or-task)))
-      (with-current-buffer (marker-buffer marker-or-task)
-        (save-excursion
-          (goto-char (marker-position marker-or-task))
-          (my-priority-flag
-           (string-to-number (or (org-entry-get nil "PRIORITY") "0")))))))
-   
-   ;; Case 2: It has a :flag property (plist)
-   ((plist-get marker-or-task :flag)
-    (plist-get marker-or-task :flag))
-   
-   ;; Case 3: It has a :marker property (plist)
-   ((plist-get marker-or-task :marker)
-    (let ((marker (plist-get marker-or-task :marker)))
-      (when (and (markerp marker)
-                 (marker-buffer marker)
-                 (buffer-live-p (marker-buffer marker)))
-        (with-current-buffer (marker-buffer marker)
-          (save-excursion
-            (goto-char (marker-position marker))
-            (my-priority-flag
-             (string-to-number (or (org-entry-get nil "PRIORITY") "0"))))))))
-   
-   ;; Default: Can't determine flag
-   (t nil)))
-
-(defun my-current-flag-counts ()
-  "Calculate flag metrics for the current outstanding task.
-Returns a plist or nil:
-  :flag-name  Human name (e.g., \"Flag:3\")
-  :flag-num   Numeric flag id
-  :flag-count Total tasks with this flag
-  :flag-pos   Position (1-based) of current among same-flag tasks
-  :flag-left  Remaining same-flag tasks including current"
-  (if (not (and my-outstanding-tasks-list
-                (>= my-outstanding-tasks-index 0)
-                (< my-outstanding-tasks-index (length my-outstanding-tasks-list))))
-      nil
-    (let* ((task-or-marker (nth my-outstanding-tasks-index my-outstanding-tasks-list))
-           (current-flag (my-get-marker-flag task-or-marker))
-           (flag-name (alist-get current-flag my-priority-flag-table)))
-      (if (not current-flag)
-          nil
-        (let ((same-flag-count 0)
-              (position 0))
-          (dotimes (i (length my-outstanding-tasks-list))
-            (let* ((m (nth i my-outstanding-tasks-list))
-                   (flag (my-get-marker-flag m)))
-              (when (and flag (= flag current-flag))
-                (setq same-flag-count (1+ same-flag-count))
-                (when (= i my-outstanding-tasks-index)
-                  (setq position same-flag-count)))))
-          (let ((remaining (- same-flag-count (1- position))))
-            (list :flag-name flag-name
-                  :flag-num current-flag
-                  :flag-count same-flag-count
-                  :flag-pos position
-                  :flag-left remaining)))))))
-
-(defun my-show-current-flag-status ()
-  "Show flag info, TODO status, and current outstanding task index."
-  (interactive)
-  (let ((data (my-current-flag-counts))
-        (tasks (if (boundp 'my-outstanding-tasks-list)
-                   (length my-outstanding-tasks-list)
-                 nil))
-        (idx (if (and (boundp 'my-outstanding-tasks-index)
-                      (boundp 'my-outstanding-tasks-list)
-                      my-outstanding-tasks-list)
-                 (1+ my-outstanding-tasks-index)
-               nil))
-        (todo-status (when (and (boundp 'my-outstanding-tasks-list)
-                               (boundp 'my-outstanding-tasks-index)
-                               my-outstanding-tasks-list
-                               (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
-                       (let ((current-task (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
-                         (plist-get current-task :is-todo)))))
-    (if data
-        (let* ((flag-name (plist-get data :flag-name))
-               (flag-num (plist-get data :flag-num))
-               (fidx (plist-get data :flag-pos))
-               (ftotal (plist-get data :flag-count))
-               (fleft (plist-get data :flag-left))
-               (tleft (if (and idx tasks) (- tasks idx) nil))
-               (todo-indicator (cond ((eq todo-status t) "TODO")
-                                   ((eq todo-status nil) "OTHER")
-                                   (t "UNKNOWN"))))  ; Changed from "?" to "UNKNOWN"
-          (message "%s (%d of %d, %d left) | %s Task %d/%d, %d left"
-                   (or flag-name (format "Flag %s" (or flag-num "UNKNOWN")))  ; Safe string
-                   (or fidx 0) (or ftotal 0) (or fleft 0)  ; Ensure numbers
-                   todo-indicator
-                   (or idx 0)
-                   (or tasks 0)
-                   (or tleft 0)))
-      (let ((tleft (if (and idx tasks) (- tasks idx) nil))
-            (todo-indicator (cond ((eq todo-status t) "TODO")
-                                ((eq todo-status nil) "OTHER")
-                                (t "UNKNOWN"))))  ; Changed from "?" to "UNKNOWN"
-        (message "No current flag info. %s Task %d/%d, %d left"
-                 todo-indicator
-                 (or idx 0)
-                 (or tasks 0)
-                 (or tleft 0))))))
-
 (defun my-anki-running-p ()
   (cond
    ((eq system-type 'darwin)
@@ -698,9 +566,7 @@ Other cloze markers are unwrapped on the Front only."
         (while (re-search-forward "\n\n\n+" nil t)
           (replace-match "\n\n"))
         (message "Removed %d extract blocks" count)
-        (when (and (called-interactively-p 'interactive)
-                   (not org-queue--suppress-save))
-          (org-queue--maybe-save))))
+        (save-buffer)))
     (org-highlight-custom-syntax)))
 
 ;; make the timer buffer-local

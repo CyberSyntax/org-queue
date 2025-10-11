@@ -16,13 +16,15 @@ Disables save-buffer/save-some-buffers and sets org-queue--suppress-save."
        ,@body)))
 
 (defmacro org-queue--with-batched-saves (&rest body)
-  "Run BODY with autosaves disabled and flush a single save at the end."
+  "Disable saves inside BODY; then perform one real save at the end."
   (declare (indent 0) (debug t))
-  `(org-queue--without-autosave
+  `(let ((org-queue--suppress-save t))
      (unwind-protect
-         (progn ,@body)
-       ;; Single flush at the very end
-       (save-some-buffers t))))
+         ;; Disable saves only while BODY runs:
+         (org-queue--without-autosave ,@body)
+       ;; Final flush after the suppression scope ended:
+       (let ((org-queue--suppress-save nil))
+         (save-some-buffers t)))))
 
 (defun org-queue--maybe-save (&optional buffer)
   "Save BUFFER (or current buffer) if it visits a file and is modified.
@@ -38,10 +40,23 @@ No-op when `org-queue--suppress-save` is non-nil."
   "Best-effort save of the current buffer if it visits a file."
   (org-queue--maybe-save (current-buffer)))
 
-;; Map helpers that never rely on 'agenda
+(defvar org-queue--file-cache nil)
+(defvar org-queue--file-cache-ts nil)
+
+(defcustom org-queue-file-cache-ttl 10
+  "Seconds to cache the file roster before re-scanning."
+  :type 'integer :group 'org-queue)
+
 (defun org-queue-file-list ()
-  "Always reindex and return org-queue's file roster (absolute paths)."
-  (org-queue-reindex-files t))
+  (let ((fresh (and org-queue--file-cache
+                    org-queue--file-cache-ts
+                    (< (float-time (time-subtract (current-time) org-queue--file-cache-ts))
+                       org-queue-file-cache-ttl))))
+    (if fresh
+        org-queue--file-cache
+      (setq org-queue--file-cache (org-queue-reindex-files t)
+            org-queue--file-cache-ts (current-time))
+      org-queue--file-cache)))
 
 (defun org-queue-map-entries (fn &optional matcher)
   "Run FN on each entry matching MATCHER across org-queue files."

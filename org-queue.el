@@ -8,7 +8,6 @@
 (require 'org-queue-schedule)
 (require 'org-queue-tasks)
 (require 'org-queue-display)
-(require 'org-queue-chooser)
 (require 'org-queue-gptel-bridge)
 (require 'org-queue-keys)
 (require 'org-queue-id-guard)

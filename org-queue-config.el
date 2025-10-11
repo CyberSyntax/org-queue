@@ -33,7 +33,7 @@ Used by the non-SRS Next Repetition action to compute available-at."
   :type 'integer
   :group 'org-queue)
 
-(defcustom org-queue-non-srs-snooze-slope-minutes 10
+(defcustom org-queue-non-srs-snooze-slope-minutes 1
   "Slope minutes multiplied by numeric priority for non-SRS snooze.
 Deferral is computed as f(p) = BASE + SLOPE * p, where p is the numeric priority (1..64)."
   :type 'integer
@@ -152,6 +152,10 @@ and the cdr is a cons cell representing the minimum and maximum priority values.
 (ignore-errors
   (unless (file-directory-p org-queue-cache-dir)
     (make-directory org-queue-cache-dir t)))
+
+;; Keep the global org-id DB under our var/ directory
+(setq org-id-locations-file (expand-file-name "org-id-locations" org-queue-cache-dir)
+      org-id-locations-file-relative t)
 
 (defcustom org-queue-directory nil
   "Base directory for org-queue files (searched recursively). Set this or `org-queue-file-roots`."

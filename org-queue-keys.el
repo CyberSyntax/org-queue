@@ -7,7 +7,6 @@
 (require 'org-queue-utils)
 (require 'org-queue-tasks)
 (require 'org-queue-schedule)
-(require 'org-queue-chooser)
 (require 'org-queue-display)
 (require 'org-queue-srs-bridge)
 
@@ -20,11 +19,8 @@
                    ("-" my-decrease-priority-range)
                    ("a" my-advance-schedule)
                    ("A" my-launch-anki)
-                   ("c" org-queue-show-top)                 ;; Show best next
+                   ("c" org-queue-stamp-and-show-top)
                    ("D" org-demote-subtree)
-                   ("g" org-queue-rebuild-soft)             ;; Promote pending (no file scan)
-                   ("G" org-queue-hard-refresh)             ;; Reindex + rebuild
-                   ("n" org-queue-stamp-and-show-top)       ;; Stamp and show new top
                    ("p" my-postpone-schedule)
                    ("P" org-promote-subtree)
                    ("s" my-schedule-command)
@@ -49,14 +45,14 @@
 (when (fboundp 'org-queue-srs-item-create-card)
   (define-key org-queue-prefix-map (kbd "S") #'org-queue-srs-item-create-card))
 
-;; Cloze helpers (z belongs to cloze; Snooze is on 'n')
+;; Cloze helpers
 (when (fboundp 'org-interactive-cloze)
   (define-key org-queue-prefix-map (kbd "z")  #'org-interactive-cloze)
   (define-key org-queue-prefix-map (kbd "Z")  #'org-interactive-cloze-prefix)
   (define-key org-queue-prefix-map (kbd "M-z") #'org-interactive-cloze-suffix))
 
-;; Install the prefix globally (fixed; no defcustom)
-(global-set-key (kbd "C-c q") org-queue-prefix-map)
+;; Install the prefix globally
+(global-set-key (kbd "C-;") org-queue-prefix-map)
 
 (provide 'org-queue-keys)
 ;;; org-queue-keys.el ends here

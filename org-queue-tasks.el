@@ -12,12 +12,19 @@
 
 (declare-function my-display-task-at-marker "org-queue-display" (task-or-marker))
 (declare-function my-pulse-highlight-current-line "org-queue-display" (&optional time))
+(declare-function org-queue-id-guard--refresh-queue-markers-for-file "org-queue-id-guard" (file &optional silent))
 
 (defcustom my-queue-visible-buffer-count 8
   "How many distinct queue buffers to keep readily visible (not buried).
 The set is centered on the current queue index, scanning forward with wrap."
   :type 'integer
   :group 'org-queue)
+
+(defvar my-queue--last-visible-buffers nil
+  "Last set of queue buffers kept visible by `my-queue-limit-visible-buffers'.")
+
+(defvar my-queue--last-head-key nil
+  "Cache of the queue head key to debounce visibility limiting.")
 
 (defun my-queue--buffer-at-index (idx)
   "Return the buffer of the queue entry at IDX or nil."
@@ -27,29 +34,38 @@ The set is centered on the current queue index, scanning forward with wrap."
     (my-safe-marker-buffer (nth idx my-outstanding-tasks-list))))
 
 (defun my-queue-limit-visible-buffers (&optional n)
-  "Bury all queue buffers except the next N distinct ones from current index.
-N defaults to `my-queue-visible-buffer-count'. This does not reorder buffers,
-only buries the ones that should not be in the immediate working set."
+  "Keep only the next N distinct queue buffers readily visible (incremental).
+Optimized: O(K) burying (K = newly disallowed buffers), debounced by queue head.
+Does not reorder buffers; only buries buffers that just left the visible window."
   (let* ((count (or n my-queue-visible-buffer-count))
          (len (length my-outstanding-tasks-list)))
     (when (and (> len 0) (> count 0))
-      ;; Collect allowed buffers: starting at current index, scan forward with wrap,
-      ;; collecting distinct buffers until we have COUNT of them (or we exhaust).
-      (let ((allowed (make-hash-table :test 'eq))
-            (collected 0)
-            (i 0))
-        (while (and (< collected count) (< i len))
-          (let* ((idx (mod (+ my-outstanding-tasks-index i) len))
-                 (buf (my-queue--buffer-at-index idx)))
-            (when (and buf (buffer-live-p buf) (not (gethash buf allowed)))
-              (puthash buf t allowed)
-              (setq collected (1+ collected))))
-          (setq i (1+ i)))
-        ;; Now bury all queue buffers that are not allowed
-        (dotimes (j len)
-          (let ((buf (my-queue--buffer-at-index j)))
-            (when (and buf (buffer-live-p buf) (not (gethash buf allowed)))
-              (bury-buffer buf))))))))
+      (let* ((head (and my-outstanding-tasks-list
+                        (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
+             (head-key (and head (my--task-unique-key head))))
+        ;; Debounce: if the head hasn't changed, the allowed window is identical—skip.
+        (when (not (and head-key (equal head-key my-queue--last-head-key)))
+          (setq my-queue--last-head-key head-key)
+          ;; Build the new allowed set (up to COUNT distinct buffers ahead, with wrap).
+          (let ((allowed-list '())
+                (allowed-h (make-hash-table :test 'eq))
+                (collected 0)
+                (i 0))
+            (while (and (< collected count) (< i len))
+              (let* ((idx (mod (+ my-outstanding-tasks-index i) len))
+                     (buf (my-queue--buffer-at-index idx)))
+                (when (and buf (buffer-live-p buf) (not (gethash buf allowed-h)))
+                  (puthash buf t allowed-h)
+                  (push buf allowed-list)
+                  (setq collected (1+ collected))))
+              (setq i (1+ i)))
+            (setq allowed-list (nreverse allowed-list))
+            ;; Incremental bury: only bury buffers that were visible previously but are no longer allowed.
+            (dolist (buf my-queue--last-visible-buffers)
+              (unless (gethash buf allowed-h)
+                (when (buffer-live-p buf) (bury-buffer buf))))
+            ;; Update the snapshot of visible buffers.
+            (setq my-queue--last-visible-buffers allowed-list)))))))
 
 ;; --- Lazy prune helpers: remove not-due items on departure/arrival ---
 
@@ -82,14 +98,6 @@ Rules:
                              (not (time-less-p (org-queue--now) due))))
                     (my-is-outstanding-task)))))))))))
 
-(defun my-queue--refresh-chooser-buffers ()
-  (dolist (b (list "*Org Queue*" "*Org Queue (Subset)*"))
-    (when (get-buffer b)
-      (with-current-buffer b
-        (when (derived-mode-p 'org-queue-chooser-mode)
-          (when (fboundp 'org-queue-chooser-refresh)
-            (ignore-errors (org-queue-chooser-refresh))))))))
-
 (defun my-queue--remove-index (idx &optional quiet no-save)
   "Remove entry at IDX from the queue; do not display anything.
 If NO-SAVE is non-nil, do not write caches here (caller will save once)."
@@ -106,12 +114,9 @@ If NO-SAVE is non-nil, do not write caches here (caller will save once)."
         (setq my-outstanding-tasks-index (max 0 (1- (length my-outstanding-tasks-list)))))
       (when (buffer-live-p buf) (bury-buffer buf))
       (my-queue-limit-visible-buffers)
-      (unless no-save
-        (my-save-outstanding-tasks-to-file))
       (unless quiet
         (message "Removed 1 item from queue; now %d total."
-                 (length my-outstanding-tasks-list)))
-      (my-queue--refresh-chooser-buffers)
+                (length my-outstanding-tasks-list)))
       t)))
 
 (defun my-queue-filter-not-due-in-place (&optional quiet)
@@ -130,8 +135,6 @@ Returns the number of removed items. Only touches items already in the queue."
         (setq my-outstanding-tasks-index (max 0 (1- (length new)))))
       ;; Tidy, save, refresh chooser
       (my-queue-limit-visible-buffers)
-      (my-save-outstanding-tasks-to-file)
-      (my-queue--refresh-chooser-buffers)
       (unless quiet
         (message "Pruned %d not-due item(s) from queue" removed))
       removed)))
@@ -172,247 +175,150 @@ Compares (todo-first, priority, last-repeat-float) lexicographically."
                  (and (= (nth 1 ka) (nth 1 kb))
                       (<= (nth 2 ka) (nth 2 kb))))))))
 
-(defun org-queue--reassign-top-after-change (&optional reason)
-  "Recompute placement of the current top item after a change (schedule/priority/snooze).
-No file scan. Updates:
-- my-outstanding-tasks-list (resorts and re-mixes SRS by ratio, with night-shift gating),
-- my-today-pending-tasks (adds/removes the top as needed),
-- my-outstanding-tasks-index set to 0,
-- Saves cache and refreshes chooser,
-- Displays the new top (no SRS auto-start).
+;; --- Micro update helpers (single-item only) -----------------------------
+(defun org-queue--insert-non-srs-outstanding-sorted (task)
+  "Insert non-SRS TASK into `my-outstanding-tasks-list' keeping non-SRS local order only.
+Does not touch SRS items order; O(n) stable insertion."
+  (let* ((n (length my-outstanding-tasks-list))
+         (i 0)
+         (inserted nil))
+    (while (and (< i n) (not inserted))
+      (let ((other (nth i my-outstanding-tasks-list)))
+        (if (plist-get other :srs)
+            (setq i (1+ i))
+          (if (org-queue--non-srs-key<= task other)
+              (progn
+                (setq my-outstanding-tasks-list
+                      (append (seq-take my-outstanding-tasks-list i)
+                              (list task)
+                              (seq-drop my-outstanding-tasks-list i)))
+                (setq inserted t))
+            (setq i (1+ i))))))
+    (unless inserted
+      ;; Append right after the last non-SRS if any, else at front.
+      (let ((last-non-srs
+             (let ((j 0) (last -1))
+               (dolist (e my-outstanding-tasks-list last)
+                 (unless (plist-get e :srs) (setq last j))
+                 (setq j (1+ j))))))
+        (if (>= last-non-srs 0)
+            (setq my-outstanding-tasks-list
+                  (append (seq-take my-outstanding-tasks-list (1+ last-non-srs))
+                          (list task)
+                          (seq-drop my-outstanding-tasks-list (1+ last-non-srs))))
+          (setq my-outstanding-tasks-list (cons task my-outstanding-tasks-list)))))))
 
-Optional REASON is a symbol for logging/debugging (e.g., 'schedule, 'advance, 'postpone, 'snooze)."
-  (let* ((now (org-queue--now))
-         (night (org-queue-night-shift-p)))
-    (my-ensure-task-list-present)
-    ;; Always operate on index 0 (single-head discipline)
-    (setq my-outstanding-tasks-index 0)
-    (if (or (null my-outstanding-tasks-list)
-            (zerop (length my-outstanding-tasks-list)))
-        (progn
-          (my-save-outstanding-tasks-to-file)
-          (my-queue--refresh-chooser-buffers)
-          (message "No outstanding tasks after change"))
-      (let* ((top (nth 0 my-outstanding-tasks-list))
-             (key (my--task-unique-key top)))
-        ;; Refresh availability of TOP
-        (setq top (org-queue--update-available-at! top))
-        (let* ((is-srs (plist-get top :srs))
-               (avail  (plist-get top :available-at))
-               ;; Classification helpers
-               (due-now (and avail (not (time-less-p now avail))))
-               (is-today (org-queue--task-is-today-p top)))
-          ;; Remove TOP from both lists by unique key
-          (setq my-outstanding-tasks-list
-                (cl-remove-if (lambda (task) (equal (my--task-unique-key task) key))
-                              my-outstanding-tasks-list))
-          (setq my-today-pending-tasks
-                (cl-remove-if (lambda (task) (equal (my--task-unique-key task) key))
-                              my-today-pending-tasks))
-          ;; Partition remaining outstanding into non-SRS and SRS
-          (let ((cur-non-srs '())
-                (cur-srs '()))
-            (dolist (task my-outstanding-tasks-list)
-              (if (plist-get task :srs) (push task cur-srs) (push task cur-non-srs)))
-            (setq cur-non-srs (nreverse cur-non-srs))
-            (setq cur-srs     (nreverse cur-srs))
-            ;; Decide where TOP goes now
-            (cond
-             ;; SRS path
-             (is-srs
-              (cond
-               ;; Off-today (no due today): remove from both
-               ((not is-today)
-                ;; nothing to add
-                )
-               ;; Today but night shift: pending only
-               (night
-                (push top my-today-pending-tasks))
-               ;; Today and not night-shift:
-               (due-now
-                (push top cur-srs))
-               (t
-                (push top my-today-pending-tasks))))
-             ;; Non-SRS path
-             (t
-              (cond
-               ;; Off-today (rescheduled): remove from both
-               ((not is-today)
-                ;; nothing to add
-                )
-               ;; Today and due-now: outstanding non-SRS
-               (due-now
-                (push top cur-non-srs))
-               ;; Today but not yet available: pending
-               (t
-                (push top my-today-pending-tasks)))))
+(defun org-queue--promote-pending-due-now! ()
+  "Move any tasks from `my-today-pending-tasks` whose :available-at ≤ now
+into `my-outstanding-tasks-list`, preserving pool-local order.
 
-            ;; Resort current non-SRS outstanding with tertiary LAST_REPEAT sort
-            (setq cur-non-srs
-                  (cl-stable-sort cur-non-srs
-                                  (lambda (a b)
-                                    (let* ((ka (org-queue--non-srs-sort-key a))
-                                           (kb (org-queue--non-srs-sort-key b)))
-                                      (or (< (nth 0 ka) (nth 0 kb))
-                                          (and (= (nth 0 ka) (nth 0 kb))
-                                               (or (< (nth 1 ka) (nth 1 kb))
-                                                   (and (= (nth 1 ka) (nth 1 kb))
-                                                        (< (nth 2 ka) (nth 2 kb))))))))))
-            (setq cur-srs
-                  (cl-stable-sort cur-srs
-                                  (lambda (a b)
-                                    (let ((da (or (plist-get a :srs-due) (plist-get a :available-at)))
-                                          (db (or (plist-get b :srs-due) (plist-get b :available-at))))
-                                      (cond
-                                       ((and da db) (time-less-p da db))
-                                       (da t)
-                                       (db nil)
-                                       (t nil))))))
-
-            ;; Interleave by ratio (suppress SRS entirely during night shift), start-aware
-            (let* ((ratio (if night '(1 . 0)
-                            (or (and (boundp 'org-queue-srs-mix-ratio)
-                                     org-queue-srs-mix-ratio)
-                                '(1 . 4))))
-                   (a-count (car ratio))
-                   (b-count (cdr ratio))
-                   (start (org-queue--decide-mix-start a-count b-count cur-non-srs cur-srs))
-                   (mixed (org-queue--interleave-by-ratio-start
-                           (copy-sequence cur-non-srs)
-                           (copy-sequence cur-srs)
-                           a-count b-count start)))
-              (setq my-outstanding-tasks-list mixed)))
-
-          ;; Dedup pending (by unique key)
-          (let ((seen (make-hash-table :test 'equal))
-                (acc '()))
-            (dolist (task (nreverse my-today-pending-tasks))
-              (let ((k (my--task-unique-key task)))
-                (unless (and k (gethash k seen))
-                  (when k (puthash k t seen))
-                  ;; Ensure pending has availability set
-                  (push (or (and (plist-get task :available-at) task)
-                            (org-queue--update-available-at! task))
-                        acc))))
-            (setq my-today-pending-tasks (nreverse acc)))
-
-          ;; Finalize; optionally show top
-          (setq my-outstanding-tasks-index 0)
-          (my-save-outstanding-tasks-to-file)
-          (my-queue--refresh-chooser-buffers)
-          (when (and (not org-queue--suppress-ui)
-                     org-queue-auto-show-top-after-change)
-            (org-queue-show-top t)))))))
-
-(defun org-queue-rebuild-soft ()
-  "Promote items from `my-today-pending-tasks` into the outstanding list without rescanning files.
-Behavior:
-- Promote pending items whose :available-at <= now (SRS gated by night shift).
-- Filter out any no-longer-due items from outstanding (e.g., after SRS rating or night-shift toggle).
-- Resort outstanding non-SRS; interleave with outstanding SRS using the configured ratio.
-- Do not touch disk file rosters."
-  (interactive)
-  (my-launch-anki)
-  (my-ensure-task-list-present)
-
+- Non‑SRS: keep the non‑SRS local ordering via
+  `org-queue--insert-non-srs-outstanding-sorted`.
+- SRS: append near the end of the existing SRS block (same approach used
+  by the micro-update code).
+- Night shift: never promote SRS during night shift.
+Returns the number of tasks promoted."
   (let* ((now (org-queue--now))
          (night (org-queue-night-shift-p))
-         (prom-non-srs '())
-         (prom-srs '())
-         (keep-pending '()))
-    ;; Recompute availability and decide promotion for each pending item
+         (keep '())
+         (promoted 0))
     (dolist (task my-today-pending-tasks)
+      (let ((avail (plist-get task :available-at))
+            (is-srs (plist-get task :srs)))
+        (if (and avail (not (time-less-p now avail))
+                 (or (not is-srs) (not night)))
+            ;; Promote this task
+            (progn
+              (if is-srs
+                  (let ((last-srs
+                         (let ((j 0) (last -1))
+                           (dolist (e my-outstanding-tasks-list last)
+                             (when (plist-get e :srs) (setq last j))
+                             (setq j (1+ j))))))
+                    (if (>= last-srs 0)
+                        (setq my-outstanding-tasks-list
+                              (append (seq-take my-outstanding-tasks-list (1+ last-srs))
+                                      (list task)
+                                      (seq-drop my-outstanding-tasks-list (1+ last-srs))))
+                      (setq my-outstanding-tasks-list
+                            (append my-outstanding-tasks-list (list task)))))
+                (org-queue--insert-non-srs-outstanding-sorted task))
+              (setq promoted (1+ promoted)))
+          ;; Keep pending
+          (push task keep))))
+    (setq my-today-pending-tasks (nreverse keep))
+    promoted))
+
+(defun org-queue--micro-update-current! (&optional reason)
+  "Re-evaluate ONLY the current heading and update outstanding/pending minimally.
+REASON is informational ('priority 'schedule 'advance 'postpone 'review 'stamp 'create)."
+  (unless (derived-mode-p 'org-mode)
+    (user-error "Not in org-mode buffer"))
+  (save-excursion
+    (org-back-to-heading t)
+    (let* ((marker   (point-marker))
+           (id       (or (org-entry-get nil "ID") (org-id-get-create)))
+           (priority (my-get-raw-priority-value))
+           (file     (buffer-file-name))
+           (heading  (org-get-heading t t t t))
+           (pos      (point))
+           (srs      (eq (org-srs-entry-p (point)) 'current))
+           (task     (list :id id :marker marker :priority priority
+                           :file file :is-todo (my-is-todo-task)
+                           :heading heading :pos pos :srs srs)))
+      ;; refresh availability (sets :available-at and :due-date convenience)
       (setq task (org-queue--update-available-at! task))
-      (let* ((is-srs (plist-get task :srs))
-             (avail (plist-get task :available-at)))
+      (let* ((key   (my--task-unique-key task))
+             (now   (org-queue--now))
+             (night (org-queue-night-shift-p))
+             (avail (plist-get task :available-at))
+             (due-now (and avail (not (time-less-p now avail))))
+             (in-scope (org-queue--in-scope-p task)))
+        ;; remove any existing instance (from both lists)
+        (setq my-outstanding-tasks-list
+              (cl-remove-if (lambda (x) (equal (my--task-unique-key x) key))
+                            my-outstanding-tasks-list))
+        (setq my-today-pending-tasks
+              (cl-remove-if (lambda (x) (equal (my--task-unique-key x) key))
+                            my-today-pending-tasks))
+        ;; decide where to place it, respecting scope (past included)
         (cond
-         ;; No availability (e.g., rescheduled off today): drop from today's pending
-         ((null avail) nil)
-         ;; Still not available
-         ((time-less-p now avail)
-          (push task keep-pending))
-         ;; SRS: only promote when not night-shift
-         (is-srs
-          (if night
-              (push task keep-pending)
-            (push task prom-srs)))
-         ;; Non-SRS: promote
-         (t
-          (push task prom-non-srs)))))
-
-    ;; Partition current outstanding into non-SRS and SRS, and drop any no-longer-due items
-    (let ((cur-non-srs '())
-          (cur-srs '()))
-      (dolist (task my-outstanding-tasks-list)
-        (if (plist-get task :srs)
-            (push task cur-srs)
-          (push task cur-non-srs)))
-      (setq cur-non-srs (nreverse cur-non-srs))
-      (setq cur-srs (nreverse cur-srs))
-      ;; Remove entries that are no longer due now (e.g., SRS just rated, or night-shift just toggled)
-      (setq cur-non-srs (cl-remove-if-not #'my-queue--task-due-p cur-non-srs))
-      (setq cur-srs     (cl-remove-if-not #'my-queue--task-due-p cur-srs))
-      ;; Merge promotions
-      (setq cur-non-srs (append cur-non-srs prom-non-srs))
-      (setq cur-srs     (append cur-srs     prom-srs))
-      ;; Sort non-SRS outstanding: TODO-first, priority asc, LAST_REPEAT asc (older first).
-      (setq cur-non-srs
-            (cl-stable-sort cur-non-srs
-                            (lambda (a b)
-                              (let* ((ka (org-queue--non-srs-sort-key a))
-                                     (kb (org-queue--non-srs-sort-key b)))
-                                (or (< (nth 0 ka) (nth 0 kb))
-                                    (and (= (nth 0 ka) (nth 0 kb))
-                                         (or (< (nth 1 ka) (nth 1 kb))
-                                             (and (= (nth 1 ka) (nth 1 kb))
-                                                  (< (nth 2 ka) (nth 2 kb))))))))))
-      ;; Sort SRS by due/available-at ascending for stability
-      (setq cur-srs
-            (cl-stable-sort cur-srs
-                            (lambda (a b)
-                              (let ((da (or (plist-get a :srs-due) (plist-get a :available-at)))
-                                    (db (or (plist-get b :srs-due) (plist-get b :available-at))))
-                                (cond
-                                 ((and da db) (time-less-p da db))
-                                 (da t)
-                                 (db nil)
-                                 (t nil))))))
-      ;; Interleave by configured ratio; suppress SRS entirely during night shift
-      (let* ((ratio (if night '(1 . 0)
-                      (or (and (boundp 'org-queue-srs-mix-ratio)
-                               org-queue-srs-mix-ratio)
-                          '(1 . 4))))
-             (a-count (car ratio))
-             (b-count (cdr ratio))
-             (start (org-queue--decide-mix-start a-count b-count cur-non-srs cur-srs))
-             (mixed (org-queue--interleave-by-ratio-start
-                     (copy-sequence cur-non-srs)
-                     (copy-sequence cur-srs)
-                     a-count b-count start)))
-        (setq my-outstanding-tasks-list mixed)))
-
-    ;; Dedupe outstanding
-    (my-dedupe-outstanding-tasks)
-
-    ;; Rebuild today's pending list from keep-pending (dedup)
-    (let ((seen (make-hash-table :test 'equal))
-          (acc '()))
-      (dolist (task (nreverse keep-pending))
-        (let ((k (my--task-unique-key task)))
-          (unless (and k (gethash k seen))
-            (when k (puthash k t seen))
-            (push task acc))))
-      (setq my-today-pending-tasks (nreverse acc)))
-
-    ;; Reset index to top, save, and refresh UI
+         (srs
+          (when in-scope
+            (cond
+             (night
+              ;; during night shift all SRS are postponed to pending
+              (push task my-today-pending-tasks))
+             (due-now
+              ;; make it outstanding now; keep SRS block locality
+              (let ((last-srs
+                     (let ((j 0) (last -1))
+                       (dolist (e my-outstanding-tasks-list last)
+                         (when (plist-get e :srs) (setq last j))
+                         (setq j (1+ j))))))
+                (if (>= last-srs 0)
+                    (setq my-outstanding-tasks-list
+                          (append (seq-take my-outstanding-tasks-list (1+ last-srs))
+                                  (list task)
+                                  (seq-drop my-outstanding-tasks-list (1+ last-srs))))
+                  (setq my-outstanding-tasks-list
+                        (append my-outstanding-tasks-list (list task))))))
+             ((and avail (org-queue--same-day-p avail now))
+              ;; due later *today*
+              (push task my-today-pending-tasks)))))
+         (t ;; non-SRS
+          (when in-scope
+            (if due-now
+                (org-queue--insert-non-srs-outstanding-sorted task)
+              (push task my-today-pending-tasks)))))
+        ;; finalize
     (setq my-outstanding-tasks-index 0)
-    (my-save-outstanding-tasks-to-file)
-    (my-queue--refresh-chooser-buffers)
-    (unless org-queue--suppress-ui
-      (org-queue-show-top t))
-    (message "org-queue: soft promotion done — outstanding: %d, pending today: %d"
-             (length my-outstanding-tasks-list)
-             (length my-today-pending-tasks))))
+    (setq my-queue--last-visible-buffers nil
+          my-queue--last-head-key nil)
+    (setq org-queue--flag-counts-cache nil)
+    (my-queue-limit-visible-buffers)
+    ;; Save only current buffer; maintenance disables this.
+    (save-buffer)))))  ;; end micro-update
 
 ;; Variables for task list management
 (defvar my-outstanding-tasks-list nil
@@ -425,29 +331,71 @@ Behavior:
   "List of today's pending tasks (not yet available).
 Each element is a task plist (same shape as outstanding) with :available-at set.")
 
-;; Define a customizable variable for the cache file.
-(defcustom my-outstanding-tasks-cache-file
-  (expand-file-name "outstanding.cache" org-queue-cache-dir)
-  "File path to store the cached outstanding tasks list along with its date stamp."
+;; === Daily maintenance gating (stamp + on-startup scheduling) ===
+(defcustom org-queue-maintenance-on-startup 'if-needed
+  "When to run `org-queue-maintenance` automatically at startup.
+- nil       — never run automatically.
+- if-needed — run at startup only if it hasn't run today (default).
+- t         — always run at startup."
+  :type '(choice (const :tag "Never" nil)
+                 (const :tag "If not run today" if-needed)
+                 (const :tag "Always" t))
+  :group 'org-queue)
+
+(defcustom org-queue-maintenance-idle-delay 7.0
+  "Seconds of idle time after startup before automatic maintenance may run."
+  :type 'number
+  :group 'org-queue)
+
+(defcustom org-queue-maintenance-stamp-file
+  (expand-file-name "maintenance.stamp" org-queue-cache-dir)
+  "File that records the last successful maintenance run."
   :type 'file
   :group 'org-queue)
 
-(defcustom my-outstanding-tasks-index-file
-  (expand-file-name "index.cache" org-queue-cache-dir)
-  "File path to store the current task index."
-  :type 'file
-  :group 'org-queue)
+(defun org-queue--maintenance-last-run-date ()
+  "Return YYYY-MM-DD string of the last successful maintenance run, or nil."
+  (when (file-exists-p org-queue-maintenance-stamp-file)
+    (condition-case _err
+        (let* ((data (with-temp-buffer
+                       (insert-file-contents org-queue-maintenance-stamp-file)
+                       (read (buffer-string)))))
+          (plist-get data :date))
+      (error nil))))
+
+(defun org-queue--write-maintenance-stamp (&optional tm)
+  "Record TM (or now) as the last successful maintenance run."
+  (let* ((now  (or tm (current-time)))
+         (date (format-time-string "%Y-%m-%d" now))
+         (dir  (file-name-directory org-queue-maintenance-stamp-file)))
+    (when (and dir (not (file-directory-p dir)))
+      (ignore-errors (make-directory dir t)))
+    (with-temp-file org-queue-maintenance-stamp-file
+      (insert (prin1-to-string (list :date date :timestamp now))))))
+
+(defun org-queue-daily-maintenance-maybe ()
+  "Run maintenance once per day (lazy) based on the stamp file and user setting.
+Runs on idle using `org-queue-maintenance-idle-delay`."
+  (pcase org-queue-maintenance-on-startup
+    ('t
+     (run-with-idle-timer org-queue-maintenance-idle-delay nil
+                          #'org-queue-maintenance))
+    ('if-needed
+     (let ((today (format-time-string "%Y-%m-%d"))
+           (last  (org-queue--maintenance-last-run-date)))
+       (when (not (string= today last))
+         (run-with-idle-timer org-queue-maintenance-idle-delay nil
+                              #'org-queue-maintenance))))
+    (_ nil)))
 
 (defvar my-org-id-locations-initialized nil
   "Whether org-id locations DB has been fully initialized this session.")
 
 (defun my-org-id-initialize-id-locations ()
-  "Scan all org-queue files once to build the org-id cache."
+  "No-op: global org-id DB is not used in this design."
   (unless my-org-id-locations-initialized
     (setq my-org-id-locations-initialized t)
-    (when (fboundp 'org-id-update-id-locations)
-      (ignore-errors
-        (org-id-update-id-locations (org-queue-file-list))))))
+    nil))
 
 ;; Task identification functions
 
@@ -657,13 +605,11 @@ Return MK. Widen temporarily and only update :heading when the ID matches."
               (plist-put task :heading heading)))))))
   mk)
 
-;; Marker extraction and safety functions
 (defun my-extract-marker (task-or-marker)
-  "Robustly extract a live marker from TASK-OR-MARKER.
-Strategy:
+  "Robustly extract a live marker from TASK-OR-MARKER (file-local only).
+Strategy (single path):
 - If a live marker is present, use it and sync plist metadata.
 - Else resolve by :id within :file, preferring matching :heading, else closest to :pos (and sync).
-- Else fallback to org-id-find (and sync).
 - Else if :file and :pos exist, jump to that position (and sync)."
   (let (result)
     (cond
@@ -676,7 +622,7 @@ Strategy:
      ((listp task-or-marker)
       (let* ((m       (plist-get task-or-marker :marker))
              (id      (plist-get task-or-marker :id))
-             (file    (plist-get task-or-marker :file))
+             (file    (plist-get task-or-marker :file))  ;; resolution restricted to this file
              (heading (plist-get task-or-marker :heading))
              (pos0    (plist-get task-or-marker :pos)))
         ;; Prefer existing live marker and sync
@@ -712,13 +658,6 @@ Strategy:
                        (marker-buffer chosen)
                        (buffer-live-p (marker-buffer chosen)))
               (setq result (my--task-sync-metadata task-or-marker chosen)))))
-        ;; Fallback to org-id DB if file scan failed
-        (when (and (not result) id (fboundp 'org-id-find))
-          (let ((mk (org-id-find id 'marker)))
-            (when (and mk
-                       (marker-buffer mk)
-                       (buffer-live-p (marker-buffer mk)))
-              (setq result (my--task-sync-metadata task-or-marker mk)))))
         ;; Fallback to file+pos if available
         (when (and (not result) file (file-exists-p file) (numberp pos0))
           (with-current-buffer (find-file-noselect file)
@@ -751,31 +690,21 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
       (marker-position marker))))
 
 (defun my-marker-from-uuid (uuid &optional file)
-  "Return a live marker for heading UUID, preferring FILE when given."
+  "Return a live marker for heading UUID, searching only in FILE when provided.
+If FILE is nil, no global lookup is performed (single-path design)."
   (when (and (stringp uuid) (> (length uuid) 0))
-    (let ((m (org-id-find uuid 'marker)))
-      (cond
-       ;; If the found marker is already in the right file, use it.
-       ((and m file
-             (buffer-live-p (marker-buffer m))
-             (with-current-buffer (marker-buffer m)
-               (and buffer-file-name
-                    (file-equal-p (file-truename buffer-file-name)
-                                  (file-truename file)))))
-        m)
-       ;; Otherwise, search the specific FILE directly for the ID drawer.
-       ((and file (file-exists-p file))
-        (with-current-buffer (find-file-noselect file)
-          (save-restriction
-            (widen)
-            (save-excursion
-              (goto-char (point-min))
-              (if (re-search-forward
-                   (concat "^[ \t]*:ID:[ \t]*" (regexp-quote uuid) "[ \t]*$") nil t)
-                  (progn (org-back-to-heading t) (point-marker))
-                ;; fallback to whatever org-id-find returned
-                m)))))
-       (t m)))))
+    (cond
+     ((and file (file-exists-p file))
+      (with-current-buffer (find-file-noselect file)
+        (save-restriction
+          (widen)
+          (save-excursion
+            (goto-char (point-min))
+            (if (re-search-forward
+                 (concat "^[ \t]*:ID:[ \t]*" (regexp-quote uuid) "[ \t]*$") nil t)
+                (progn (org-back-to-heading t) (point-marker))
+              nil)))))
+     (t nil))))
 
 (defun my-position-from-uuid (uuid)
   "Return the buffer position (point) of the Org heading with UUID (its :ID:).
@@ -784,173 +713,15 @@ Returns nil if not found."
     (when (markerp m)
       (marker-position m))))
 
-;; Task list persistence functions
-(defun my-save-outstanding-tasks-to-file ()
-  "Save task list to cache using unique (file . id) pairs (dedup by ID).
-Also saves the index separately."
-  ;; Ensure cache dir exists
-  (let ((dir (file-name-directory my-outstanding-tasks-cache-file)))
-    (when (and dir (not (file-directory-p dir)))
-      (ignore-errors (make-directory dir t))))
-  (let* ((today (format-time-string "%Y-%m-%d"))
-         (seen (make-hash-table :test 'equal))
-         (pairs '()))
-    (dolist (entry my-outstanding-tasks-list)
-      (let* ((marker (my-extract-marker entry)))
-        (when (and (markerp marker)
-                   (marker-buffer marker)
-                   (buffer-live-p (marker-buffer marker))
-                   (buffer-file-name (marker-buffer marker)))
-          (with-current-buffer (marker-buffer marker)
-            (save-restriction
-              (widen)
-              (save-excursion
-                (goto-char (marker-position marker))
-                (let* ((id   (org-entry-get nil "ID"))
-                       (full (file-truename (buffer-file-name)))
-                       (path (if (and (boundp 'org-queue-directory)
-                                      org-queue-directory
-                                      (file-in-directory-p full org-queue-directory))
-                                 (file-relative-name full org-queue-directory)
-                               full)))
-                  (when (and id (not (gethash id seen)))
-                    (puthash id t seen)
-                    (push (cons path id) pairs)))))))))
-    (with-temp-file my-outstanding-tasks-cache-file
-      (insert (prin1-to-string (list :date today
-                                     :tasks (nreverse pairs)))))
-    (my-save-index-to-file)))
-
-(defun my-save-index-to-file ()
-  "Save the current task index to a device-specific file."
-  ;; Ensure cache dir exists
-  (let ((dir (file-name-directory my-outstanding-tasks-index-file)))
-    (when (and dir (not (file-directory-p dir)))
-      (ignore-errors (make-directory dir t))))
-  (with-temp-file my-outstanding-tasks-index-file
-    (insert (prin1-to-string (list :index my-outstanding-tasks-index
-                                   :timestamp (current-time))))))
-
-(defun my-load-index-from-file ()
-  "Load the task index from device-specific file."
-  (when (file-exists-p my-outstanding-tasks-index-file)
-    (condition-case nil
-        (let* ((data (with-temp-buffer
-                       (insert-file-contents my-outstanding-tasks-index-file)
-                       (read (buffer-string))))
-               (saved-index (plist-get data :index)))
-          (when (and saved-index (numberp saved-index) (>= saved-index 0))
-            (setq my-outstanding-tasks-index saved-index)
-            t))
-      (error nil))))
-
-(defun my-load-outstanding-tasks-from-file ()
-  "Load cached tasks stored as (file . id) pairs and rebuild plist tasks with markers.
-Dedupes by ID; reindexes unresolved IDs' files ONCE (grouped); rewrites cache deduped."
-  (when (file-exists-p my-outstanding-tasks-cache-file)
-    (let* ((data (with-temp-buffer
-                   (insert-file-contents my-outstanding-tasks-cache-file)
-                   (read (buffer-string))))
-           (saved-date  (plist-get data :date))
-           (saved-pairs (plist-get data :tasks))
-           (today (format-time-string "%Y-%m-%d")))
-      (when (string= saved-date today)
-        (let ((seen-ids (make-hash-table :test 'equal))
-              (result-list nil)
-              (files-to-reindex nil)
-              (resolved 0))
-          ;; First pass: resolve what we can; collect files to reindex for the rest
-          (dolist (task-pair saved-pairs)
-            (let* ((stored-path (car task-pair))
-                   (id (cdr task-pair)))
-              (when (and id (not (gethash id seen-ids)))
-                (puthash id t seen-ids)
-                (let* ((abs-path (if (or (file-name-absolute-p stored-path)
-                                         (string-match-p "^[A-Za-z]:[/\\\\]" stored-path))
-                                     stored-path
-                                   (expand-file-name stored-path
-                                                     (or org-queue-directory default-directory))))
-                       (marker (and id (org-id-find id 'marker))))
-                  (if (and marker (markerp marker) (marker-buffer marker)
-                           (buffer-live-p (marker-buffer marker)))
-                      (with-current-buffer (marker-buffer marker)
-                        (save-excursion
-                          (goto-char (marker-position marker))
-                          (let* ((priority (my-get-raw-priority-value))
-                                 (flag (my-priority-flag priority))
-                                 (file (buffer-file-name))
-                                 (heading (org-get-heading t t t t))
-                                 (pos (point))
-                                 (srs (eq (org-srs-entry-p (point)) 'current))
-                                 (task-plist (list :id id
-                                                   :marker marker
-                                                   :priority priority
-                                                   :flag flag
-                                                   :file file
-                                                   :is-todo (my-is-todo-task)
-                                                   :heading heading
-                                                   :pos pos
-                                                   :srs srs)))
-                            (push task-plist result-list)
-                            (setq resolved (1+ resolved)))))
-                    (when (and abs-path (file-exists-p abs-path))
-                      (push (file-truename abs-path) files-to-reindex)))))))
-
-          ;; One-shot reindex (deduped) then retry unresolved IDs
-          (setq files-to-reindex (delete-dups files-to-reindex))
-          (when files-to-reindex
-            (ignore-errors (org-id-update-id-locations files-to-reindex)))
-          (dolist (task-pair saved-pairs)
-            (let* ((stored-path (car task-pair))
-                   (id (cdr task-pair)))
-              (when (and id
-                         (not (cl-find id result-list
-                                       :key (lambda (e) (plist-get e :id))
-                                       :test #'equal)))
-                (let ((marker (org-id-find id 'marker)))
-                  (when (and marker (markerp marker) (marker-buffer marker)
-                             (buffer-live-p (marker-buffer marker)))
-                    (with-current-buffer (marker-buffer marker)
-                      (save-excursion
-                        (goto-char (marker-position marker))
-                        (let* ((priority (my-get-raw-priority-value))
-                               (flag (my-priority-flag priority))
-                               (file (buffer-file-name))
-                               (heading (org-get-heading t t t t))
-                               (pos (point))
-                               (srs (eq (org-srs-entry-p (point)) 'current))
-                               (task-plist (list :id id
-                                                 :marker marker
-                                                 :priority priority
-                                                 :flag flag
-                                                 :file file
-                                                 :is-todo (my-is-todo-task)
-                                                 :heading heading
-                                                 :pos pos
-                                                 :srs srs)))
-                          (push task-plist result-list)
-                          (setq resolved (1+ resolved)))))))))
-
-          ;; Finalize
-          (setq my-outstanding-tasks-list (nreverse result-list))
-          (my-dedupe-outstanding-tasks)
-          (message "org-queue: resolved %d IDs (from cache)" resolved)
-          (my-save-outstanding-tasks-to-file)
-          (unless (and (my-load-index-from-file)
-                       (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
-            (setq my-outstanding-tasks-index 0))
-          t))))))
+;; Task list functions
 
 (defun my-ensure-task-list-present ()
   "Ensure the task list exists in memory without reordering it.
 - If the in-memory list exists, do nothing.
-- Else try to load today's cache (no rebuild).
-- If cache is missing, build once (initialization fallback). Clamp index."
+- Else build once (initialization fallback). Clamp index."
   (unless my-outstanding-tasks-list
-    (unless (my-load-outstanding-tasks-from-file)
-      (my-get-outstanding-tasks)
-      (setq my-outstanding-tasks-index 0)
-      (my-save-outstanding-tasks-to-file)))
+    (my-get-outstanding-tasks)
+    (setq my-outstanding-tasks-index 0))
   (when (or (not (numberp my-outstanding-tasks-index))
             (< my-outstanding-tasks-index 0)
             (>= my-outstanding-tasks-index (length my-outstanding-tasks-list)))
@@ -958,21 +729,8 @@ Dedupes by ID; reindexes unresolved IDs' files ONCE (grouped); rewrites cache de
   
 (defun my-ensure-synchronized-task-list ()
   "Ensure we have a current, synchronized task list and valid index."
-  ;; Try to load from cache first
-  (if (my-load-outstanding-tasks-from-file)
-      (progn
-        (my-dedupe-outstanding-tasks)
-        (my-save-outstanding-tasks-to-file))
-    ;; If cache is stale or missing, regenerate
-    (my-get-outstanding-tasks)
-    (setq my-outstanding-tasks-index 0)
-    (my-save-outstanding-tasks-to-file))
-  ;; Double-check index validity after loading
-  (when (or (>= my-outstanding-tasks-index (length my-outstanding-tasks-list))
-            (< my-outstanding-tasks-index 0))
-    (setq my-outstanding-tasks-index 0)
-    (my-save-index-to-file))
-  ;; Limit visible buffers to a small, focused set
+  (my-get-outstanding-tasks)
+  (setq my-outstanding-tasks-index 0)
   (my-queue-limit-visible-buffers))
 
 (defun my--task-unique-key (task)
@@ -1043,114 +801,106 @@ Dedupes by ID; reindexes unresolved IDs' files ONCE (grouped); rewrites cache de
          (block (max 1 (+ (max 0 a) (max 0 b)))))
     (setq org-queue--mix-phase (mod (1+ org-queue--mix-phase) block))))
 
+(defun org-queue--in-scope-p (task)
+  "Return non-nil when TASK belongs to today's working set (today or earlier).
+
+Non-SRS: scoped if SCHEDULED ≤ today, or QFORCE is set.
+SRS    : scoped if the next due timestamp (from :SRSITEMS:) has
+         a local calendar date ≤ today (i.e., overdue or today)."
+  (let ((m (my-extract-marker task)))
+    (when (and (markerp m) (marker-buffer m) (buffer-live-p (marker-buffer m)))
+      (with-current-buffer (marker-buffer m)
+        (org-with-point-at m
+          (if (plist-get task :srs)
+              (let ((due (org-queue-srs-next-due-time (point))))
+                (and due (<= (time-to-days due) (time-to-days (current-time)))))
+            (let* ((qforce (org-entry-get nil org-queue-force-outstanding-property))
+                   (sched  (org-get-scheduled-time nil)))
+              (or qforce
+                  (and sched (<= (time-to-days sched)
+                                 (time-to-days (current-time))))))))))))
+
 (defun my-get-outstanding-tasks ()
-  "Build two queues:
-- my-outstanding-tasks-list: items available now (due and not suppressed),
-- my-today-pending-tasks: today’s items not yet available (time-gated SRS or snoozed/time-gated non-SRS).
-Then interleave outstanding SRS with non-SRS by `org-queue-srs-mix-ratio` (SRS suppressed at night)."
+  "Build outstanding/pending queues in ONE pass over files."
   (let* ((now (org-queue--now))
-         (today (format-time-string "%Y-%m-%d" now))
          (night (org-queue-night-shift-p))
-         (non-srs-out '())
-         (non-srs-pending '()))
-    ;; Collect non-SRS candidates scheduled today or earlier (or QFORCE),
-    ;; exclude DONE and any SRS entries.
+         (non-srs-out '()) (non-srs-pending '())
+         (srs-out '())      (srs-pending '()))
     (org-queue-map-entries
      (lambda ()
-       (when (and (not (my-is-done-task))
-                  (not (org-srs-entry-p (point))))
-         (let* ((scheduled (org-get-scheduled-time nil))
-                (qforce (org-entry-get nil org-queue-force-outstanding-property))
-                ;; include if QFORCE, or scheduled date <= today
-                (eligible (or qforce
-                              (and scheduled
-                                   (<= (time-to-days scheduled)
-                                       (time-to-days now))))))
-           (when eligible
-             (let* ((marker   (point-marker))
-                    (id       (or (org-entry-get nil "ID") (org-id-get-create)))
-                    (priority (my-get-raw-priority-value))
-                    (flag     (my-priority-flag priority))
-                    (file     (buffer-file-name))
-                    (heading  (org-get-heading t t t t))
-                    (is-todo  (my-is-todo-task))
-                    (pos      (point))
-                    (task     (list :id id :marker marker :priority priority
-                                    :flag flag :file file :is-todo is-todo
-                                    :heading heading :pos pos)))
-               ;; Compute and cache availability
+       (unless (my-is-done-task)
+         (let* ((marker  (point-marker))
+                (id      (or (org-entry-get nil "ID") (org-id-get-create)))
+                (priority (my-get-raw-priority-value))
+                (file    (buffer-file-name))
+                (heading (org-get-heading t t t t))
+                (pos     (point))
+                (where   (org-srs-entry-p (point))))
+           (cond
+            ;; --- SRS entries
+            ((eq where 'current)
+             (let ((due (org-queue-srs-next-due-time (point))))
+               (when due
+                 (let ((task (list :id id :marker marker :priority priority
+                                   :file file :is-todo nil :heading heading :pos pos
+                                   :srs t :srs-due due :available-at due)))
+                   (cond
+                    (night
+                     (push task srs-pending))
+                    ((not (time-less-p now due))   ; due <= now
+                     (push task srs-out))
+                    ((org-queue--same-day-p due now)
+                     (push task srs-pending)))))))
+            ;; --- non-SRS entries
+            (t
+             (let* ((is-todo (my-is-todo-task))
+                    (task (list :id id :marker marker :priority priority
+                                :file file :is-todo is-todo :heading heading :pos pos)))
                (setq task (org-queue--update-available-at! task))
-               (let ((avail (plist-get task :available-at)))
-                 (when avail
-                   (if (not (time-less-p now avail))  ;; avail <= now => outstanding
-                       (push task non-srs-out)
-                     ;; avail > now => pending only if it belongs to today (SCHEDULED today or QFORCE)
-                     (when (org-queue--task-is-today-p task)
-                       (push task non-srs-pending))))))))))
+               (when (org-queue--in-scope-p task)
+                 (let ((avail (plist-get task :available-at)))
+                   (when avail
+                     (if (not (time-less-p now avail))
+                         (push task non-srs-out)
+                       (push task non-srs-pending)))))))))))
      nil)
 
-    ;; Sort non-SRS outstanding: TODO-first, priority asc, LAST_REPEAT asc (older first).
-    (setq non-srs-out
-          (cl-stable-sort non-srs-out
-                          (lambda (a b)
-                            (let* ((ka (org-queue--non-srs-sort-key a))
-                                   (kb (org-queue--non-srs-sort-key b)))
-                              (or (< (nth 0 ka) (nth 0 kb))
-                                  (and (= (nth 0 ka) (nth 0 kb))
-                                       (or (< (nth 1 ka) (nth 1 kb))
-                                           (and (= (nth 1 ka) (nth 1 kb))
-                                                (< (nth 2 ka) (nth 2 kb))))))))))
+    ;; pool-local ordering
+    (setq non-srs-out (cl-stable-sort non-srs-out #'org-queue--non-srs-key<=))
+    (setq srs-out     (cl-stable-sort srs-out     #'org-queue--non-srs-key<=))
 
-    ;; Collect SRS: due-now and pending-later-today
-    (let* ((pair (org-queue-collect-srs-today))
-           (srs-due-now (car pair))
-           (srs-pending (cdr pair))
-           ;; Interleave outstanding by ratio; suppress SRS during night shift
-           (ratio (if night '(1 . 0)
-                    (or (and (boundp 'org-queue-srs-mix-ratio)
-                             org-queue-srs-mix-ratio)
+    ;; interleave head
+    (let* ((ratio (if night '(1 . 0)
+                    (or (and (boundp 'org-queue-srs-mix-ratio) org-queue-srs-mix-ratio)
                         '(1 . 4))))
-           (a-count (car ratio))
-           (b-count (cdr ratio))
-           (start (org-queue--decide-mix-start a-count b-count non-srs-out srs-due-now))
+           (a (car ratio)) (b (cdr ratio))
+           (start (org-queue--decide-mix-start a b non-srs-out srs-out))
            (mixed (org-queue--interleave-by-ratio-start
-                   (copy-sequence non-srs-out)
-                   (copy-sequence srs-due-now)
-                   a-count b-count start)))
-      ;; Assign outstanding
-      (setq my-outstanding-tasks-list mixed)
+                   (copy-sequence non-srs-out) (copy-sequence srs-out) a b start)))
+      (setq my-outstanding-tasks-list mixed))
 
-      ;; Build pending-today = non-SRS pending ∪ SRS pending (dedup by task key)
-      (let* ((pending (append (nreverse non-srs-pending) (nreverse srs-pending)))
-            (seen (make-hash-table :test 'equal))
-            (acc '()))
-        (dolist (task pending)
-          (let ((k (my--task-unique-key task)))
-            (unless (and k (gethash k seen))
-              (when k (puthash k t seen))
-              ;; Ensure :available-at is present for pending entries
-              (push (or (and (plist-get task :available-at) task)
-                        (org-queue--update-available-at! task))
-                    acc))))
-        (setq my-today-pending-tasks (nreverse acc))))
+    ;; pending (dedupe)
+    (let* ((pending (append (nreverse non-srs-pending) (nreverse srs-pending)))
+           (seen (make-hash-table :test 'equal))
+           (acc '()))
+      (dolist (task pending)
+        (let ((k (my--task-unique-key task)))
+          (unless (and k (gethash k seen))
+            (when k (puthash k t seen))
+            (push task acc))))
+      (setq my-today-pending-tasks (nreverse acc)))
 
-    ;; Dedupe outstanding list and finalize
     (my-dedupe-outstanding-tasks)
-    (let ((todo-count (length (cl-remove-if-not (lambda (task) (plist-get task :is-todo))
-                                                my-outstanding-tasks-list)))
-          (total-count (length my-outstanding-tasks-list))
-          (pending-count (length my-today-pending-tasks)))
-      (message (if (org-queue-night-shift-p)
-                   "=== QUEUE BUILT (two-queue; SRS suppressed for night shift) ==="
-                 "=== QUEUE BUILT (two-queue; SRS integrated) ==="))
-      (message "Outstanding: %d (TODO: %d) | Pending today: %d"
-               total-count todo-count pending-count))
-    ;; Start from top
+    (let ((todo-count (length (cl-remove-if-not (lambda (t) (plist-get t :is-todo))
+                                                my-outstanding-tasks-list))))
+      (message (if night
+                   "=== QUEUE BUILT (single-pass; SRS suppressed for night shift) ==="
+                 "=== QUEUE BUILT (single-pass; SRS integrated) ==="))
+      (message "Outstanding: %d (TODO: %d) | Pending≤today: %d"
+               (length my-outstanding-tasks-list) todo-count
+               (length my-today-pending-tasks)))
     (setq my-outstanding-tasks-index 0)
-    (my-queue-limit-visible-buffers)
-    ;; Flush any eager ID creations done during this scan, unless we're batching.
-    (unless org-queue--suppress-save
-      (save-some-buffers t))))
+    (my-queue-limit-visible-buffers)))
 
 (defun my-remove-current-task ()
   "Remove the task at the current index from the queue and keep buffers tidy.
@@ -1187,12 +937,10 @@ Behavior:
       (when (buffer-live-p removed-buffer)
         (bury-buffer removed-buffer))
       (setq my-outstanding-tasks-index 0)
-      (my-save-outstanding-tasks-to-file)
       (message "Task removed. Queue is now empty.")
       ;; Optionally rebuild right away
       (my-get-outstanding-tasks)
-      (setq my-outstanding-tasks-index 0)
-      (my-save-outstanding-tasks-to-file))
+      (setq my-outstanding-tasks-index 0))
 
      ;; Otherwise, keep index pointing to the next item (or clamp to last).
      (t
@@ -1204,7 +952,6 @@ Behavior:
       ;; Limit visible queue buffers (no global MRU reordering)
       (my-queue-limit-visible-buffers)
       ;; Save
-      (my-save-outstanding-tasks-to-file)
       (message "Task removed. Now at %d/%d"
                (1+ my-outstanding-tasks-index)
                (length my-outstanding-tasks-list))
@@ -1370,7 +1117,6 @@ Saves buffers and regenerates the task list for consistency."
   (interactive)
   (my-get-outstanding-tasks)
   (setq my-outstanding-tasks-index 0)
-  (my-save-outstanding-tasks-to-file)  ;; This will save both tasks and index
   (message "Outstanding tasks index reset."))
 
 (defun my-reset-and-show-current-outstanding-task ()
@@ -1379,26 +1125,6 @@ Saves buffers and regenerates the task list for consistency."
   (my-launch-anki)
   (my-reset-outstanding-tasks-index)
   (org-queue-show-top))
-
-(defun org-queue-hard-refresh ()
-  "Force reindex + rebuild the queue, refresh chooser if visible, and show current task."
-  (interactive)
-  (my-launch-anki)
-  (org-queue--with-batched-saves
-    (org-queue-reindex-files)           ;; optional: log size
-    (my-get-outstanding-tasks)          ;; rebuild from files (may create IDs)
-    (my-save-outstanding-tasks-to-file) ;; update cache
-    )
-  ;; refresh chooser buffers if open
-  (dolist (b (list "*Org Queue*" "*Org Queue (Subset)*"))
-    (when (get-buffer b)
-      (with-current-buffer b
-        (when (derived-mode-p 'org-queue-chooser-mode)
-          (ignore-errors (org-queue-chooser-refresh))))))
-  ;; show current task (no SRS restart)
-  (org-queue-show-top t)
-  (message "org-queue: hard refresh complete (%d task(s))"
-           (length my-outstanding-tasks-list)))
 
 (defun my-show-current-outstanding-task-no-srs (&optional pulse)
   "Show current outstanding task from the in-memory queue without SRS/Anki."
@@ -1410,50 +1136,61 @@ Saves buffers and regenerates the task list for consistency."
       (let ((task (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
         (my-display-task-at-marker task)
         (when pulse (my-pulse-highlight-current-line))
-        (my-queue-limit-visible-buffers)
-        (my-show-current-flag-status))
+        (my-queue-limit-visible-buffers))
     (message "No outstanding tasks found.")))
 
 (defun org-queue-show-top (&optional pulse)
-  "Show the top (index 0) outstanding task.
-Prunes non-due items at the top repeatedly until a due item is found or the list is empty.
-Does not rescan files; does not auto-start SRS/Anki."
   (interactive)
   (my-ensure-task-list-present)
+  ;; Promote anything that just became available (can be O(n), keep it)
+  (ignore-errors (org-queue--promote-pending-due-now!))
   (if (or (null my-outstanding-tasks-list)
           (zerop (length my-outstanding-tasks-list)))
       (message "No outstanding tasks found.")
-    (progn
-      (setq my-outstanding-tasks-index 0)
-      ;; Prune while avoiding per-item saves
-      (let ((pruned 0))
-        (while (and my-outstanding-tasks-list
-                    (>= my-outstanding-tasks-index 0)
-                    (< my-outstanding-tasks-index (length my-outstanding-tasks-list))
-                    (not (my-queue--task-due-p (nth 0 my-outstanding-tasks-list))))
-          (my-queue--remove-index 0 t t) ;; quiet + no-save
-          (setq my-outstanding-tasks-index 0)
-          (setq pruned (1+ pruned)))
-        ;; Save once if we pruned anything
-        (when (> pruned 0)
-          (my-save-outstanding-tasks-to-file)))
-      (if (or (null my-outstanding-tasks-list)
-              (zerop (length my-outstanding-tasks-list)))
-          (message "No outstanding tasks found.")
-        (progn
-          ;; Save index and display (no SRS auto-start)
-          (my-save-index-to-file)
-          (my-show-current-outstanding-task-no-srs (or pulse t)))))))
+    (setq my-outstanding-tasks-index 0)
+    (let ((pruned 0)
+          (org-queue--suppress-ui t))  ;; suppress chooser churn while pruning
+      (while (and my-outstanding-tasks-list
+                  (>= my-outstanding-tasks-index 0)
+                  (< my-outstanding-tasks-index (length my-outstanding-tasks-list))
+                  (not (my-queue--task-due-p (nth 0 my-outstanding-tasks-list))))
+        ;; Remove head quietly (no save), keep index at 0
+        (my-queue--remove-index 0 t t)
+        (setq my-outstanding-tasks-index 0)
+        (setq pruned (1+ pruned))))
+    ;; Show current head immediately; feels instant
+    (my-show-current-outstanding-task-no-srs (or pulse t))))
 
 (defvar org-queue--midnight-timer nil
   "Timer that triggers a daily midnight refresh of org-queue.")
+
+(defvar org-queue--pending-promotion-timer nil)
+
+(defun org-queue-start-pending-promotion-timer ()
+  "Start or restart a periodic timer that promotes due pending tasks."
+  (when org-queue--pending-promotion-timer
+    (cancel-timer org-queue--pending-promotion-timer))
+  (setq org-queue--pending-promotion-timer
+        (run-with-timer 60 60  ;; first in 60s, then every 60s
+                        (lambda ()
+                          (ignore-errors (org-queue--promote-pending-due-now!))))))
 
 (defun org-queue--midnight-refresh ()
   "Clear today's pending, rebuild queues, save, and show top. Reschedule for next midnight."
   (setq my-today-pending-tasks nil)
   (my-get-outstanding-tasks)
-  (my-save-outstanding-tasks-to-file)
+  ;; Refresh queue markers strictly inside their files; drop unresolved ones.
+  (let* ((files (delete-dups
+                 (delq nil
+                       (mapcar (lambda (t) (plist-get t :file))
+                               (append my-outstanding-tasks-list
+                                       my-today-pending-tasks))))))
+    (dolist (f files)
+      (ignore-errors
+        (org-queue-id-guard--refresh-queue-markers-for-file f t))))
   (ignore-errors (org-queue-show-top t))
+  ;; Also trigger daily maintenance for the new day (gated; runs once).
+  (org-queue-daily-maintenance-maybe)
   ;; Reschedule
   (run-at-time 1 nil #'org-queue--schedule-midnight-refresh))
 
@@ -1483,18 +1220,11 @@ Does not rescan files; does not auto-start SRS/Anki."
   ;; IDs first
   (my-org-id-initialize-id-locations)
 
-  ;; Try cache first (today)
-  (let ((cache-loaded (and (fboundp 'my-load-outstanding-tasks-from-file)
-                          (my-load-outstanding-tasks-from-file))))
-    (if cache-loaded
-        (message "org-queue: cache loaded for today")
-      (progn
-        (message "org-queue: cache missing/stale -> maintenance")
-        (org-queue--with-batched-saves
-          (my-get-outstanding-tasks)
-          (setq my-outstanding-tasks-index 0)
-          (my-save-outstanding-tasks-to-file))
-        (message "org-queue: queue built and saved"))))
+  ;; Build queue in-memory (no disk cache)
+  (org-queue--with-batched-saves
+    (my-get-outstanding-tasks)
+    (setq my-outstanding-tasks-index 0))
+  (message "org-queue: queue built")
 
   ;; Fast prune current queue (removes SRS during night shift and any not-due items)
   (ignore-errors (my-queue-filter-not-due-in-place t))
@@ -1507,7 +1237,9 @@ Does not rescan files; does not auto-start SRS/Anki."
                                (delete-other-windows)
                                (org-queue-show-top)) ;; single-head
                            (error
-                            (message "Error preparing task display: %s" (error-message-string err)))))))
+                            (message "Error preparing task display: %s" (error-message-string err))))))
+  ;; Kick off today's maintenance if needed (lazy; runs once per day).
+  (org-queue-daily-maintenance-maybe))
 
 ;; Automatic startup
 (add-hook 'emacs-startup-hook #'org-queue-startup 100)
@@ -1520,13 +1252,13 @@ Runs the complete maintenance pipeline and flushes a single save at the end."
 
   ;; Suppress UI refresh during the heavy run; batch-suppress saves and flush once at the end.
   (let ((org-queue--suppress-ui t))
-    (org-queue--with-batched-saves
+    (org-queue--without-autosave
       (progn
-        ;; Optional: tighten org-roam/IDs if available
+        ;; Optional: org-roam one-shot DB sync (no autosync hooks)
         (when (require 'org-roam nil t)
           (let ((warning-minimum-level :error))
-            (org-roam-db-autosync-mode 1)
-            (ignore-errors (org-id-update-id-locations (org-queue-file-list)))))
+            (when (fboundp 'org-roam-db-sync)
+              (ignore-errors (org-roam-db-sync)))))
 
         ;; Ensure base invariants
         (when (fboundp 'my-ensure-priorities-and-schedules-for-all-headings)
@@ -1556,14 +1288,13 @@ Runs the complete maintenance pipeline and flushes a single save at the end."
         (when (fboundp 'my-cleanup-all-done-tasks)
           (my-cleanup-all-done-tasks)))
 
-      ;; Rebuild/refresh lists and caches (cache files are written as usual)
-      (my-get-outstanding-tasks)
-      (setq my-outstanding-tasks-index 0)
-      (my-save-outstanding-tasks-to-file)))
+      ;; Rebuild/refresh lists (single canonical path)
+      (my-get-outstanding-tasks)))
 
   ;; After the macro exits, a single save-some-buffers t has been executed.
   (delete-other-windows)
   (org-queue-show-top t)
+  (org-queue--write-maintenance-stamp)
   (message "org-queue: maintenance complete.")
   (ignore-errors (org-queue--schedule-midnight-refresh)))
 

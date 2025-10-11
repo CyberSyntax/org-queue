@@ -10,10 +10,9 @@
 (require 'org-queue-utils)
 (require 'org-queue-tasks)
 (require 'org-queue-display)
-(require 'org-queue-chooser)
 
 ;; ======================================================================
-;; Fixed behavior (no options):
+;; Behavior (no options):
 ;; - Timebox each ID resolution: 0.12s
 ;; - Cooldown after failure:     300s
 ;; - Always skip remote/TRAMP files for ID resolution
@@ -94,111 +93,20 @@ Saves once at end; refreshes chooser buffers."
             (my-queue--remove-index i t t)
             (setq dropped (1+ dropped))))))
     (when (> dropped 0)
-      (my-save-outstanding-tasks-to-file)
-      (condition-case _ (org-queue-chooser-refresh) (error nil))
       (unless silent
         (message "org-queue: auto-dropped %d unresolved item(s)" dropped)))))
 
-;; Hook auto-drop into maintenance, hard refresh, and midnight refresh.
+;; Hook auto-drop into maintenance, and midnight refresh.
 (unless (advice-member-p #'org-queue-id-guard--auto-drop-unresolved 'org-queue-maintenance)
   (advice-add 'org-queue-maintenance :after (lambda (&rest _) (org-queue-id-guard--auto-drop-unresolved t))))
-(unless (advice-member-p #'org-queue-id-guard--auto-drop-unresolved 'org-queue-hard-refresh)
-  (advice-add 'org-queue-hard-refresh :after (lambda (&rest _) (org-queue-id-guard--auto-drop-unresolved t))))
 (unless (advice-member-p #'org-queue-id-guard--auto-drop-unresolved 'org-queue--midnight-refresh)
   (advice-add 'org-queue--midnight-refresh :after (lambda (&rest _) (org-queue-id-guard--auto-drop-unresolved t))))
-;; Also prune after chooser-level hard refresh (G)
-(unless (advice-member-p #'org-queue-id-guard--auto-drop-unresolved 'org-queue-chooser-hard-refresh)
-  (advice-add 'org-queue-chooser-hard-refresh :after (lambda (&rest _) (org-queue-id-guard--auto-drop-unresolved t))))
 
-;; ----------------------------------------------------------------------
-;; Chooser: neutral placeholders for unresolved rows (no user action).
-;; Visiting a bad row auto-removes it and refreshes.
-;; ----------------------------------------------------------------------
+(defconst org-queue-id-guard-idle-secs 2
+  "Idle seconds before running a coalesced file-local queue refresh.")
 
-(defun org-queue-id-guard--postprocess-entry-vector (vec title preview)
-  ;; Columns: 0 Mark, 1 Index, 2 Pri, 3 Title, 4 Preview, 5 Sched, 6 File
-  (let* ((title-face 'org-queue-chooser-title-face)
-         (preview-face 'org-queue-chooser-preview-face)
-         (tw org-queue-chooser-title-width)
-         (pw org-queue-chooser-preview-width)
-         (tstr (org-queue-chooser--truncate-pad
-                (org-queue-chooser--asciiize (org-queue-chooser--heading-as-plain (or title ""))) tw))
-         (pstr (org-queue-chooser--truncate-pad
-                (org-queue-chooser--asciiize (or preview "")) pw)))
-    (aset vec 3 (propertize tstr 'face title-face))
-    (aset vec 4 (propertize pstr 'face preview-face))
-    vec))
-
-(defun org-queue-id-guard--entries-around (orig-fn)
-  (let* ((entries (funcall orig-fn))
-         (lst (ignore-errors (org-queue-chooser--task-list))))
-    (when (and (listp entries) (listp lst))
-      (dolist (cell entries)
-        (let* ((row-id (car cell))
-               (vec (cadr cell))
-               (task (and (numberp row-id) (nth row-id lst)))
-               (tid (and (listp task) (plist-get task :id))))
-          (when (and tid (org-queue--id-recently-failed-p tid))
-            (org-queue-id-guard--postprocess-entry-vector
-             vec "(unresolved ID)" "[will be auto-dropped by maintenance]")))))
-    entries))
-
-(unless (advice-member-p #'org-queue-id-guard--entries-around 'org-queue-chooser--entries)
-  (advice-add 'org-queue-chooser--entries :around #'org-queue-id-guard--entries-around))
-
-(defun org-queue-id-guard--visit-around (orig-fn)
-  (let* ((row-id (tabulated-list-get-id))
-         (lst (ignore-errors (org-queue-chooser--task-list)))
-         (subset-p (and (boundp 'org-queue-chooser--subset-p) org-queue-chooser--subset-p)))
-    (if (not (and (numberp row-id) (listp lst) (< row-id (length lst))))
-        (funcall orig-fn)
-      (let* ((task (nth row-id lst))
-             (tid  (plist-get task :id))
-             (bad  (or (and tid (org-queue--id-recently-failed-p tid))
-                       (null (my-extract-marker task)))))
-        (if (not bad)
-            (funcall orig-fn)
-          ;; Auto-remove & refresh silently.
-          (if (not subset-p)
-              (progn
-                (ignore-errors
-                  (let* ((key (org-queue-id-guard--task-key task))
-                         (idx (and key
-                                   (cl-position-if
-                                    (lambda (t1)
-                                      (equal key (org-queue-id-guard--task-key t1)))
-                                    my-outstanding-tasks-list))))
-                    (when (numberp idx)
-                      (my-queue--remove-index idx t t))))
-                (my-save-outstanding-tasks-to-file)
-                (condition-case _ (org-queue-chooser-refresh) (error nil))
-                (message "Removed unresolved item."))
-            ;; subset: remove from local list only
-            (setq org-queue-chooser--tasks
-                  (append (seq-take org-queue-chooser--tasks row-id)
-                          (seq-drop  org-queue-chooser--tasks (1+ row-id))))
-            (condition-case _ (org-queue-chooser-refresh) (error nil))
-            (message "Removed unresolved item (subset).")))))))
-
-(unless (advice-member-p #'org-queue-id-guard--visit-around 'org-queue-chooser-visit)
-  (advice-add 'org-queue-chooser-visit :around #'org-queue-id-guard--visit-around))
-;; Apply the same guard to other-window visits (o)
-(unless (advice-member-p #'org-queue-id-guard--visit-around 'org-queue-chooser-visit-other-window)
-  (advice-add 'org-queue-chooser-visit-other-window :around #'org-queue-id-guard--visit-around))
-
-;; ----------------------------------------------------------------------
-;; Keep org-id DB warm (startup + after saving an .org file)
-;; ----------------------------------------------------------------------
-
-(add-hook 'emacs-startup-hook
-          (lambda ()
-            (ignore-errors
-              (org-id-update-id-locations (org-queue-file-list) t))))
-
-;; Coalesced, silent ID updates after save (debounced): no per-save scans.
-(defcustom org-queue-id-guard-idle-secs 2
-  "Idle seconds before running a coalesced org-id update."
-  :type 'number :group 'org-queue)
+(defconst org-queue-id-guard-max-files-per-flush 8
+  "Upper bound of files to refresh per idle flush.")
 
 (defvar org-queue-id-guard--pending-files (make-hash-table :test 'equal))
 (defvar org-queue-id-guard--flush-timer nil)
@@ -213,14 +121,92 @@ Saves once at end; refreshes chooser buffers."
           (run-with-idle-timer org-queue-id-guard-idle-secs nil
                                #'org-queue-id-guard--flush-id-updates))))
 
+(defun org-queue-id-guard--refresh-task-marker! (task)
+  "Re-resolve TASK's marker strictly inside its recorded :file.
+On success, update :marker/:pos/:heading/:available-at and return non-nil.
+On failure, return nil (caller may drop the task from the queue)."
+  (let* ((id   (plist-get task :id))
+         (file (plist-get task :file))
+         (pos0 (plist-get task :pos)))
+    (when (and id file (file-exists-p file) (not (file-remote-p file)))
+      (let* ((cands (my--candidates-for-id-in-file id file))
+             (chosen
+              (or
+               ;; Prefer candidate whose heading matches cached heading
+               (and (plist-get task :heading)
+                    (cl-find-if
+                     (lambda (mk)
+                       (with-current-buffer (marker-buffer mk)
+                         (save-excursion
+                           (goto-char (marker-position mk))
+                           (string= (or (org-get-heading t t t t) "")
+                                    (or (plist-get task :heading) "")))))
+                     cands))
+               ;; Else closest to cached :pos
+               (and (numberp pos0)
+                    (car (sort (copy-sequence cands)
+                               (lambda (a b)
+                                 (< (abs (- (marker-position a) pos0))
+                                    (abs (- (marker-position b) pos0)))))))
+               ;; Else first candidate
+               (car cands))))
+        (when (and chosen (marker-buffer chosen) (buffer-live-p (marker-buffer chosen)))
+          (my--task-sync-metadata task chosen)
+          (org-queue--update-available-at! task)
+          (cl-return-from org-queue-id-guard--refresh-task-marker! t))))
+    nil))
+
+(defun org-queue-id-guard--refresh-queue-markers-for-file (file &optional silent)
+  "For FILE: re-resolve markers for queue entries (outstanding + pending).
+Drops entries that cannot be resolved inside FILE.
+Returns (REFRESHED . DROPPED). Skips remote/TRAMP files entirely."
+  (let* ((tru (and file (file-truename file)))
+         (remote (and tru (file-remote-p tru)))
+         (refreshed 0)
+         (dropped   0))
+    (when (and tru (file-exists-p tru))
+      (dolist (list-sym '(my-outstanding-tasks-list my-today-pending-tasks))
+        (let ((acc '()))
+          (dolist (task (symbol-value list-sym))
+            (if (and (plist-get task :file)
+                     (file-exists-p (plist-get task :file))
+                     (file-equal-p tru (file-truename (plist-get task :file))))
+                (cond
+                 (remote (push task acc)) ;; never resolve TRAMP
+                 ((org-queue-id-guard--refresh-task-marker! task)
+                  (setq refreshed (1+ refreshed))
+                  (push task acc))
+                 (t
+                  (setq dropped (1+ dropped))))
+              (push task acc)))
+          (set list-sym (nreverse acc)))))
+    (unless silent
+      (message "org-queue: %s → refreshed %d, dropped %d"
+               (and file (file-name-nondirectory file)) refreshed dropped))
+    (cons refreshed dropped)))
+
 (defun org-queue-id-guard--flush-id-updates ()
-  "Flush the pending file set into a single silent org-id update."
+  "Idle flush: for up to `org-queue-id-guard-max-files-per-flush` pending files,
+refresh queue entries strictly inside those files (no global org-id updates)."
   (let (files)
     (maphash (lambda (k _v) (push k files)) org-queue-id-guard--pending-files)
-    (setq org-queue-id-guard--pending-files (make-hash-table :test 'equal))
     (when files
-      (ignore-errors
-        (org-id-update-id-locations files t)))))  ;; `t` = silent
+      (let* ((cap (max 1 org-queue-id-guard-max-files-per-flush))
+             (batch (seq-take (delete-dups (mapcar #'file-truename files)) cap))
+             (changed nil))
+        ;; consume the batch from the pending set
+        (dolist (f batch) (remhash f org-queue-id-guard--pending-files))
+        ;; refresh per file
+        (dolist (f batch)
+          (pcase-let ((`(,refreshed . ,dropped)
+                       (ignore-errors
+                         (org-queue-id-guard--refresh-queue-markers-for-file f t))))
+            (when (and refreshed dropped (> (+ refreshed dropped) 0))
+              (setq changed t))))
+        ;; reflect changes
+        (when changed
+          (my-queue-limit-visible-buffers)
+          (ignore-errors (org-queue-show-top t)))))))
 
 (add-hook 'org-mode-hook
           (lambda ()

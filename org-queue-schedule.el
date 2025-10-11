@@ -97,7 +97,8 @@ Skips scheduling if the current heading or its parent has an SRS drawer."
 	    (my-find-schedule-weight))))
   (save-excursion
     ;; Schedule the current heading
-    (my-random-schedule (or months (my-find-schedule-weight)))))
+    (my-random-schedule (or months (my-find-schedule-weight))))
+  (save-buffer))
 
 (defun my-advance-schedule ()
   "Advance the current Org heading by a mathematically adjusted number of months.
@@ -130,11 +131,8 @@ Skips scheduling if the current heading or its parent is an SRS entry."
                                                         (days-to-time adjusted-days))))
         (message "Advanced: Priority %d (factor %.2f) → %.2f months" 
                  priority priority-factor random-months)
-        (when (and (called-interactively-p 'interactive)
-                   (not org-queue--suppress-save))
-          (org-queue--maybe-save orig-buf))
-        (unless org-queue--suppress-ui
-          (ignore-errors (org-queue--reassign-top-after-change 'advance)))))))
+        (save-buffer)
+        (ignore-errors (org-queue--micro-update-current! 'advance))))))
 
 (defun my-postpone-schedule ()
   "Postpone the current Org heading by a mathematically adjusted number of months.
@@ -179,11 +177,8 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
           (message "Postponed: Priority %d (factor %.2f) → %.2f months%s" 
                    priority priority-factor random-months
                    (if is-overdue " (overdue→today allowed)" ""))
-          (when (and (called-interactively-p 'interactive)
-                     (not org-queue--suppress-save))
-            (org-queue--maybe-save orig-buf))
-          (unless org-queue--suppress-ui
-            (ignore-errors (org-queue--reassign-top-after-change 'postpone))))))))
+          (save-buffer)
+          (ignore-errors (org-queue--micro-update-current! 'postpone)))))))
 
 (defun my-auto-advance-schedules (&optional power)
   "Advance 2^POWER random tasks (default: 64) across org-queue files."
@@ -236,56 +231,38 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
           "Enter the upper month limit: "
           (my-find-schedule-weight))))
   (let ((orig-buf (current-buffer)))
-    ;; Suppress nested saves and perform a single save at the end
-    (let ((org-queue--suppress-save t))
-      (my-random-schedule (or months (my-find-schedule-weight)))
-      (my-set-priority-with-heuristics)
-      (my-ensure-priority-set))
-    (when (and (called-interactively-p 'interactive)
-               (not org-queue--suppress-save))
-      (org-queue--maybe-save orig-buf))
-    (unless org-queue--suppress-ui
-      (ignore-errors (org-queue--reassign-top-after-change 'schedule)))))
+    (my-random-schedule (or months (my-find-schedule-weight)))
+    (my-set-priority-with-heuristics)
+    (my-ensure-priority-set)
+    (save-buffer)
+    (ignore-errors (org-queue--micro-update-current! 'schedule))))
 
-(defun org-queue-stamp-last-repeat-top ()
-  "Stamp :LAST_REPEAT: now on the queue head (index 0) for non-SRS.
-After stamping, re-place the item in the in-memory two-queue (no file scan),
-advance the interleave phase once, then show the new top. Saves the modified Org buffer only when invoked interactively.
-
-If the head is an SRS entry, do not stamp; use SRS review instead."
+(defun org-queue-stamp-last-repeat-current ()
+  "Stamp :LAST_REPEAT: on the current heading only if it’s a pure non-SRS entry.
+Returns a status symbol: :stamped, :skipped-not-org, or :skipped-srs.
+Never signals on those skip cases."
   (interactive)
-  (my-ensure-task-list-present)
-  (if (or (null my-outstanding-tasks-list)
-          (zerop (length my-outstanding-tasks-list)))
-      (message "No outstanding tasks.")
-    (let* ((top (nth 0 my-outstanding-tasks-list))
-           (m   (my-extract-marker top)))
-      (unless (and (markerp m) (marker-buffer m) (buffer-live-p (marker-buffer m)))
-        (user-error "Cannot resolve the top task's marker"))
-      (if (plist-get top :srs)
-          (message "Head is SRS. Use review (C-c q 1/3) to rate.")
-        (with-current-buffer (marker-buffer m)
-          (org-with-point-at m
-            (org-back-to-heading t)
-            (let* ((priority (or (plist-get top :priority)
-                                 (and (org-entry-get nil "PRIORITY")
-                                      (string-to-number (org-entry-get nil "PRIORITY")))
-                                 org-priority-default))
-                   (now     (current-time))
-                   (now-str (format-time-string "[%Y-%m-%d %a %H:%M]" now)))
-              (org-entry-put nil "LAST_REPEAT" now-str)
-              (let ((verify (org-entry-get nil "LAST_REPEAT")))
-                (unless (and verify (string= (string-trim verify) now-str))
-                  (org-set-property "LAST_REPEAT" now-str)))
-              ;; Advance the interleave phase once (consuming head)
-              (let ((ratio (or (and (boundp 'org-queue-srs-mix-ratio) org-queue-srs-mix-ratio) '(1 . 4))))
-                (org-queue--advance-mix-phase (car ratio) (cdr ratio)))
-              ;; Reassign top in current two-queue
-              (ignore-errors (org-queue--reassign-top-after-change 'stamp))
-              (message "Stamped LAST_REPEAT %s" now-str)
-              (when (and (called-interactively-p 'interactive)
-                         (not org-queue--suppress-save))
-                (org-queue--maybe-save (marker-buffer m))))))))))
+  (if (not (derived-mode-p 'org-mode))
+      (progn (message "Not in an org-mode buffer; skipping LAST_REPEAT stamp")
+             :skipped-not-org)
+    (save-excursion
+      (org-back-to-heading t)
+      ;; Disallow when SRS-related (current or parent)
+      (let ((where (org-srs-entry-p (point))))
+        (when where
+          (message "SRS-related entry (%s): LAST_REPEAT stamping is disabled here"
+                   (symbol-name where))
+          (cl-return-from org-queue-stamp-last-repeat-current :skipped-srs)))
+      ;; Stamp LAST_REPEAT on this heading
+      (let* ((now     (current-time))
+             (now-str (format-time-string "[%Y-%m-%d %a %H:%M]" now)))
+        (org-entry-put nil "LAST_REPEAT" now-str)
+        (let ((verify (org-entry-get nil "LAST_REPEAT")))
+          (unless (and verify (string= (string-trim verify) now-str))
+            (org-set-property "LAST_REPEAT" now-str)))
+        (message "Stamped LAST_REPEAT %s on current heading" now-str)
+        (save-buffer)
+        :stamped))))
 
 (defun my-ensure-priorities-and-schedules-for-all-headings (&optional max-attempts)
   "Ensure priorities and schedules are set for all headings across Org agenda files.
@@ -406,11 +383,11 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
                max-attempts))))
 
 (defun org-queue-stamp-and-show-top ()
-  "Stamp LAST_REPEAT on the head, then show the new top once."
+  "Stamp LAST_REPEAT on current; micro-update that item; then show top."
   (interactive)
-  ;; Prevent double-show if org-queue-auto-show-top-after-change is enabled.
-  (let ((org-queue-auto-show-top-after-change nil))
-    (org-queue-stamp-last-repeat-top))
+  (let ((status (ignore-errors (org-queue-stamp-last-repeat-current))))
+    (ignore-errors (org-queue--micro-update-current!
+                    (if (eq status :stamped) 'stamp 'skip))))
   (org-queue-show-top t))
 
 (provide 'org-queue-schedule)

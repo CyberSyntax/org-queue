@@ -93,9 +93,8 @@ Optional RETRIED is used internally to prevent infinite recursion."
                    (my-set-priority-with-heuristics specific-range t))))))
           (when success
             (message "Priority set to: %d" random-priority)
-            (when (and (called-interactively-p 'interactive)
-                       (not org-queue--suppress-save))
-              (org-queue--maybe-save))))
+            (save-buffer)
+            (ignore-errors (org-queue--micro-update-current! 'priority))))
       (message "Invalid range."))))
 
 (defun my-increase-priority-range ()
@@ -106,9 +105,8 @@ Adjusts the priority within the new range, even if already at the highest."
     (let ((new-range (max 0 (1- current-range))))
       (my-set-priority-with-heuristics new-range)
       (message "Priority range increased to %d" new-range)
-      (when (and (called-interactively-p 'interactive)
-                 (not org-queue--suppress-save))
-        (org-queue--maybe-save)))))
+      (save-buffer)
+      (ignore-errors (org-queue--micro-update-current! 'priority)))))
 
 (defun my-decrease-priority-range ()
   "Decrease the priority range by moving to a higher number (9 is the lowest priority).
@@ -118,9 +116,8 @@ Adjusts the priority within the new range, even if already at the lowest."
     (let ((new-range (min 9 (1+ current-range))))
       (my-set-priority-with-heuristics new-range)
       (message "Priority range decreased to %d" new-range)
-      (when (and (called-interactively-p 'interactive)
-                 (not org-queue--suppress-save))
-        (org-queue--maybe-save)))))
+      (save-buffer)
+      (ignore-errors (org-queue--micro-update-current! 'priority)))))
 
 (defun my-ensure-priority-set (&optional max-attempts)
   "Ensure the current heading has a priority set.
@@ -274,39 +271,40 @@ Notes:
   (my-ensure-synchronized-task-list)
   (let* ((n (1+ (- end-idx start-idx)))
          (span (- hi lo))
-         ;; If n == 1, assign the middle; else space across [0..n-1]
+         ;; Targets across [lo..hi] mapped onto n points
          (targets
           (if (= n 1)
               (list (round (/ (+ lo hi) 2.0)))
             (cl-loop for i from 0 to (1- n)
                      for q = (/ (float i) (float (1- n)))  ;; 0..1
-                     for v = (round (+ lo (* q span)))
-                     collect v)))
-         ;; Make sure they are at least non-decreasing and clamped
+                     ;; round to ints in [lo..hi]
+                     collect (round (+ lo (* q span))))))
+         ;; Ensure monotonic non-decreasing & clamped
          (adjusted
           (let ((acc '())
                 (prev (1- lo)))
             (dolist (v targets (nreverse acc))
               (setq v (my--clamp v lo hi))
-              ;; Ensure monotonic non-decreasing; if not enough slots, duplicates may remain.
               (when (< v prev) (setq v prev))
               (push v acc)
               (setq prev v)))))
-    ;; Apply to entries
+    ;; Apply to entries and update plist cache too
     (cl-loop
      for idx from start-idx to end-idx
      for newp in adjusted
      do (let* ((task (nth idx my-outstanding-tasks-list))
-               (marker (my-extract-marker task)))
-          (when (and (markerp marker)
+               (marker (and task (my-extract-marker task))))
+          (when (and marker (markerp marker)
                      (marker-buffer marker)
                      (buffer-live-p (marker-buffer marker)))
             (org-with-point-at marker
-              (org-entry-put nil "PRIORITY" (number-to-string newp)))
-            ;; Update plist cache too
+              (org-entry-put nil "PRIORITY" (number-to-string newp))))
+          ;; Update plist cache
+          (when task
             (plist-put task :priority newp)
-            (plist-put task :flag (my-priority-flag newp)))))
-    (my-save-outstanding-tasks-to-file)
+            (when (fboundp 'my-priority-flag)
+              (ignore-errors
+                (plist-put task :flag (my-priority-flag newp)))))))
     adjusted))
 
 (provide 'org-queue-priority)

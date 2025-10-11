@@ -2,7 +2,7 @@
 
 ;; This package provides seamless integration between tasks and spaced repetition.
 
-            ;;; Code:
+;;; Code:
 
 (require 'org)
 (require 'cl-lib)
@@ -69,12 +69,9 @@ Advances the interleave phase after consuming the head, then reassigns the top."
                                    org-queue-srs-mix-ratio)
                               '(1 . 4))))
               (org-queue--advance-mix-phase (car ratio) (cdr ratio)))
-            ;; Reassign the top (no file rescan)
-            (ignore-errors (org-queue--reassign-top-after-change 'review))
-            ;; Save the changed buffer once when invoked interactively
-            (when (and (called-interactively-p 'interactive)
-                       (not org-queue--suppress-save))
-              (org-queue--maybe-save orig-buf)))
+            (ignore-errors (org-queue--micro-update-current! 'review))
+            ;; Save only the current buffer; maintenance disables this.
+            (save-buffer))
         (error
          (message "Error rating entry: %s" (error-message-string err)))))))
 
@@ -89,17 +86,14 @@ Advances the interleave phase after consuming the head, then reassigns the top."
           (progn
             (org-srs-review-rate-entry :good)
             (message "Rated as '%s'" "good")
-            ;; Consuming head: advance phase once
+            ;; Consuming head: advance phase once (OK)
             (let* ((ratio (or (and (boundp 'org-queue-srs-mix-ratio)
                                    org-queue-srs-mix-ratio)
                               '(1 . 4))))
               (org-queue--advance-mix-phase (car ratio) (cdr ratio)))
-            ;; Reassign the top (no file rescan)
-            (ignore-errors (org-queue--reassign-top-after-change 'review))
-            ;; Save the changed buffer once when invoked interactively
-            (when (and (called-interactively-p 'interactive)
-                       (not org-queue--suppress-save))
-              (org-queue--maybe-save orig-buf)))
+            (ignore-errors (org-queue--micro-update-current! 'review))
+            ;; Save only the current buffer; maintenance disables this.
+            (save-buffer))
         (error
          (message "Error rating entry: %s" (error-message-string err)))))))
 
@@ -122,7 +116,9 @@ Ensures the entry has an ID. Gracefully degrades if org-srs is not available."
             (org-srs-item-new-interactively 'card))
            (t
             (user-error "org-srs: no item creation API found")))
-          (message "Created org-srs card"))
+          (message "Created org-srs card")
+          ;; Save only the current buffer; maintenance disables this.
+          (save-buffer))
       (error
        (user-error "Failed to create SRS card: %s" (error-message-string err))))))
 
@@ -169,13 +165,20 @@ Prefer the row with mark \"*\" in the first column; else the earliest valid time
   (let* ((bounds (org-queue-srs--drawer-bounds pos)))
     (when bounds
       (let* ((rows (org-queue-srs--parse-table-rows (car bounds) (cdr bounds)))
-             (star (cl-find-if (lambda (r) (string= (string-trim (or (plist-get r :mark) "")) "*")) rows))
+             (star (cl-find-if (lambda (r)
+                                 (string= (string-trim (or (plist-get r :mark) "")) "*"))
+                               rows))
              (times (delq nil (mapcar (lambda (r) (plist-get r :time)) rows))))
         (or (and star (plist-get star :time))
             (car (sort (copy-sequence times) #'time-less-p)))))))
 
 (defun org-queue-collect-srs-due-items ()
-  "Collect SRS entries due now (timestamp <= now) as task plists."
+  "Collect SRS entries due now (timestamp <= now) as task plists.
+
+Priority policy for SRS tasks:
+- If a numeric PRIORITY property is present, use it.
+- Else if a numeric [#N] cookie is present in the heading, use that.
+- Else default to the highest numeric priority (org-priority-highest, or 1)."
   (if (org-queue-night-shift-p)
       nil
     (let ((now (current-time))
@@ -187,16 +190,20 @@ Prefer the row with mark \"*\" in the first column; else the earliest valid time
              (when (and due (not (time-less-p now due))) ; due <= now
                (let* ((marker (point-marker))
                       (id (or (org-entry-get nil "ID") (org-id-get-create)))
-                      (priority (or (and (fboundp 'my-get-raw-priority-value)
-                                         (my-get-raw-priority-value))
-                                    (let ((ps (org-entry-get nil "PRIORITY")))
-                                      (if ps (string-to-number ps) org-priority-default))))
-                      (flag (and (fboundp 'my-priority-flag) (my-priority-flag priority)))
+                      ;; Priority: property > cookie > highest(=1)
+                      (priority
+                       (let* ((ps (org-entry-get nil "PRIORITY"))
+                              (cookie (and (fboundp 'my--org-heading-get-cookie-priority)
+                                           (my--org-heading-get-cookie-priority))))
+                         (cond
+                          ((and ps (string-match-p "^[0-9]+$" ps)) (string-to-number ps))
+                          ((numberp cookie) cookie)
+                          (t (or (and (numberp org-priority-highest) org-priority-highest) 1)))))
                       (file (buffer-file-name))
                       (heading (org-get-heading t t t t))
                       (pos (point))
-                      (task (list :id id :marker marker :priority priority
-                                  :flag flag :file file :is-todo nil
+                        (task (list :id id :marker marker :priority priority
+                                    :file file :is-todo nil
                                   :heading heading :pos pos
                                   :srs t :srs-due due)))
                  (push task items)))))) nil)
@@ -207,18 +214,10 @@ Prefer the row with mark \"*\" in the first column; else the earliest valid time
 (defun org-queue-collect-srs-today ()
   "Return a cons (DUE-NOW . PENDING-TODAY) of SRS entries for today.
 
-DUE-NOW:
-- SRS entries whose next-due timestamp is today and <= now.
-- Suppressed during night shift (empty when `org-queue-night-shift-p' is non-nil).
-
-PENDING-TODAY:
-- SRS entries whose next-due timestamp's date is today and > now.
-- Additionally, when night shift is active, includes entries due<=now (today)
-  so they can be promoted automatically once night shift ends.
-
-Each element is a task plist with keys:
-  :id :marker :priority :flag :file :is-todo :heading :pos
-  :srs t :srs-due <time> :available-at <time>"
+Priority policy for SRS tasks:
+- If a numeric PRIORITY property is present, use it.
+- Else if a numeric [#N] cookie is present in the heading, use that.
+- Else default to the highest numeric priority (org-priority-highest, or 1)."
   (let* ((now (current-time))
          (today (format-time-string "%Y-%m-%d" now))
          (night (org-queue-night-shift-p))
@@ -233,10 +232,15 @@ Each element is a task plist with keys:
                (when (string= due-date today)
                  (let* ((marker (point-marker))
                         (id (or (org-entry-get nil "ID") (org-id-get-create)))
-                        (priority (or (and (fboundp 'my-get-raw-priority-value)
-                                           (my-get-raw-priority-value))
-                                      (let ((ps (org-entry-get nil "PRIORITY")))
-                                        (if ps (string-to-number ps) org-priority-default))))
+                        ;; Priority: property > cookie > highest(=1)
+                        (priority
+                         (let* ((ps (org-entry-get nil "PRIORITY"))
+                                (cookie (and (fboundp 'my--org-heading-get-cookie-priority)
+                                             (my--org-heading-get-cookie-priority))))
+                           (cond
+                            ((and ps (string-match-p "^[0-9]+$" ps)) (string-to-number ps))
+                            ((numberp cookie) cookie)
+                            (t (or (and (numberp org-priority-highest) org-priority-highest) 1)))))
                         (flag (and (fboundp 'my-priority-flag) (my-priority-flag priority)))
                         (file (buffer-file-name))
                         (heading (org-get-heading t t t t))
@@ -252,11 +256,13 @@ Each element is a task plist with keys:
                     ((not (time-less-p now due)) (push task due-now))  ;; due <= now
                     (t (push task pending)))))))))) ;; due > now
      nil)
-    ;; Sort both lists by due time ascending
-    (setq due-now (sort due-now (lambda (a b) (time-less-p (plist-get a :srs-due)
-                                                           (plist-get b :srs-due)))))
-    (setq pending (sort pending (lambda (a b) (time-less-p (plist-get a :srs-due)
-                                                           (plist-get b :srs-due)))))
+    ;; Sort both lists by due time ascending (stable)
+    (setq due-now (sort due-now (lambda (a b)
+                                  (time-less-p (plist-get a :srs-due)
+                                               (plist-get b :srs-due)))))
+    (setq pending (sort pending (lambda (a b)
+                                  (time-less-p (plist-get a :srs-due)
+                                               (plist-get b :srs-due)))))
     (cons due-now pending)))
 
 (provide 'org-queue-srs-bridge)
