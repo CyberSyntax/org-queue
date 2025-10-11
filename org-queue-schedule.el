@@ -322,6 +322,22 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
     (save-buffer)
     (ignore-errors (org-queue--micro-update-current! 'schedule))))
 
+(defun org-queue-schedule-and-prioritize (&optional months)
+  "Schedule (prompt for months), then interactively choose a priority range. Single save."
+  (interactive
+   (list (read-number
+          "Enter the upper month limit: "
+          (my-find-schedule-weight))))
+  (org-queue--with-batched-saves
+    ;; Schedule (keeps invariants)
+    (my-random-schedule (or months (my-find-schedule-weight)))
+    ;; Priority prompt
+    (call-interactively 'my-set-priority-with-heuristics)
+    ;; keep property consistent (no-op if already correct)
+    (ignore-errors (my-ensure-priority-set))
+    ;; reflect the final state (last change = priority)
+    (ignore-errors (org-queue--micro-update-current! 'priority))))
+
 (defun org-queue-stamp-last-repeat-current ()
   "Stamp :LAST_REPEAT: on the current heading only if it’s a pure non-SRS entry.
 Returns a status symbol: :stamped, :skipped-not-org, or :skipped-srs.

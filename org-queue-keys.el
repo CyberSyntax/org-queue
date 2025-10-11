@@ -23,7 +23,7 @@
                    ("D" org-demote-subtree)
                    ("p" my-postpone-schedule)
                    ("P" org-promote-subtree)
-                   ("s" my-schedule-command)
+                   ("s" org-queue-schedule-and-prioritize)
                    ("u" org-show-parent-heading-cleanly)
                    ("w" widen-and-recenter)
                    ("x" org-interactive-extract)
@@ -37,9 +37,9 @@
 
 ;; SRS review commands - numeric (Anki muscle memory)
 (when (fboundp 'org-queue-srs-rate-again)
-  (define-key org-queue-prefix-map (kbd "1") #'org-queue-srs-rate-again))
+  (define-key org-queue-prefix-map (kbd "1") #'org-queue-srs-rate-again-and-prioritize))
 (when (fboundp 'org-queue-srs-rate-good)
-  (define-key org-queue-prefix-map (kbd "3") #'org-queue-srs-rate-good))
+  (define-key org-queue-prefix-map (kbd "3") #'org-queue-srs-rate-good-and-prioritize))
 
 ;; Bind S if SRS item creation is available
 (when (fboundp 'org-queue-srs-item-create-card)
