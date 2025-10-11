@@ -1,529 +1,343 @@
-# Org-queue
+# Org‑queue
 
 ⚠️ **WARNING: USE WITH CAUTION** ⚠️  
-org-queue is a powerful package that can irreversibly alter your org files.  
-
-Once activated, it modifies task structures and schedules in ways that may not be easily reversible. If you're not fully familiar with how the code works or what it's doing under the hood, do not use it yet.  
-
-Read the source. Understand the logic. Backup your files.  
-You've been warned.  
+`org-queue` programmatically edits your Org files (scheduling, properties, IDs, etc.). Always keep backups, review the source, and understand the workflows before enabling automatic maintenance.
 
 ---
 
-**Note**: This README reflects the current modular architecture and features as of the latest code version.
+**Tagline:** File‑first, two‑queue, SRS‑aware incremental task engine for Org mode — with strict scheduling invariants, night‑shift controls, live micro‑updates, and ID guarding.
 
-# Table of Contents
+- Works directly over a directory of `.org` files (no agenda dependency).
+- Maintains an **Outstanding** queue (available now) and a **Pending** queue (available later today).
+- Integrates **SRS items** (from an `:SRSITEMS:` drawer) with intelligent mixing and concealment.
+- Enforces **file‑first scheduling invariants** (weekday-only, work window, jitter).
+- Live **micro‑updates** on schedule/priority edits (no manual rebuilds needed).
+- Robust **ID guard** prevents hangs on bad/missing IDs and silently drops unrecoverable entries.
 
-1. [Overview](#overview)
-2. [Key Features](#key-features)
-   - [Chooser UI with Bulk Operations](#chooser-ui-with-bulk-operations)
-   - [Granular Task Prioritization](#granular-task-prioritization)
-   - [Dynamic and Randomized Scheduling](#dynamic-and-randomized-scheduling)
-   - [Outstanding Task Tracking](#outstanding-task-tracking)
-   - [Queue-Based Navigation](#queue-based-navigation)
-   - [Intelligent SRS Integration](#intelligent-srs-integration)
-   - [Comprehensive Task Processing](#comprehensive-task-processing)
-   - [Advanced Display Features](#advanced-display-features)
-3. [Why Choose org-queue?](#why-choose-org-queue)
-4. [Installation](#installation)
-5. [Usage](#usage)
-   - [Global Commands](#global-commands)
-   - [Chooser Commands](#chooser-commands)
-   - [Queue Switching](#queue-switching)
-6. [Modular Architecture](#modular-architecture)
-7. [Configuration](#configuration)
-8. [Workflows](#workflows)
-   - [SuperMemo-Style Add to Outstanding](#supermemo-style-add-to-outstanding)
-   - [Incremental Reading with Extracts](#incremental-reading-with-extracts)
-   - [Bulk Task Management](#bulk-task-management)
-9. [License](#license)
+---
 
-# Overview
+## Table of Contents
 
-**org-queue** is a comprehensive Emacs package that transforms **org-mode** into a sophisticated incremental task management system. Built with a modular architecture, it provides:
+1. [Quick Start](#quick-start)  
+2. [Key Concepts](#key-concepts)  
+   - [Two‑Queue Architecture](#two-queue-architecture)  
+   - [Scheduling Invariants](#scheduling-invariants)  
+   - [SRS Integration](#srs-integration)  
+   - [Night Shift](#night-shift)  
+   - [ID Guard](#id-guard)
+3. [Keybindings (Global Prefix: `C-;`)](#keybindings-global-prefix-c-)  
+4. [Configuration](#configuration)  
+   - [Essential](#essential)  
+   - [Scheduling & Snooze](#scheduling--snooze)  
+   - [SRS & Mixing](#srs--mixing)  
+   - [Night Shift Window](#night-shift-window)  
+   - [Performance & Files](#performance--files)
+5. [Maintenance Pipeline](#maintenance-pipeline)  
+6. [Custom Syntax: Extracts & Clozes](#custom-syntax-extracts--clozes)  
+7. [Optional Integrations](#optional-integrations)  
+8. [Migration Notes (Breaking Changes)](#migration-notes-breaking-changes)  
+9. [Troubleshooting](#troubleshooting)  
+10. [License](#license)
 
-- **Tabulated chooser UI** with marking and bulk operations
-- **Intelligent task prioritization** (1-64 scale with heuristics)
-- **Dynamic scheduling** with priority-based bias
-- **Queue-based navigation** with persistence
-- **Seamless SRS integration** (org-srs compatible)
-- **Content extraction** and cloze deletion
-- **Buffer visibility management** for focused workflows
-- **ID-based task tracking** with automatic deduplication
+---
 
-Drawing inspiration from SuperMemo and incremental learning methodologies, org-queue enables efficient task processing with advanced content manipulation capabilities.
+## Quick Start
 
-# Key Features
+### Prerequisites
+- **Emacs** 27.1+
+- **org-mode** 9.0+
+- Optional: **org-srs**, **org-web-tools**, **gptel**, **org-roam** (maintenance hook)
 
-## Chooser UI with Bulk Operations
-
-**Interactive tabulated list interface** for queue management:
-- **Browse tasks** in a fixed-width, sortable table
-- **Mark tasks** (Dired-style) for bulk operations
-- **Region marking** for quick selection
-- **Subset mode** to filter tasks from current buffer/region
-- **Spread scheduling** across selections with configurable density
-- **Spread priorities** evenly over marked tasks
-- **Bulk advance/postpone** with mathematical distributions
-- **Add to outstanding** (SuperMemo-style QFORCE)
-- **Reorder queue** with move up/down/to-position
-- **Tab integration** for multi-tasking
-- **Row-wise navigation** (j/k keys) that skips wrapped lines
-- **ASCII sanitization** for stable column alignment
-
-Access:
-- `C-c q B` - Open chooser for global queue
-- `C-c q C` - Open chooser from current buffer (subset mode)
-- Within chooser: `?` for help
-
-## Granular Task Prioritization
-
-**Numeric priority system** (1=highest, 64=lowest):
-- **Heuristic assignment** with 10 configurable ranges (0-9)
-- **Priority spreading** across selections with linear interpolation
-- **Range controls** for quick adjustments (i/d to increase/decrease)
-- **Dual storage**: PRIORITY property + [#N] cookie
-- **Flag grouping**: Visual categorization (Flag:1 through Flag:7)
-- **Flag-based status** display showing position within flag group
-
-## Dynamic and Randomized Scheduling
-
-**Mathematical scheduling distributions**:
-- **Priority-biased** power-law distribution (configurable exponent)
-- **Randomized** scheduling within bounds (default: 3 months)
-- **Advance schedule**: Diminishing returns via \( f(x) = x - \frac{1}{\ln(x + e)} \)
-- **Postpone schedule**: Increasing delays via \( f(x) = x + \frac{1}{\ln(x + e)} \)
-- **Spread scheduling**: Distribute selection across period (items/day configurable)
-- **Priority enhancement**: High priority tasks get earlier dates
-- **Overdue handling**: Smart minimum times (today for overdue, tomorrow for future)
-- **SRS-aware**: Skips scheduling for entries with org-srs drawers
-
-## Outstanding Task Tracking
-
-**Persistent queue management**:
-- **Outstanding detection**: Scheduled today/earlier OR QFORCE property set
-- **Deduplication**: By ID (or file@position fallback)
-- **Automatic rebuilding** with index persistence
-- **Force outstanding**: SuperMemo-style "Add to outstanding" (sets QFORCE=1)
-- **Cache system**: Daily task list persisted as (file . id) pairs
-- **Index synchronization**: Device-specific index file
-- **Buffer visibility limiting**: Keep only N distinct buffers visible (default: 8)
-- **Two-tier sorting**: TODO status first, then priority
-- **Marker resolution**: Lazy ID lookup with targeted refresh
-
-## Queue-Based Navigation
-
-**Efficient task traversal**:
-- **Sequential navigation**: Next/previous with wraparound
-- **Current task** display with pulse highlighting
-- **Queue switching**: Completion-based interface showing all tasks
-- **Tab integration**: Open tasks in new tabs (foreground/background)
-- **Remove task**: Takes you to next in queue
-- **Move to position**: Jump to specific queue index
-- **Reset index**: Return to first task
-- **Buffer limiting**: Automatic tidying of non-active queue buffers
-
-## Intelligent SRS Integration
-
-**Seamless org-srs workflow**:
-- **Session management**: Auto-start/stop review sessions
-- **Review counting**: Configurable reviews-per-task (default: 4)
-- **Exhaustion detection**: Auto-return to queue when done
-- **Anki orchestration**: Launch/focus Anki before reviews
-- **Platform-adaptive**: Desktop (wmctrl/xdotool) and Android support
-- **Entry detection**: Identifies SRS entries (current/parent)
-- **Rating commands**: Direct entry rating outside reviews (again/good)
-- **Card creation**: One-command SRS card setup
-- **Skip logic**: Avoids scheduling SRS-managed entries
-
-## Comprehensive Task Processing
-
-**Automated maintenance**:
-- **Quick maintenance** (fast):
-  - Postpone overdue tasks
-  - Remove duplicate priorities per file
-- **Full maintenance** (comprehensive):
-  - Ensure all headings have priorities/schedules
-  - Advance near-future schedules (2^8 = 256 tasks)
-  - Postpone overdue tasks
-  - Enforce priority constraints (monotone cap)
-  - Remove consecutive same-file duplicates
-  - Clean DONE tasks (remove SCHEDULED/PRIORITY)
-- **Startup processing**: Automatic on Emacs launch
-- **Index persistence**: Saves position across sessions
-- **Deduplication**: ID-based with file@position fallback
-
-## Advanced Display Features
-
-**Custom syntax and highlighting**:
-- **Extract blocks**: `{{extract:...}}` for incremental reading
-- **Cloze deletions**: `{{clozed:...}}` for active recall
-- **Syntax highlighting**: Color-coded overlays for extracts/clozes
-- **Interactive creation**:
-  - `org-interactive-extract`: Select text → create extract + child heading
-  - `org-interactive-cloze`: Select text → create cloze + child heading with [...] placeholder
-- **Bulk removal**: `org-remove-all-extract-blocks` after processing
-- **Pulse highlighting**: Temporary visual feedback on current line
-- **View control**: Widen/narrow/recenter/show-parent commands
-- **Flag status**: Shows flag group, position, and remaining count
-- **Marker visibility**: Toggle display of syntax markers
-
-# Why Choose org-queue?
-
-org-queue transforms org-mode into a **full incremental learning system**:
-
-1. **Modular design**: Clean separation of concerns, easy to customize
-2. **Advanced content processing**: Extracts and clozes with parent-child priority inheritance
-3. **Intelligent prioritization**: 64-level granularity with heuristic ranges
-4. **Sophisticated scheduling**: Priority-biased power-law distributions
-5. **SRS integration**: Seamless org-srs + Anki workflow
-6. **Chooser UI**: Dired-like bulk operations for efficient task management
-7. **Buffer management**: Automatic visibility limiting for focused work
-8. **ID-based tracking**: Reliable deduplication and marker resolution
-9. **Persistence**: Queue and index survive restarts
-10. **org-mode compatible**: Standard workflows still work
-
-Inspired by SuperMemo, it brings **incremental learning to Emacs** with a modern, modular foundation.
-
-# Installation
-
-## Prerequisites
-
-- Emacs 27.1+ (with `tabulated-list-mode`)
-- org-mode 9.0+
-- Optional: org-srs (for SRS features)
-- Optional: org-web-tools (for web capture)
-- Optional: gptel (for AI integration)
-
-## Clone the Repository
-
+### Install
 ```sh
 git clone https://github.com/CyberSyntax/org-queue.git
 ```
 
-## Configure org-queue in Emacs
-
-Add to your Emacs configuration file (`.emacs` or `init.el`):
-
+### Minimal Config (init.el)
 ```emacs-lisp
-;; Directory Setup
-(setq user-emacs-directory "~/.emacs.d")  ;; For cache-dir
-(setq org-queue-directory "~/org")        ;; Your org files root
-
-;; Optional: Load org-srs (if using)
-(when (file-exists-p "~/path/to/org-srs")
-  (add-to-list 'load-path "~/path/to/org-srs")
-  (require 'org-srs))
-
-;; Load org-queue
+;; Load path and base directory
 (add-to-list 'load-path "~/path/to/org-queue")
-(require 'org-queue)
+(setq org-queue-directory "~/org")      ;; required for file discovery
 
-;; Configuration Examples (optional)
-(setq my-random-schedule-default-months 3)
-(setq my-random-schedule-exponent 1)
-(setq org-queue-preinit-srs nil)
-(setq my-queue-visible-buffer-count 8)  ;; Number of queue buffers to keep visible
-```
+(require 'org-queue)                     ;; loads all modules
 
-## Restart Emacs
-
-org-queue will auto-initialize on startup.
-
-# Usage
-
-org-queue provides three main interaction modes:
-
-1. **Global commands** (via `C-c q` prefix)
-2. **Chooser UI** (tabulated list)
-3. **Queue switching** (completion interface)
-
-## Global Commands
-
-**Prefix**: `C-c q` (configurable)
-
-### Navigation
-- `f` - Next outstanding task
-- `b` - Previous outstanding task
-- `c` - Show current outstanding task
-- `F` - Next task in new tab
-- `B` - Previous task in new tab
-- `C` - Current task in new tab
-- `r` - Remove current task from queue
-- `R` - Reset index and show first task
-- `m` - Move current task to position (1-based)
-
-### Chooser
-- `Q` - Open chooser for global queue
-- `q` - Open chooser from current buffer (subset mode)
-
-### Priority
-- `,` - Set priority with heuristics (interactive range selection)
-- `i` - Increase priority range (lower number = higher priority)
-- `d` - Decrease priority range (higher number = lower priority)
-
-### Scheduling
-- `s` - Schedule task with priority bias
-- `a` - Advance schedule (diminishing returns)
-- `p` - Postpone schedule (increasing delays)
-
-### View Control
-- `w` - Widen buffer and recenter
-- `u` - Show parent heading context
-
-### Structure Editing
-- `D` - Demote subtree
-- `P` - Promote subtree
-
-### Content Creation
-- `x` - Create extract block (SuperMemo-style)
-- `X` - Remove all extract blocks (after processing)
-- `z` - Create cloze deletion (if org-srs available)
-- `Z` - Create SRS card in current entry (if org-srs available)
-
-### SRS (if org-srs available)
-- `1` - Rate entry as "again" (difficult)
-- `3` - Rate entry as "good" (easy)
-- `A` - Launch/focus Anki
-
-### Optional Integrations
-- `l` - Insert URL link (if org-web-tools installed)
-- `I` - Insert web page as entry (if org-web-tools installed)
-- `g` - Start GPT chat (if gptel installed)
-
-## Chooser Commands
-
-Access with `C-c q Q` (global queue) or `C-c q q` (subset from buffer)
-
-### Navigation (Row-wise)
-- `j` - Next row (skips wrapped lines)
-- `k` - Previous row (skips wrapped lines)
-
-### Visit/Open
-- `RET` / `f` - Visit task (updates global index if in global mode)
-- `o` - Visit task in other window (keep chooser selected)
-- `T` - Visit in new tab (background)
-- `C-c t` - Visit in new tab (foreground)
-
-### Marking (Dired-style)
-- `m` - Mark current row
-- `u` - Unmark current row
-- `t` - Toggle mark on current row
-- `U` - Unmark all
-- `M` - Mark region (all rows in active region)
-
-### Bulk Operations (on marked/region/current)
-- `S` - Spread schedule across period (prompts: start date, days, items/day)
-- `H` - Spread priorities (prompts: low/high priority bounds)
-- `a` - Advance marked tasks
-- `p` - Postpone marked tasks
-- `O` - Add to outstanding (sets QFORCE, nudges priority toward 1)
-  - With prefix (`C-u O`): Remove QFORCE
-
-### Reordering (Global Queue Only)
-- `M-p` / `M-<up>` - Move current task up
-- `M-n` / `M-<down>` - Move current task down
-- `M-g M-g` - Move to position (prompts for 1-based position)
-
-### Refresh
-- `g` - Refresh chooser view (soft)
-- `G` - Hard refresh (reindex files, rebuild queue, update chooser)
-- `C-c T` - Open chooser in dedicated tab-bar tab
-
-### Subset Mode (from `C-c q q`)
-- `C` - Create new subset from current buffer/region
-- **Note**: Subset mode disables reordering (global queue only)
-
-### Other
-- `q` - Quit chooser window
-- `n` - Disabled (prevents conflict with next-line)
-
-### Selection Logic for Bulk Operations
-1. If any marks exist → use marked rows
-2. Else if region is active → use rows in region
-3. Else → use current row
-
-## Queue Switching
-
-**Command**: `my-queue-switch-to-task`
-
-- Not bound by default (recommend `C-c q s`)
-- Completion interface showing all tasks: `"#### Title — file"`
-- Preserves queue order in candidates
-- Updates index and displays selected task
-
-# Modular Architecture
-
-org-queue is split into focused modules:
-
-| Module | Purpose |
-|--------|---------|
-| `org-queue.el` | Entry point, global keymap, requires all modules |
-| `org-queue-config.el` | Configuration, priority ranges, system detection |
-| `org-queue-tasks.el` | Queue management, navigation, persistence, maintenance |
-| `org-queue-priority.el` | Priority logic, heuristics, spreading, range controls |
-| `org-queue-schedule.el` | Scheduling algorithms, advance/postpone, auto-operations |
-| `org-queue-display.el` | UI, syntax highlighting, extracts/clozes, flag status |
-| `org-queue-chooser.el` | Tabulated list UI, marking, bulk operations, subset mode |
-| `org-queue-utils.el` | File indexing, map-entries, TODO/DONE detection |
-| `org-queue-srs-bridge.el` | org-srs integration, session management, Anki launching |
-| `org-queue-gptel-bridge.el` | GPTel integration (auto-launch Anki on gptel-send) |
-
-# Configuration
-
-Customize via `M-x customize-group RET org-queue` or in your init file.
-
-## Essential Settings
-
-```emacs-lisp
-;; Directory where org files live (searched recursively)
-(setq org-queue-directory "~/org")
-
-;; Default scheduling range in months
-(setq my-random-schedule-default-months 3)
-
-;; Scheduling bias (0=uniform, 1=quadratic, 2=cubic)
-(setq my-random-schedule-exponent 1)
-
-;; Number of distinct queue buffers to keep visible
+;; Optional, but useful defaults
 (setq my-queue-visible-buffer-count 8)
+(setq my-random-schedule-default-months 3)
+(setq my-random-schedule-exponent 1)
+
+;; Run with caution. Make backups before first run.
 ```
 
-## Priority Ranges
+`org-queue` initializes automatically at Emacs startup:
+- Builds the two queues in memory (no daily disk cache).
+- Prunes not‑due entries.
+- Displays the top outstanding task.
 
-10 ranges (0-9) mapping to priority groups:
+---
 
+## Key Concepts
+
+### Two‑Queue Architecture
+- **Outstanding** — items **available now** (respecting deferrals). Shown immediately by `org-queue-show-top`.  
+- **Pending (today)** — items **available later today**. They are automatically promoted to Outstanding when their `available-at` time arrives (or next refresh).
+
+**Availability calculation (non‑SRS):**  
+`available-at = max(SCHEDULED, LAST_REPEAT + deferral(priority))`, with optional QFORCE override (see [Scheduling & Snooze](#scheduling--snooze)).
+
+### Scheduling Invariants
+Every schedule write runs through a single constrained path:
+- **Weekdays only:** weekends are pushed to the next Monday.  
+- **Work window:** snapped into `[09:00, 18:00)` (local time).  
+- **Bounded jitter:** ±10 minutes (kept inside the window).  
+- **Never in the past:** always `>= now`.  
+- **Respect LAST_REPEAT deferral** for non‑SRS entries.
+
+Commands using this path:
+- `my-schedule-command`, `my-advance-schedule`, `my-postpone-schedule`, and the internals they call.
+
+### SRS Integration
+- An entry is SRS‑managed if it or its parent contains an `:SRSITEMS:` drawer (name is configurable).
+- For SRS items, **next due** is read from the drawer (starred row preferred; otherwise the earliest timestamp).
+- SRS items are **mixed** into the head of the Outstanding queue by a configurable ratio and start policy.
+- Optional **conceal**: only show “Front,” hide “Back/Answer” bodies when visiting an SRS item.
+
+### Night Shift
+- During night shift (default **22:00–06:00**):
+  - **SRS is suppressed** (kept out of Outstanding; still tracked as Pending).
+  - `my-launch-anki` is disabled.
+- You can change the window or disable night shift entirely.
+
+### ID Guard
+- **Never hangs on bad IDs**: resolution time‑boxed to 0.12s, with a 300s cooldown per failing ID.
+- **Skips remote/TRAMP files** for resolution (fast fail).
+- **Auto‑drop** unresolved entries during maintenance/midnight refresh or when visited.
+- **Idle coalesced refresh**: after saving a file, re‑resolve only the tasks that belong to that file (no global scans).
+
+---
+
+## Keybindings (Global Prefix: `C-;`)
+
+> The package installs one **global prefix map** bound to `C-;`.  
+> Rebind if you prefer:  
+> ```emacs-lisp
+> (global-unset-key (kbd "C-;"))
+> (global-set-key (kbd "C-c q") org-queue-prefix-map)  ;; example
+> ```
+
+| Keys         | Command                                  | Description |
+|--------------|-------------------------------------------|-------------|
+| `C-; ,`      | `my-set-priority-with-heuristics`         | Set a numeric priority within a heuristic range (0–9 → 1..64). |
+| `C-; +`      | `my-increase-priority-range`              | Move to a **higher urgency** range (lower range number). |
+| `C-; -`      | `my-decrease-priority-range`              | Move to a **lower urgency** range. |
+| `C-; s`      | `my-schedule-command`                     | Prompt months, schedule with constraints, set/confirm priority. |
+| `C-; a`      | `my-advance-schedule`                     | Advance using \(x - 1/\ln(x+e)\) adjusted by priority. |
+| `C-; p`      | `my-postpone-schedule`                    | Postpone using \(x + 1/\ln(x+e)\) adjusted by priority. |
+| `C-; c`      | `org-queue-stamp-and-show-top`            | Stamp `:LAST_REPEAT:` here (non‑SRS) and jump to the top outstanding task. |
+| `C-; w`      | `widen-and-recenter`                      | Widen, reset folding, recenter. |
+| `C-; u`      | `org-show-parent-heading-cleanly`         | Show parent context (narrow to subtree). |
+| `C-; D`      | `org-demote-subtree`                      | Demote subtree. |
+| `C-; P`      | `org-promote-subtree`                     | Promote subtree. |
+| `C-; x`      | `org-interactive-extract`                 | Create an `{{extract#ID|…|ID}}` and child heading. |
+| `C-; X`      | `org-remove-all-extract-blocks`           | Remove all `extract` blocks in current buffer. |
+| `C-; A`      | `my-launch-anki`                          | Launch/focus Anki (disabled during night shift). |
+
+**Conditional bindings (loaded when available):**
+
+| Keys         | Requires        | Command                            | Description |
+|--------------|-----------------|-------------------------------------|-------------|
+| `C-; 1`      | `org-srs`       | `org-queue-srs-rate-again`          | Rate SRS entry “again”. |
+| `C-; 3`      | `org-srs`       | `org-queue-srs-rate-good`           | Rate SRS entry “good”. |
+| `C-; S`      | `org-srs`       | `org-queue-srs-item-create-card`    | Create an SRS card at point. |
+| `C-; z`      | (none)          | `org-interactive-cloze`             | Create cloze (front shows prefix/[…]/suffix). |
+| `C-; Z`      | (none)          | `org-interactive-cloze-prefix`      | Cloze, front shows **prefix only**. |
+| `C-; M-z`    | (none)          | `org-interactive-cloze-suffix`      | Cloze, front shows **suffix only**. |
+| `C-; l`      | `org-web-tools` | `org-web-tools-insert-link-for-url` | Insert URL link. |
+| `C-; I`      | `org-web-tools` | `org-web-tools-insert-web-page-as-entry` | Capture page into Org. |
+
+Other frequently used interactive functions (not bound by default):
+- `org-queue-show-top` — show the current head of Outstanding.
+- `my-reset-outstanding-tasks-index` — reset index and head.
+- `my-reset-and-show-current-outstanding-task` — reset and show head (also launches Anki).
+
+---
+
+## Configuration
+
+All options are in the `org-queue` group:  
+`M-x customize-group RET org-queue`
+
+### Essential
 ```emacs-lisp
-(setq my-priority-ranges
-      '((0 . (1 . 2))    ; Flag:1
-        (1 . (2 . 5))    ; Flag:2
-        (2 . (5 . 12))   ; Flag:3
-        (3 . (12 . 18))  ; Flag:4
-        (4 . (18 . 24))  ; Flag:5
-        (5 . (24 . 30))  ; Flag:6
-        (6 . (30 . 37))  ; Flag:7
-        (7 . (37 . 45))  ; Flag:7
-        (8 . (45 . 58))  ; Flag:7
-        (9 . (58 . 64)))) ; Flag:7
+(setq org-queue-directory "~/org")        ;; recursive .org discovery
+(setq my-queue-visible-buffer-count 8)    ;; limit distinct queue buffers kept visible
 ```
 
-## SRS Integration
-
+### Scheduling & Snooze
 ```emacs-lisp
-;; Pre-initialize org-srs at startup (if installed)
-(setq org-queue-preinit-srs t)
+;; Default range used when scheduling without explicit months
+(setq my-random-schedule-default-months 3)
+(setq my-random-schedule-exponent 1)      ;; 0=uniform, 1=quadratic, 2=cubic (bias later)
 
-;; Number of SRS reviews before returning to queue
-(setq my-srs-reviews-per-task 4)
+;; Deferral for non‑SRS items when snoozed via LAST_REPEAT:
+;; f(p) = BASE + SLOPE * priority (1..64). Higher priority => longer/shorter depending on slope.
+(setq org-queue-non-srs-snooze-base-minutes 0)
+(setq org-queue-non-srs-snooze-slope-minutes 1)
+
+;; QFORCE semantics:
+;; When non‑nil, QFORCE ignores LAST_REPEAT deferral and becomes immediately available.
+(setq org-queue-qforce-ignores-last-repeat nil)
 ```
 
-## Chooser UI
-
+### SRS & Mixing
 ```emacs-lisp
-;; Column widths (must be integers)
-(setq org-queue-chooser-mark-width 1)
-(setq org-queue-chooser-index-width 5)
-(setq org-queue-chooser-priority-width 4)
-(setq org-queue-chooser-title-width 40)
-(setq org-queue-chooser-preview-width 40)
-(setq org-queue-chooser-sched-width 10)
-(setq org-queue-chooser-file-width 28)
+;; Interleave blocks of non‑SRS and SRS in the head:
+(setq org-queue-srs-mix-ratio '(1 . 4))    ;; (NON-SRS . SRS)
 
-;; Open chooser in dedicated tab-bar tab
-(setq org-queue-chooser-open-in-tab t)
+;; Who starts the head block: 'non-srs, 'srs, 'rotate, or 'auto
+(setq org-queue-mix-start 'rotate)
+
+;; Conceal “Back/Answer” body when visiting SRS entries
+(setq org-queue-srs-conceal-answer t)
 ```
 
-## Persistence
-
+### Night Shift Window
 ```emacs-lisp
-;; Cache file for task list (auto-set to cache-dir)
-(setq my-outstanding-tasks-cache-file
-      (expand-file-name "org-queue-outstanding-tasks.cache" cache-dir))
-
-;; Index file for current position (device-specific)
-(setq my-outstanding-tasks-index-file
-      (expand-file-name "org-queue-index.cache" cache-dir))
+(setq org-queue-night-shift-enabled t)
+(setq org-queue-night-shift-start "22:00")
+(setq org-queue-night-shift-end   "06:00")
 ```
 
-## Important Notes
+### Performance & Files
+```emacs-lisp
+;; Where org-queue stores its own cache files (e.g., maintenance stamp, org-id DB)
+;; Defaults under ~/.emacs.d/var/org-queue/
+(setq org-queue-cache-dir (expand-file-name "org-queue/" user-emacs-directory))
 
-- **Load order**: `(require 'org-queue)` before customizations
-- **Backup**: Always backup org files before first use
-- **Cache-dir**: `user-emacs-directory` must be set for cache to work
-- **org-srs**: Optional but recommended for full SRS workflow
+;; File roster cache TTL (seconds) before re-scanning org-queue-directory
+(setq org-queue-file-cache-ttl 10)
+```
 
-# Workflows
+**Notes:**
+- The project **does not depend on `org-agenda-files`**. It recursively scans `org-queue-directory`.
+- IDs are stored via Org’s `org-id`; this project places the ID database under `org-queue-cache-dir` by default.
+- `large-file-warning-threshold` is disabled in this package (set to `nil`) and randomness is seeded.
 
-## SuperMemo-Style Add to Outstanding
+---
 
-Force a future-scheduled task to appear in today's queue:
+## Maintenance Pipeline
 
-1. Open chooser: `C-c q Q`
-2. Mark tasks: `m` (or `M` for region)
-3. Add to outstanding: `O`
-   - Sets `QFORCE=1` property
-   - Nudges priority toward 1 (higher urgency)
-4. Queue rebuilds automatically
-5. Tasks now appear regardless of schedule
-
-**Remove QFORCE**: `C-u O` on marked tasks
-
-## Incremental Reading with Extracts
-
-Process long documents incrementally:
-
-1. Navigate to a heading in an org file
-2. Select interesting text
-3. Create extract: `C-c q x`
-   - Wraps text in `{{extract:...}}`
-   - Creates child heading with cleaned text
-   - Inherits parent priority range
-   - Assigns child a priority within that range
-4. Repeat for multiple extracts
-5. When done extracting: `C-c q X` (removes all extract blocks from parent)
-
-**Result**: Parent becomes an index, children are schedulable micro-tasks.
-
-## Bulk Task Management
-
-Efficiently manage many tasks at once:
-
-1. Open chooser: `C-c q Q`
-2. Mark tasks:
-   - `m` on individual rows
-   - `M` to mark entire region
-3. Spread schedule:
-   - `S` → prompts: start date, days, items/day
-   - Example: 30 tasks, 30 days, 1/day → evenly distributed
-4. Spread priorities:
-   - `H` → prompts: low/high bounds
-   - Example: 10 tasks, 5-15 → priorities 5,6,7,8,9,10,11,12,13,14,15
-5. Advance/postpone:
-   - `a` for advance (all marked)
-   - `p` for postpone (all marked)
-6. Refresh: `g`
-
-**Subset mode**: `C-c q q` to filter tasks from current buffer/region, then bulk-operate.
-
-## Maintenance Workflows
-
-**Quick maintenance** (daily):
+Run on demand:
 ```emacs-lisp
 M-x org-queue-maintenance RET
 ```
-- Postpone overdue
-- Remove duplicate priorities
 
-**Full maintenance** (weekly):
-```emacs-lisp
-C-u M-x org-queue-maintenance RET
-```
-- All quick tasks
-- Ensure all headings have priority/schedule
-- Advance near-future tasks
-- Enforce priority constraints
-- Clean DONE tasks
+What it does (batched saves; UI suppressed; one final save):
+1. (Optional) `org-roam-db-sync` if present.  
+2. Ensure **priorities** and **schedules** exist for all relevant headings (skips DONE, skips SRS scheduling).  
+3. **Advance** near‑future schedules (defaults to `2^8 = 256` entries).  
+4. Auto‑postpone **overdue** TODOs.  
+5. Postpone **duplicate priorities per file** (keep one outstanding per numeric priority).  
+6. Enforce **monotone cap**: lower priorities can’t outnumber higher ones; overflow postponed FIFO.  
+7. Re‑ensure priorities/schedules where needed.  
+8. Postpone **consecutive same‑file** tasks (keep only the first in a row).  
+9. **Clean DONE** tasks (remove `SCHEDULED` and `PRIORITY`).  
+10. Rebuild queues (and run ID guard on them), show top, stamp the run date.
 
-# License
+**Automatic gating:**  
+- `org-queue-maintenance-on-startup` = `'if-needed` (default) runs once per day after startup idle.  
+- Midnight: queues are rebuilt and the next midnight refresh is scheduled.
 
-GNU General Public License v3.0. See [LICENSE](./LICENSE).
+---
+
+## Custom Syntax: Extracts & Clozes
+
+Inline markers render cleanly via overlays (wrappers hidden; payload styled):
+
+- **Extracts:** `{{extract#ID|PAYLOAD|ID}}`  
+  - Create with `C-; x` → inserts marker and creates a child heading with cleaned text.
+- **Cloze deletions:**  
+  - Back: `{{clozed#ID|SECRET|ID}}`  
+  - Front ellipsis: `{{cloze#ID|[...]|ID}}`  
+  - Create with:
+    - `C-; z` (prefix + […] + suffix),  
+    - `C-; Z` (prefix only),  
+    - `C-; M-z` (suffix only).
+- Toggle marker visibility (wrappers) in current buffer: `M-x org-toggle-syntax-markers`.
+
+---
+
+## Optional Integrations
+
+- **SRS** (`org-srs`): rating outside reviews (`C-; 1` / `C-; 3`), and card creation (`C-; S`).  
+- **Anki orchestration:** `my-launch-anki` is cross‑platform and night‑shift aware.
+- **gptel:** After `gptel-send`, `org-queue` tries to bring Anki to front (if not night shift).
+- **org-web-tools:** Link/page capture bound under the prefix when detected.
+- **org-roam:** One‑shot DB sync during maintenance (if available).
+
+---
+
+## Migration Notes (Breaking Changes)
+
+This README reflects the **current** code (the earlier README you shared is outdated). Key deltas:
+
+1. **Global prefix changed**  
+   - **Was:** `C-c q`  
+   - **Now:** **`C-;`** (you can rebind to `C-c q` if desired).
+
+2. **Chooser UI removed**  
+   - The prior tabulated “chooser with bulk ops” module is no longer present.
+   - The system now relies on the two‑queue model with **live micro‑updates** and single‑head navigation (`org-queue-show-top`).
+
+3. **No daily disk cache for the queue**  
+   - The queues are built in memory on startup and refreshed incrementally; only a small **maintenance stamp** and Org ID DB are persisted.
+
+4. **Scheduling invariants are mandatory**  
+   - Weekday‑only, snapped to work window with bounded jitter; **all** scheduling flows go through one constrained path.
+
+5. **SRS interleave & night shift are first‑class**  
+   - Configurable **mix ratio**, **start policy**, and concealment; SRS suppressed during night shift by default.
+
+6. **ID Guard introduced**  
+   - Time‑boxed ID resolution, cooldown on failure, TRAMP skip, auto‑drop of unrecoverable entries, idle per‑file refresh on save.
+
+If you had custom keybindings or references to old chooser functions, remove them and bind the new prefix map or functions you need.
+
+---
+
+## Troubleshooting
+
+- **“Nothing shows up at the top”**  
+  - Ensure `org-queue-directory` points to the correct root and contains `.org` files.  
+  - Night shift may be active; SRS items are intentionally suppressed.  
+  - Item might not yet be due; run `org-queue-show-top` to prune head and refresh display.
+
+- **“My SRS items don’t appear”**  
+  - Check that entries use the configured SRS drawer name (defaults to `SRSITEMS`).  
+  - During night shift, SRS won’t surface in Outstanding (by design).  
+  - Verify due timestamps: only **today** (or overdue) timestamps are in scope.
+
+- **“QFORCE doesn’t pull it in immediately”**  
+  - If `org-queue-qforce-ignores-last-repeat` is **nil**, QFORCE still respects `LAST_REPEAT + deferral`.  
+  - Set it to `t` to make QFORCE entries immediately available.
+
+- **“IDs got messed up”**  
+  - ID guard will drop unrecoverable items automatically; visit the entry or re‑create its ID (`org-id-get-create`) if needed.  
+  - Remote/TRAMP files are skipped for resolution.
+
+- **“Scheduling landed on a weekday morning with a slight offset”**  
+  - That’s intentional: weekday‑only, work‑window snapping, and small jitter.
+
+---
+
+## License
+
+GPL-3.0 — see [`LICENSE`](./LICENSE).
+
+---
+
+### Notes for Contributors
+
+- Follow the single‑path scheduling and single‑path ID resolution design.  
+- Keep live micro‑update semantics (advice + `after-change-functions`) intact.  
+- Avoid introducing global caches for queues; favor in‑memory state + batched saves.  

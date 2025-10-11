@@ -7,6 +7,106 @@
 (require 'org-queue-srs-bridge)
 (require 'org-queue-tasks)
 
+;;; --- FILE-FIRST SCHEDULING INVARIANTS (single path; no options) ---
+;; Always-on rules (no user options here):
+;; - Never schedule on weekends: push to next Monday.
+;; - Snap to local work window [09:00, 18:00).
+;; - Apply a small ±10-minute jitter (kept inside the window).
+;; - Respect LAST_REPEAT deferral (priority-based).
+
+(defconst org-queue--avoid-weekends t)
+(defconst org-queue--work-window-start "09:00")
+(defconst org-queue--work-window-end   "18:00")
+(defconst org-queue--schedule-jitter-minutes 10)
+
+(defun org-queue--minutes-of-day (tm)
+  (let* ((d (decode-time tm)) (h (nth 2 d)) (m (nth 1 d)))
+    (+ (* 60 h) m)))
+
+(defun org-queue--date-at-local-midnight (tm)
+  (let* ((d (decode-time tm)) (y (nth 5 d)) (mo (nth 4 d)) (da (nth 3 d)))
+    (encode-time 0 0 0 da mo y)))
+
+(defun org-queue--add-days (tm n)
+  (time-add tm (days-to-time n)))
+
+(defun org-queue--weekend-p (tm)
+  (let ((dow (nth 6 (decode-time tm)))) ;; 0=Sun .. 6=Sat
+    (or (= dow 0) (= dow 6))))
+
+(defun org-queue--parse-hhmm-safe (s fallback)
+  (or (org-queue--parse-hhmm s) (org-queue--parse-hhmm fallback) 0))
+
+(defun org-queue--snap-to-work-window (tm)
+  "Move TM into [org-queue--work-window-start, org-queue--work-window-end).
+Also push off weekends when enabled."
+  (let* ((start (org-queue--parse-hhmm-safe org-queue--work-window-start "09:00"))
+         (end   (org-queue--parse-hhmm-safe org-queue--work-window-end   "18:00"))
+         (start<=end (<= start end)))
+    (cl-labels
+        ((snap (x)
+           (let* ((mid (org-queue--date-at-local-midnight x))
+                  (hm  (org-queue--minutes-of-day x)))
+             ;; Avoid weekends
+             (when (and org-queue--avoid-weekends (org-queue--weekend-p x))
+               (setq mid (org-queue--date-at-local-midnight
+                          (let ((y x))
+                            (while (org-queue--weekend-p y)
+                              (setq y (org-queue--add-days y 1)))
+                            y))))
+             ;; Window logic
+             (cond
+              ;; Window inside same day
+              (start<=end
+               (cond
+                ((< hm start) (time-add mid (seconds-to-time (* 60 start))))
+                ((>= hm end)  (time-add (org-queue--add-days mid 1)
+                                        (seconds-to-time (* 60 start))))
+                (t x)))
+              ;; Window spans midnight (rare)
+              (t
+               (cond
+                ((or (>= hm start) (< hm end)) x)
+                (t (time-add mid (seconds-to-time (* 60 start))))))))))
+      (snap tm))))
+
+(defun org-queue--apply-scheduling-constraints (candidate)
+  "Adjust CANDIDATE by invariants:
+- >= now,
+- >= LAST_REPEAT + deferral(priority) for non-SRS entries,
+- snapped to work window (and next working day),
+- ±10 min jitter kept inside the window."
+  (let* ((now (current-time))
+         (cand (if (time-less-p candidate now) now candidate))
+         ;; Respect LAST_REPEAT deferral (non-SRS only; we are at point)
+         (last (org-queue--parse-last-repeat))
+         (priority (ignore-errors (my-get-raw-priority-value)))
+         (def-min (and (numberp priority) (org-queue--deferral-minutes priority)))
+         (cand (if (and last def-min)
+                   (let ((min-time (time-add last (seconds-to-time (* 60 def-min)))))
+                     (if (time-less-p cand min-time) min-time cand))
+                 cand))
+         ;; Snap into the window
+         (cand (org-queue--snap-to-work-window cand))
+         ;; Bounded jitter
+         (j (max 0 org-queue--schedule-jitter-minutes))
+         (cand (if (> j 0)
+                   (let* ((delta-min (- (random (1+ (* 2 j))) j))
+                          (cand2 (time-add cand (seconds-to-time (* 60 delta-min)))))
+                     (org-queue--snap-to-work-window cand2))
+                 cand)))
+    cand))
+
+(defun org-queue--schedule-set! (tm)
+  "Write SCHEDULED with all constraints; then micro-update+save."
+  (let* ((final (org-queue--apply-scheduling-constraints tm)))
+    (org-schedule nil (format-time-string "%Y-%m-%d %a %H:%M" final))
+    (ignore-errors (org-queue--micro-update-current! 'schedule))
+    (org-queue--autosave-current)
+    (when org-queue-auto-show-top-after-change
+      (org-queue-show-top t))
+    final))
+
 (defcustom my-random-schedule-default-months 3
   "Default number of months to schedule if none is specified."
   :type 'integer
@@ -59,33 +159,29 @@ Skips scheduling if the current heading or its parent has an SRS drawer."
       (if (or (eq srs-result 'current) (eq srs-result 'parent))
           ;; Skip scheduling if entry or parent has SRS drawer
           (message "Skipping scheduling for entry with SRS drawer")
-        ;; Otherwise, proceed with normal scheduling
+        ;; Otherwise, proceed with normal scheduling (original math retained)
         (let* ((today (current-time))
                (total-days (* months 30))
-               
                ;; Get priority for bias calculation
                (priority-str (org-entry-get nil "PRIORITY"))
-               (priority (if priority-str 
-                            (string-to-number priority-str)
-                          org-priority-default))
-               
+               (priority (if priority-str
+                             (string-to-number priority-str)
+                           org-priority-default))
                ;; Priority-based bias: high priority increases exponent for earlier bias
                (priority-ratio (/ (float (- org-priority-lowest priority))
-                                 (float (- org-priority-lowest org-priority-highest))))
+                                  (float (- org-priority-lowest org-priority-highest))))
                (priority-bias (+ 1.0 (* 2.0 priority-ratio)))  ; Range: 1.0 to 3.0
-               
-               ;; EXISTING mathematical logic with priority enhancement
-               ;; If `n` is not passed in, use our existing defcustom value
+               ;; Existing mathematical logic with priority enhancement
                (base-n (or n my-random-schedule-exponent))
-               (enhanced-n (* base-n priority-bias))  ; Priority enhances the exponent
-               
+               (enhanced-n (* base-n priority-bias))           ; Priority enhances the exponent
                (u (/ (float (random 1000000)) 1000000.0))
-               (exponent (/ 1.0 (+ enhanced-n 1)))  ; compute 1/(enhanced_n+1)
+               (exponent (/ 1.0 (+ enhanced-n 1)))            ; compute 1/(enhanced_n+1)
                (x (expt u exponent))
                (days-ahead (floor (* total-days x)))
-               (random-date (time-add today (days-to-time days-ahead))))
-          (org-schedule nil (format-time-string "%Y-%m-%d" random-date))
-          (message "Scheduled: Priority %d (bias %.2fx) → %d days" 
+               (raw (time-add today (days-to-time days-ahead))))
+          ;; Single scheduling path with invariants + micro-update + save
+          (org-queue--schedule-set! raw)
+          (message "Scheduled: Priority %d (bias %.2fx) → %d days"
                    priority priority-bias days-ahead))))))
 
 (defun my-random-schedule-command (&optional months)
@@ -109,11 +205,10 @@ Skips scheduling if the current heading or its parent is an SRS entry."
   (when (and (not noninteractive)
              (eq major-mode 'org-mode))
     (unless (org-srs-entry-p (point)) ; Only continue if NOT an SRS entry
-      (let* ((orig-buf (current-buffer))
-             (e (exp 1))
+      (let* ((e (exp 1))
              (current-weight (max 0 (my-find-schedule-weight)))
              (priority-str (org-entry-get nil "PRIORITY"))
-             (priority (if priority-str 
+             (priority (if priority-str
                            (string-to-number priority-str)
                          org-priority-default))
              (priority-ratio (/ (float (- org-priority-lowest priority))
@@ -121,18 +216,13 @@ Skips scheduling if the current heading or its parent is an SRS entry."
              (priority-factor (+ 0.1 (* 0.9 priority-ratio)))
              (base-adjusted-months (max 0 (- current-weight
                                              (/ 1 (log (+ current-weight e))))))
-             (priority-adjusted-months (* base-adjusted-months priority-factor))
-             (min-months (min current-weight priority-adjusted-months))
-             (max-months (max current-weight priority-adjusted-months))
-             (random-months (random-float min-months max-months))
-             (adjusted-days (* random-months 30.4375)))
-        (org-schedule nil (format-time-string "%Y-%m-%d"
-                                              (time-add (current-time)
-                                                        (days-to-time adjusted-days))))
-        (message "Advanced: Priority %d (factor %.2f) → %.2f months" 
-                 priority priority-factor random-months)
-        (save-buffer)
-        (ignore-errors (org-queue--micro-update-current! 'advance))))))
+             (random-months (* base-adjusted-months priority-factor))
+             (adjusted-days (* random-months 30.4375))
+             (raw (time-add (current-time) (days-to-time adjusted-days))))
+        ;; Single scheduling path with invariants + micro-update + save
+        (org-queue--schedule-set! raw)
+        (message "Advanced: Priority %d (factor %.2f) → %.2f months"
+                 priority priority-factor random-months)))))
 
 (defun my-postpone-schedule ()
   "Postpone the current Org heading by a mathematically adjusted number of months.
@@ -143,12 +233,11 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
              (eq major-mode 'org-mode))
     (let ((srs-status (org-srs-entry-p (point))))
       (unless srs-status
-        (let* ((orig-buf (current-buffer))
-               (e (exp 1))
+        (let* ((e (exp 1))
                (current-weight (max 0 (my-find-schedule-weight)))
                (is-overdue (my-is-overdue-task))
                (priority-str (org-entry-get nil "PRIORITY"))
-               (priority (if priority-str 
+               (priority (if priority-str
                              (string-to-number priority-str)
                            org-priority-default))
                (priority-ratio (/ (float (- priority org-priority-highest))
@@ -156,10 +245,7 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
                (priority-factor (+ 0.1 (* 0.9 priority-ratio)))
                (base-adjusted-months (+ current-weight
                                         (/ 1 (log (+ current-weight e)))))
-               (priority-adjusted-months (* base-adjusted-months priority-factor))
-               (min-months (min current-weight priority-adjusted-months))
-               (max-months (max current-weight priority-adjusted-months))
-               (random-months (random-float min-months max-months))
+               (random-months (* base-adjusted-months priority-factor))
                (adjusted-days (* random-months 30.4375))
                (now (current-time))
                (proposed-new-time (time-add now (days-to-time adjusted-days)))
@@ -170,15 +256,14 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
                                       (month (nth 4 now-decoded))
                                       (day (nth 3 now-decoded)))
                                  (encode-time 0 0 0 (1+ day) month year))))
-               (new-time (if (time-less-p proposed-new-time minimum-time)
-                             minimum-time
-                           proposed-new-time)))
-          (org-schedule nil (format-time-string "%Y-%m-%d" new-time))
-          (message "Postponed: Priority %d (factor %.2f) → %.2f months%s" 
+               (raw (if (time-less-p proposed-new-time minimum-time)
+                        minimum-time
+                      proposed-new-time)))
+          ;; Single scheduling path with invariants + micro-update + save
+          (org-queue--schedule-set! raw)
+          (message "Postponed: Priority %d (factor %.2f) → %.2f months%s"
                    priority priority-factor random-months
-                   (if is-overdue " (overdue→today allowed)" ""))
-          (save-buffer)
-          (ignore-errors (org-queue--micro-update-current! 'postpone)))))))
+                   (if is-overdue " (overdue→today allowed)" "")))))))
 
 (defun my-auto-advance-schedules (&optional power)
   "Advance 2^POWER random tasks (default: 64) across org-queue files."
@@ -383,11 +468,11 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
                max-attempts))))
 
 (defun org-queue-stamp-and-show-top ()
-  "Stamp LAST_REPEAT on current; micro-update that item; then show top."
+  "Stamp LAST_REPEAT on current; micro-update that item if stamped; then show top."
   (interactive)
   (let ((status (ignore-errors (org-queue-stamp-last-repeat-current))))
-    (ignore-errors (org-queue--micro-update-current!
-                    (if (eq status :stamped) 'stamp 'skip))))
+    (when (eq status :stamped)
+      (ignore-errors (org-queue--micro-update-current! 'stamp))))
   (org-queue-show-top t))
 
 (provide 'org-queue-schedule)

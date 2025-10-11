@@ -39,61 +39,43 @@ Optional RETRIED is used internally to prevent infinite recursion."
             (condition-case err
                 (progn
                   ;; Ensure heading state consistency
-                  (when (org-at-heading-p) 
+                  (when (org-at-heading-p)
                     (org-back-to-heading t)
                     (org-show-entry)
                     (redisplay))
-                  ;; Original priority adjustment logic
-                  (let* ((current-priority (string-to-number
-                                            (or (org-entry-get nil "PRIORITY")
-                                                (number-to-string org-priority-default))))
-                         (delta (- desired-priority current-priority)))
-                    (cond
-                     ((< delta 0)
-                      (dotimes (_ (abs delta))
-                        (org-priority-up)))
-                     ((> delta 0)
-                      (dotimes (_ delta)
-                        (org-priority-down)))
-                     (t
-                      (if (= current-priority org-priority-highest)
-                          (progn
-                            (org-priority-down)
-                            (org-priority-up))
-                        (if (= current-priority org-priority-lowest)
-                            (progn
-                              (org-priority-up)
-                              (org-priority-down))
-                          (progn
-                            (org-priority-up)
-                            (org-priority-down))))))
-                    ;; Priority validation
-                    (setq final-priority (string-to-number
-                                          (or (org-entry-get nil "PRIORITY")
-                                              (number-to-string org-priority-default))))
-                    (unless (and final-priority 
-                                 (integerp final-priority)
-                                 (= final-priority desired-priority))
-                      (error "Priority validation failed")))
+                  ;; Atomic priority write (no stepwise up/down; coalesce side-effects)
+                  (let ((inhibit-message t)
+                        (org-queue--suppress-micro-update t)
+                        (org-queue--suppress-save t))
+                    (my-set-numeric-priority-here desired-priority))
+                  ;; Priority validation
+                  (setq final-priority (string-to-number
+                                        (or (org-entry-get nil "PRIORITY")
+                                            (number-to-string org-priority-default))))
+                  (unless (and final-priority
+                               (integerp final-priority)
+                               (= final-priority desired-priority))
+                    (error "Priority validation failed"))
                   (setq success t))
               ;; Error handling with automatic retry
-              (error 
+              (error
                (setq attempt (1+ attempt))
-               (when (and (< attempt max-retries) 
+               (when (and (< attempt max-retries)
                           (not (org-entry-get nil "PRIORITY")))
-                 (org-entry-put nil "PRIORITY" 
+                 (org-entry-put nil "PRIORITY"
                                 (number-to-string org-priority-default)))
                (if (< attempt max-retries)
-                   (progn (message "Retrying (%d/%d)..." attempt max-retries)
-                          (sleep-for retry-delay))
-                 (message "Failed after %d attempts: %s" 
+                   (progn
+                     (message "Retrying (%d/%d)..." attempt max-retries)
+                     (sleep-for retry-delay))
+                 (message "Failed after %d attempts: %s"
                           max-retries (error-message-string err))
                  (unless retried
                    (message "Auto-retrying...")
-                   (my-set-priority-with-heuristics specific-range t))))))
+                   (my-set-priority-with-heuristics specific-range t))))))  ; end condition-case
           (when success
             (message "Priority set to: %d" random-priority)
-            (save-buffer)
+            (org-queue--autosave-current)
             (ignore-errors (org-queue--micro-update-current! 'priority))))
       (message "Invalid range."))))
 

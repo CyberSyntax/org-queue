@@ -317,8 +317,8 @@ REASON is informational ('priority 'schedule 'advance 'postpone 'review 'stamp '
           my-queue--last-head-key nil)
     (setq org-queue--flag-counts-cache nil)
     (my-queue-limit-visible-buffers)
-    ;; Save only current buffer; maintenance disables this.
-    (save-buffer)))))  ;; end micro-update
+    ;; Save only the current buffer (respects suppression flags).
+    (org-queue--autosave-current)))))  ;; end micro-update
 
 ;; Variables for task list management
 (defvar my-outstanding-tasks-list nil
@@ -1175,6 +1175,27 @@ Saves buffers and regenerates the task list for consistency."
                         (lambda ()
                           (ignore-errors (org-queue--promote-pending-due-now!))))))
 
+(defvar-local org-queue--micro-update-timer nil)
+
+(defun org-queue--request-micro-update (&optional reason)
+  "Coalesce queue micro-updates on idle to avoid thrashing.
+Schedules a single micro-update + autosave (+ optional show-top) after brief idle."
+  (when org-queue--micro-update-timer
+    (cancel-timer org-queue--micro-update-timer))
+  (let ((buf (current-buffer))
+        (why reason))
+    (setq org-queue--micro-update-timer
+          (run-with-idle-timer
+           0.2 nil
+           (lambda (b r)
+             (when (buffer-live-p b)
+               (with-current-buffer b
+                 (ignore-errors (org-queue--micro-update-current! r))
+                 (org-queue--autosave-current)
+                 (when org-queue-auto-show-top-after-change
+                   (org-queue-show-top t)))))
+           buf why))))
+
 (defun org-queue--midnight-refresh ()
   "Clear today's pending, rebuild queues, save, and show top. Reschedule for next midnight."
   (setq my-today-pending-tasks nil)
@@ -1295,8 +1316,50 @@ Runs the complete maintenance pipeline and flushes a single save at the end."
   (delete-other-windows)
   (org-queue-show-top t)
   (org-queue--write-maintenance-stamp)
+  (save-some-buffers t)
   (message "org-queue: maintenance complete.")
   (ignore-errors (org-queue--schedule-midnight-refresh)))
+
+ ;; ------------------------------------------------------------
+ ;; LIVE MICRO-TRACKING (single path; always enabled)
+ ;; Recompute queue on any change to SCHEDULED or PRIORITY.
+ ;; ------------------------------------------------------------
+
+(defun org-queue--after-schedule (&rest _)
+  "After `org-schedule`, reflect the change in the queue and save."
+  (when (derived-mode-p 'org-mode)
+    (unless org-queue--suppress-micro-update
+      (org-queue--request-micro-update 'schedule))))
+
+(defun org-queue--after-priority (&rest _)
+  "After priority commands, reflect the change in the queue and save."
+  (when (derived-mode-p 'org-mode)
+    (unless org-queue--suppress-micro-update
+      (org-queue--request-micro-update 'priority))))
+
+;; Advice core commands (covers C-c C-s and priority up/down)
+(unless (advice-member-p #'org-queue--after-schedule 'org-schedule)
+  (advice-add 'org-schedule :after #'org-queue--after-schedule))
+(dolist (fn '(org-priority org-priority-up org-priority-down))
+  (unless (advice-member-p #'org-queue--after-priority fn)
+    (advice-add fn :after #'org-queue--after-priority)))
+
+(defun org-queue--on-change-scheduled-or-priority (beg end _len)
+  (when (eq major-mode 'org-mode)
+    (save-excursion
+      (goto-char beg)
+      (when (re-search-forward
+             "\\(SCHEDULED:[^\n]*\\|\\[#[ \t]*[0-9]+[ \t]*\\]\\)" end t)
+        (unless org-queue--suppress-micro-update
+          (ignore-errors (org-back-to-heading t))
+          (org-queue--request-micro-update 'edit))))))
+
+(add-hook 'org-mode-hook
+          (lambda ()
+            (add-hook 'after-change-functions
+                      #'org-queue--on-change-scheduled-or-priority
+                      nil t)))
+
 
 (provide 'org-queue-tasks)
 ;;; org-queue-tasks.el ends here

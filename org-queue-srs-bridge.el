@@ -63,7 +63,6 @@ Advances the interleave phase after consuming the head, then reassigns the top."
       (condition-case err
           (progn
             (org-srs-review-rate-entry :again)
-            (message "Rated as '%s'" "again")
             ;; Consuming head: advance phase once
             (let* ((ratio (or (and (boundp 'org-queue-srs-mix-ratio)
                                    org-queue-srs-mix-ratio)
@@ -71,7 +70,8 @@ Advances the interleave phase after consuming the head, then reassigns the top."
               (org-queue--advance-mix-phase (car ratio) (cdr ratio)))
             (ignore-errors (org-queue--micro-update-current! 'review))
             ;; Save only the current buffer; maintenance disables this.
-            (save-buffer))
+            (save-buffer)
+            (message "Rated as '%s'" "again"))
         (error
          (message "Error rating entry: %s" (error-message-string err)))))))
 
@@ -85,7 +85,6 @@ Advances the interleave phase after consuming the head, then reassigns the top."
       (condition-case err
           (progn
             (org-srs-review-rate-entry :good)
-            (message "Rated as '%s'" "good")
             ;; Consuming head: advance phase once (OK)
             (let* ((ratio (or (and (boundp 'org-queue-srs-mix-ratio)
                                    org-queue-srs-mix-ratio)
@@ -93,7 +92,8 @@ Advances the interleave phase after consuming the head, then reassigns the top."
               (org-queue--advance-mix-phase (car ratio) (cdr ratio)))
             (ignore-errors (org-queue--micro-update-current! 'review))
             ;; Save only the current buffer; maintenance disables this.
-            (save-buffer))
+            (save-buffer)
+            (message "Rated as '%s'" "good"))
         (error
          (message "Error rating entry: %s" (error-message-string err)))))))
 

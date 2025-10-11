@@ -492,7 +492,7 @@ Other cloze markers are unwrapped on the Front only."
           (when (fboundp 'org-srs-item-new)
             (org-srs-item-new 'card))))
       (message "Created cloze (%s)" (symbol-name front-context))
-      (save-buffer))))
+      (org-queue--autosave-current))))
 
 ;; Thin wrappers (no duplicated logic): just pass the option for convenience
 (defun org-interactive-cloze-prefix ()
@@ -544,7 +544,7 @@ Other cloze markers are unwrapped on the Front only."
             (goto-char (1+ new-heading-pos))
             (my-set-priority-with-heuristics parent-priority-range))))
       (message "Created extract from selected text")
-      (save-buffer))))
+      (org-queue--autosave-current))))
 
 (defun org-remove-all-extract-blocks ()
   "Remove all {{extract#ID|...|ID}} blocks entirely from the current buffer."

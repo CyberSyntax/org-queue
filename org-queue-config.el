@@ -54,6 +54,10 @@ reassign/show-top during batch operations (e.g., chooser bulk actions).")
 org-queue operations. Bind with (let ((org-queue--suppress-save t)) ...)
 to batch changes and save once at the end.")
 
+(defvar org-queue--suppress-micro-update nil
+  "When non-nil (dynamically bound), skip queue micro-updates triggered by
+advice and change hooks. Bind around bursty edits to avoid thrashing.")
+
 (defcustom org-queue-auto-show-top-after-change nil
   "If non-nil, automatically call `org-queue-show-top` after operations
 that change schedule/priority (advance, postpone, schedule, stamp)."
