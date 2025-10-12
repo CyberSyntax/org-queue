@@ -156,6 +156,21 @@ Ensures the entry has an ID. Gracefully degrades if org-srs is not available."
       (error
        (user-error "Failed to create SRS card: %s" (error-message-string err))))))
 
+(defun org-queue-srs-item-create-card-and-clean-stamp ()
+  "Convert current non‑SRS entry into an SRS card.
+If :LAST_REPEAT: exists on this heading, remove it.
+Single save; final micro-update tagged 'create."
+  (interactive)
+  (org-queue--with-batched-saves
+    (save-excursion
+      (org-back-to-heading t)
+      (let ((was (org-entry-get nil "LAST_REPEAT")))
+        (when (and was (not (string-empty-p was)))
+          (ignore-errors (org-entry-delete nil "LAST_REPEAT"))
+          (message "Removed :LAST_REPEAT: from current heading")))
+      (org-queue-srs-item-create-card)
+      (ignore-errors (org-queue--micro-update-current! 'create)))))
+
 (defun org-queue-srs--drawer-bounds (&optional pos)
   "Return cons (beg . end) of :SRSITEMS: drawer in entry at POS (default point), or nil."
   (save-excursion

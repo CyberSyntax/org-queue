@@ -265,6 +265,25 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
                    priority priority-factor random-months
                    (if is-overdue " (overdue→today allowed)" "")))))))
 
+;; --- Stamp-aware wrappers (single save; final 'stamp only if stamped)
+(defun org-queue-advance-schedule-and-stamp ()
+  "Advance schedule, then stamp LAST_REPEAT (single save)."
+  (interactive)
+  (org-queue--with-batched-saves
+    (my-advance-schedule)
+    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+      (when (eq st :stamped)
+        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
+
+(defun org-queue-postpone-schedule-and-stamp ()
+  "Postpone schedule, then stamp LAST_REPEAT (single save)."
+  (interactive)
+  (org-queue--with-batched-saves
+    (my-postpone-schedule)
+    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+      (when (eq st :stamped)
+        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
+
 (defun my-auto-advance-schedules (&optional power)
   "Advance 2^POWER random tasks (default: 64) across org-queue files."
   (interactive "P")
@@ -322,8 +341,9 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
     (save-buffer)
     (ignore-errors (org-queue--micro-update-current! 'schedule))))
 
+;; --- Schedule → priority (reuse) → stamp. Single save.
 (defun org-queue-schedule-and-prioritize (&optional months)
-  "Schedule (prompt for months), then interactively choose a priority range. Single save."
+  "Schedule (prompt for months), then interactively choose a priority range. Single save + LAST_REPEAT stamp."
   (interactive
    (list (read-number
           "Enter the upper month limit: "
@@ -331,12 +351,14 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
   (org-queue--with-batched-saves
     ;; Schedule (keeps invariants)
     (my-random-schedule (or months (my-find-schedule-weight)))
-    ;; Priority prompt
+    ;; Priority prompt (identical UX to pressing \",\")
     (call-interactively 'my-set-priority-with-heuristics)
-    ;; keep property consistent (no-op if already correct)
+    ;; Keep property consistent (no-op if already correct)
     (ignore-errors (my-ensure-priority-set))
-    ;; reflect the final state (last change = priority)
-    (ignore-errors (org-queue--micro-update-current! 'priority))))
+    ;; Stamp LAST_REPEAT (no-op on SRS/parent) and reflect a final 'stamp update
+    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+      (when (eq st :stamped)
+        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
 
 (defun org-queue-stamp-last-repeat-current ()
   "Stamp :LAST_REPEAT: on the current heading only if it’s a pure non-SRS entry.
@@ -482,14 +504,6 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
     (when (and (not all-complete) (>= attempt max-attempts))
       (message "Warning: Reached maximum attempts (%d). Some entries may still be incomplete." 
                max-attempts))))
-
-(defun org-queue-stamp-and-show-top ()
-  "Stamp LAST_REPEAT on current; micro-update that item if stamped; then show top."
-  (interactive)
-  (let ((status (ignore-errors (org-queue-stamp-last-repeat-current))))
-    (when (eq status :stamped)
-      (ignore-errors (org-queue--micro-update-current! 'stamp))))
-  (org-queue-show-top t))
 
 (provide 'org-queue-schedule)
 ;;; org-queue-schedule.el ends here

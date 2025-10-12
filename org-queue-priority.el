@@ -289,5 +289,36 @@ Notes:
                 (plist-put task :flag (my-priority-flag newp)))))))
     adjusted))
 
+;; === Stamp-aware wrappers (single save; final 'stamp only if stamped) ===
+(declare-function org-queue-stamp-last-repeat-current "org-queue-schedule" ())
+
+(defun org-queue-prioritize-and-stamp ()
+  "Prompt for priority range, set it, then stamp LAST_REPEAT (single save)."
+  (interactive)
+  (org-queue--with-batched-saves
+    (call-interactively 'my-set-priority-with-heuristics)
+    (ignore-errors (my-ensure-priority-set))
+    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+      (when (eq st :stamped)
+        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
+
+(defun org-queue-increase-priority-range-and-stamp ()
+  "Increase priority range, set it, then stamp LAST_REPEAT (single save)."
+  (interactive)
+  (org-queue--with-batched-saves
+    (my-increase-priority-range)
+    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+      (when (eq st :stamped)
+        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
+
+(defun org-queue-decrease-priority-range-and-stamp ()
+  "Decrease priority range, set it, then stamp LAST_REPEAT (single save)."
+  (interactive)
+  (org-queue--with-batched-saves
+    (my-decrease-priority-range)
+    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+      (when (eq st :stamped)
+        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
+
 (provide 'org-queue-priority)
 ;;; org-queue-priority.el ends here

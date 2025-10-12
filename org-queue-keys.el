@@ -14,20 +14,24 @@
 (defvar org-queue-prefix-map (make-sparse-keymap)
   "Prefix keymap for org-queue commands.")
 
-(dolist (binding '(("," my-set-priority-with-heuristics)
-                   ("+" my-increase-priority-range)
-                   ("-" my-decrease-priority-range)
-                   ("a" my-advance-schedule)
-                   ("A" my-launch-anki)
-                   ("c" org-queue-stamp-and-show-top)
-                   ("D" org-demote-subtree)
-                   ("p" my-postpone-schedule)
-                   ("P" org-promote-subtree)
+(dolist (binding '(("c" org-queue-show-top)
                    ("s" org-queue-schedule-and-prioritize)
+                   ("," org-queue-prioritize-and-stamp)
+                   ("+" org-queue-increase-priority-range-and-stamp)
+                   ("-" org-queue-decrease-priority-range-and-stamp)
+                   ("a" org-queue-advance-schedule-and-stamp)
+                   ("p" org-queue-postpone-schedule-and-stamp)
+                   ("A" my-launch-anki)
+                   ("D" org-demote-subtree)
+                   ("P" org-promote-subtree)
                    ("u" org-show-parent-heading-cleanly)
                    ("w" widen-and-recenter)
-                   ("x" org-interactive-extract)
-                   ("X" org-remove-all-extract-blocks)))
+                   ("x" org-queue-extract-and-stamp)
+                   ("X" org-queue-remove-all-extracts-and-stamp)
+                   ("S" org-queue-srs-item-create-card-and-clean-stamp)
+                   ("z" org-queue-cloze-and-stamp)
+                   ("Z" org-queue-cloze-prefix-and-stamp)
+                   ("M-z" org-queue-cloze-suffix-and-stamp)))
   (define-key org-queue-prefix-map (kbd (car binding)) (cadr binding)))
 
 ;; Optional commands
@@ -40,16 +44,6 @@
   (define-key org-queue-prefix-map (kbd "1") #'org-queue-srs-rate-again-and-prioritize))
 (when (fboundp 'org-queue-srs-rate-good)
   (define-key org-queue-prefix-map (kbd "3") #'org-queue-srs-rate-good-and-prioritize))
-
-;; Bind S if SRS item creation is available
-(when (fboundp 'org-queue-srs-item-create-card)
-  (define-key org-queue-prefix-map (kbd "S") #'org-queue-srs-item-create-card))
-
-;; Cloze helpers
-(when (fboundp 'org-interactive-cloze)
-  (define-key org-queue-prefix-map (kbd "z")  #'org-interactive-cloze)
-  (define-key org-queue-prefix-map (kbd "Z")  #'org-interactive-cloze-prefix)
-  (define-key org-queue-prefix-map (kbd "M-z") #'org-interactive-cloze-suffix))
 
 ;; Install the prefix globally
 (global-set-key (kbd "C-;") org-queue-prefix-map)

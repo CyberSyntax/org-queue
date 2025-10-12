@@ -349,6 +349,56 @@ Defaults to 0.2 seconds."
   (when (eq major-mode 'org-mode)
     (org-highlight-custom-syntax)))
 
+;; make the timer buffer-local
+(declare-function org-queue-stamp-last-repeat-current "org-queue-schedule" ())
+
+;; --- Stamp-aware wrappers (single save; final 'stamp only if stamped)
+(defun org-queue-cloze-and-stamp ()
+  "Create a cloze (interactive), then stamp LAST_REPEAT (single save)."
+  (interactive)
+  (org-queue--with-batched-saves
+    (call-interactively 'org-interactive-cloze)
+    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+      (when (eq st :stamped)
+        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
+
+(defun org-queue-cloze-prefix-and-stamp ()
+  "Create a cloze (prefix front), then stamp LAST_REPEAT (single save)."
+  (interactive)
+  (org-queue--with-batched-saves
+    (org-interactive-cloze-prefix)
+    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+      (when (eq st :stamped)
+        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
+
+(defun org-queue-cloze-suffix-and-stamp ()
+  "Create a cloze (suffix front), then stamp LAST_REPEAT (single save)."
+  (interactive)
+  (org-queue--with-batched-saves
+    (org-interactive-cloze-suffix)
+    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+      (when (eq st :stamped)
+        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
+
+(defun org-queue-extract-and-stamp ()
+  "Create an extract from the region, then stamp LAST_REPEAT (single save)."
+  (interactive)
+  (org-queue--with-batched-saves
+    (call-interactively 'org-interactive-extract)
+    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+      (when (eq st :stamped)
+        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
+
+(defun org-queue-remove-all-extracts-and-stamp ()
+  "Remove all extract blocks in the buffer, then stamp LAST_REPEAT (single save).
+Note: the stamp applies to the current heading; SRS entries are skipped by design."
+  (interactive)
+  (org-queue--with-batched-saves
+    (org-remove-all-extract-blocks)
+    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+      (when (eq st :stamped)
+        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
+
 ;; Interactive content creation functions
 (defun my--strip-leading-stars (s)
   "Remove leading stars + spaces from S to avoid creating a new heading."
