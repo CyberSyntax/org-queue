@@ -2,6 +2,7 @@
 
 ;;; Code:
 
+(require 'cl-lib)
 (require 'org-queue-config)
 (require 'org-queue-utils)
 (require 'org-queue-srs-bridge)
@@ -14,7 +15,7 @@
 ;; - Apply a small ±10-minute jitter (kept inside the window).
 ;; - Respect LAST_REPEAT deferral (priority-based).
 
-(defconst org-queue--avoid-weekends t)
+(defconst org-queue--avoid-weekends nil)
 (defconst org-queue--work-window-start "09:00")
 (defconst org-queue--work-window-end   "18:00")
 (defconst org-queue--schedule-jitter-minutes 10)
@@ -38,44 +39,43 @@
   (or (org-queue--parse-hhmm s) (org-queue--parse-hhmm fallback) 0))
 
 (defun org-queue--snap-to-work-window (tm)
-  "Move TM into [org-queue--work-window-start, org-queue--work-window-end).
-Also push off weekends when enabled."
+  "Return a time snapped into the work window, respecting weekend avoidance.
+Rules:
+- If TM falls on a weekend and weekend avoidance is enabled, move it to the
+  next working day at the start of the window.
+- Otherwise, if TM is outside the window, move it to the next valid slot
+  (start of window today if before start; start of window next day if after end)."
   (let* ((start (org-queue--parse-hhmm-safe org-queue--work-window-start "09:00"))
          (end   (org-queue--parse-hhmm-safe org-queue--work-window-end   "18:00"))
-         (start<=end (<= start end)))
-    (cl-labels
-        ((snap (x)
-           (let* ((mid (org-queue--date-at-local-midnight x))
-                  (hm  (org-queue--minutes-of-day x)))
-             ;; Avoid weekends
-             (when (and org-queue--avoid-weekends (org-queue--weekend-p x))
-               (setq mid (org-queue--date-at-local-midnight
-                          (let ((y x))
-                            (while (org-queue--weekend-p y)
-                              (setq y (org-queue--add-days y 1)))
-                            y))))
-             ;; Window logic
-             (cond
-              ;; Window inside same day
-              (start<=end
-               (cond
-                ((< hm start) (time-add mid (seconds-to-time (* 60 start))))
-                ((>= hm end)  (time-add (org-queue--add-days mid 1)
-                                        (seconds-to-time (* 60 start))))
-                (t x)))
-              ;; Window spans midnight (rare)
-              (t
-               (cond
-                ((or (>= hm start) (< hm end)) x)
-                (t (time-add mid (seconds-to-time (* 60 start))))))))))
-      (snap tm))))
+         (start<=end (<= start end))
+         (x tm))
+    ;; 1) Push weekends to next working day at window start (EARLY transform).
+    (when (and org-queue--avoid-weekends (org-queue--weekend-p x))
+      (let ((y x))
+        (while (org-queue--weekend-p y)
+          (setq y (org-queue--add-days y 1)))
+        (setq x (time-add (org-queue--date-at-local-midnight y)
+                          (seconds-to-time (* 60 start))))))
+    ;; 2) Snap into the window on the (possibly transformed) day.
+    (let* ((mid (org-queue--date-at-local-midnight x))
+           (hm  (org-queue--minutes-of-day x)))
+      (if start<=end
+          (cond
+           ((< hm start) (time-add mid (seconds-to-time (* 60 start))))
+           ((>= hm end)  (time-add (org-queue--add-days mid 1)
+                                   (seconds-to-time (* 60 start))))
+           (t x))
+        ;; Window spans midnight (rare)
+        (if (or (>= hm start) (< hm end))
+            x
+          (time-add mid (seconds-to-time (* 60 start))))))))
 
 (defun org-queue--apply-scheduling-constraints (candidate)
   "Adjust CANDIDATE by invariants:
 - >= now,
 - >= LAST_REPEAT + deferral(priority) for non-SRS entries,
 - snapped to work window (and next working day),
-- ±10 min jitter kept inside the window."
+- ±10 min jitter kept inside the window (and not before now)."
   (let* ((now (current-time))
          (cand (if (time-less-p candidate now) now candidate))
          ;; Respect LAST_REPEAT deferral (non-SRS only; we are at point)
@@ -92,8 +92,12 @@ Also push off weekends when enabled."
          (j (max 0 org-queue--schedule-jitter-minutes))
          (cand (if (> j 0)
                    (let* ((delta-min (- (random (1+ (* 2 j))) j))
-                          (cand2 (time-add cand (seconds-to-time (* 60 delta-min)))))
-                     (org-queue--snap-to-work-window cand2))
+                          (cand2 (time-add cand (seconds-to-time (* 60 delta-min))))
+                          (cand2 (org-queue--snap-to-work-window cand2)))
+                     ;; Ensure never before NOW after jitter
+                     (if (time-less-p cand2 now)
+                         (org-queue--snap-to-work-window now)
+                       cand2))
                  cand)))
     cand))
 
@@ -114,43 +118,40 @@ Also push off weekends when enabled."
 
 (defcustom my-random-schedule-exponent 1
   "Exponent n controlling the bias of the scheduling distribution.
-									    - n = 0: Uniform distribution (no bias).
-									    - n = 1: Quadratic distribution (default).
-									    - n = 2: Cubic distribution (stronger bias towards later dates)."
+- n = 0: Uniform distribution (no bias).
+- n = 1: Quadratic distribution (default).
+- n = 2: Cubic distribution (stronger bias towards later dates)."
   :type 'integer
   :group 'org-queue)
 
 (defun my-find-schedule-weight ()
   "Calculate schedule weight based on SCHEDULED date in org header.
-			    Returns:
-			    - 0 for past dates and today
-			    - Number of months ahead (days/30.0) for future dates
-			    - `my-random-schedule-default-months` if no SCHEDULED date exists."
+Returns:
+- 0 for past dates and today
+- Number of months ahead (days/30.0) for future dates
+- `my-random-schedule-default-months` if no SCHEDULED date exists."
   (let* ((scheduled-time (org-get-scheduled-time (point)))  ; Get the SCHEDULED time
-	   (current-time (current-time))                      ; Get the current time
-	   (days-difference
-	    (when scheduled-time
-	      ;; Calculate the difference in days, then convert to months
-	      (/ (float (- (time-to-days scheduled-time)
-			   (time-to-days current-time)))
-		 30.0))))
+         (current-time (current-time))                      ; Get the current time
+         (days-difference
+          (when scheduled-time
+            ;; Calculate the difference in days, then convert to months
+            (/ (float (- (time-to-days scheduled-time)
+                         (time-to-days current-time)))
+               30.0))))
     (cond
      ((null scheduled-time)
-	;; If no SCHEDULED time, return the default months
-	(or (bound-and-true-p my-random-schedule-default-months) 0))
+      ;; If no SCHEDULED time, return the default months
+      (or (bound-and-true-p my-random-schedule-default-months) 0))
      ((<= days-difference 0)
-	;; If the difference is 0 or negative, return 0
-	0)
+      ;; If the difference is 0 or negative, return 0
+      0)
      (t
-	;; Otherwise, return the rounded difference in months to 2 decimal places
-	(my-round-to-decimals days-difference 2)))))
+      ;; Otherwise, return the rounded difference in months to 2 decimal places
+      (my-round-to-decimals days-difference 2)))))
 
 (defun my-random-schedule (months &optional n)
-  "Schedules an Org heading MONTHS months in the future using a mathematically elegant distribution.
-Enhanced with priority-based bias while maintaining existing power-law distribution.
-- Existing logic: Uses power-law distribution with exponent n
-- Priority enhancement: High priority tasks get bias toward earlier dates
-If N is provided, use that as the exponent. If it's not provided, fallback to `my-random-schedule-exponent'.
+  "Schedule MONTHS months in the future using a power-law distribution.
+Priority enhancement: higher priority biases toward earlier dates.
 Skips scheduling if the current heading or its parent has an SRS drawer."
   (when (and (not noninteractive)
              (eq major-mode 'org-mode))
@@ -159,7 +160,7 @@ Skips scheduling if the current heading or its parent has an SRS drawer."
       (if (or (eq srs-result 'current) (eq srs-result 'parent))
           ;; Skip scheduling if entry or parent has SRS drawer
           (message "Skipping scheduling for entry with SRS drawer")
-        ;; Otherwise, proceed with normal scheduling (original math retained)
+        ;; Proceed with normal scheduling
         (let* ((today (current-time))
                (total-days (* months 30))
                ;; Get priority for bias calculation
@@ -175,7 +176,7 @@ Skips scheduling if the current heading or its parent has an SRS drawer."
                (base-n (or n my-random-schedule-exponent))
                (enhanced-n (* base-n priority-bias))           ; Priority enhances the exponent
                (u (/ (float (random 1000000)) 1000000.0))
-               (exponent (/ 1.0 (+ enhanced-n 1)))            ; compute 1/(enhanced_n+1)
+               (exponent (/ 1.0 (+ enhanced-n 1)))             ; compute 1/(enhanced_n+1)
                (x (expt u exponent))
                (days-ahead (floor (* total-days x)))
                (raw (time-add today (days-to-time days-ahead))))
@@ -186,11 +187,11 @@ Skips scheduling if the current heading or its parent has an SRS drawer."
 
 (defun my-random-schedule-command (&optional months)
   "Interactive command to schedule MONTHS months in the future.
-				If MONTHS is not provided, uses the result of my-find-schedule-weight."
+If MONTHS is not provided, uses the result of my-find-schedule-weight."
   (interactive
    (list (read-number
-	    "Enter the upper month limit: "
-	    (my-find-schedule-weight))))
+          "Enter the upper month limit: "
+          (my-find-schedule-weight))))
   (save-excursion
     ;; Schedule the current heading
     (my-random-schedule (or months (my-find-schedule-weight))))
@@ -372,20 +373,21 @@ Never signals on those skip cases."
       (org-back-to-heading t)
       ;; Disallow when SRS-related (current or parent)
       (let ((where (org-srs-entry-p (point))))
-        (when where
-          (message "SRS-related entry (%s): LAST_REPEAT stamping is disabled here"
-                   (symbol-name where))
-          (cl-return-from org-queue-stamp-last-repeat-current :skipped-srs)))
-      ;; Stamp LAST_REPEAT on this heading
-      (let* ((now     (current-time))
-             (now-str (format-time-string "[%Y-%m-%d %a %H:%M]" now)))
-        (org-entry-put nil "LAST_REPEAT" now-str)
-        (let ((verify (org-entry-get nil "LAST_REPEAT")))
-          (unless (and verify (string= (string-trim verify) now-str))
-            (org-set-property "LAST_REPEAT" now-str)))
-        (message "Stamped LAST_REPEAT %s on current heading" now-str)
-        (save-buffer)
-        :stamped))))
+        (if where
+            (progn
+              (message "SRS-related entry (%s): LAST_REPEAT stamping is disabled here"
+                       (symbol-name where))
+              :skipped-srs)
+          ;; Stamp LAST_REPEAT on this heading
+          (let* ((now     (current-time))
+                 (now-str (format-time-string "[%Y-%m-%d %a %H:%M]" now)))
+            (org-entry-put nil "LAST_REPEAT" now-str)
+            (let ((verify (org-entry-get nil "LAST_REPEAT")))
+              (unless (and verify (string= (string-trim verify) now-str))
+                (org-set-property "LAST_REPEAT" now-str)))
+            (message "Stamped LAST_REPEAT %s on current heading" now-str)
+            (save-buffer)
+            :stamped))))))
 
 (defun my-ensure-priorities-and-schedules-for-all-headings (&optional max-attempts)
   "Ensure priorities and schedules are set for all headings across Org agenda files.
@@ -421,11 +423,10 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
                       (heading-id (concat file ":" (number-to-string position)))
                       (srs-status (or (gethash heading-id processed-headings)
                                       (puthash heading-id (org-srs-entry-p (point)) processed-headings))))
-                 
                  ;; Count as incomplete based on SRS status:
                  ;; - 'parent: skip both priority and schedule (never incomplete)
                  ;; - 'current: only incomplete if missing priority (we skip scheduling)
-                 ;; - nil: incomplete if missing either priority or schedule
+                 ;; - nil: incomplete if missing either
                  (cond
                   ((eq srs-status 'parent)
                    nil) ; Skip entirely
@@ -455,37 +456,34 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
                         (heading-id (concat file ":" (number-to-string position)))
                         (srs-status (or (gethash heading-id processed-headings)
                                         (puthash heading-id (org-srs-entry-p (point)) processed-headings))))
-                   
                    (cond
                     ;; For 'parent entries, skip entirely
                     ((eq srs-status 'parent)
                      nil)
-                    
                     ;; For 'current entries, only set priority if needed
                     ((eq srs-status 'current)
                      (condition-case err
                          (let ((current-priority (org-entry-get nil "PRIORITY")))
-                           (when (or (not current-priority) 
+                           (when (or (not current-priority)
                                      (string= current-priority " "))
                              (my-ensure-priority-set)))
                        (error
-                        (message "Error processing priority for 'current entry: %s" 
+                        (message "Error processing priority for 'current entry: %s"
                                  (error-message-string err)))))
-                    
                     ;; For non-SRS entries, process both priority and schedule
                     (t
                      (condition-case err
                          (progn
                            ;; Ensure priority is set only if missing
                            (let ((current-priority (org-entry-get nil "PRIORITY")))
-                             (when (or (not current-priority) 
+                             (when (or (not current-priority)
                                        (string= current-priority " "))
                                (my-ensure-priority-set)))
                            ;; Ensure schedule is set only if missing
                            (unless (org-entry-get nil "SCHEDULED")
                              (my-random-schedule (my-find-schedule-weight) 0)))
                        (error
-                        (message "Error processing entry: %s" 
+                        (message "Error processing entry: %s"
                                  (error-message-string err))))))))))
            nil))
 
@@ -495,14 +493,14 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
       (save-some-buffers t)
 
       (message "Attempt %d/%d completed. %s"
-               attempt 
+               attempt
                max-attempts
                (if all-complete
                    "All entries processed successfully!"
                  "Some entries are still incomplete.")))
 
     (when (and (not all-complete) (>= attempt max-attempts))
-      (message "Warning: Reached maximum attempts (%d). Some entries may still be incomplete." 
+      (message "Warning: Reached maximum attempts (%d). Some entries may still be incomplete."
                max-attempts))))
 
 (provide 'org-queue-schedule)
