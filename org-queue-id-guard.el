@@ -128,36 +128,37 @@ Saves once at end; refreshes chooser buffers."
   "Re-resolve TASK's marker strictly inside its recorded :file.
 On success, update :marker/:pos/:heading/:available-at and return non-nil.
 On failure, return nil (caller may drop the task from the queue)."
-  (let* ((id   (plist-get task :id))
-         (file (plist-get task :file))
-         (pos0 (plist-get task :pos)))
-    (when (and id file (file-exists-p file) (not (file-remote-p file)))
-      (let* ((cands (my--candidates-for-id-in-file id file))
-             (chosen
-              (or
-               ;; Prefer candidate whose heading matches cached heading
-               (and (plist-get task :heading)
-                    (cl-find-if
-                     (lambda (mk)
-                       (with-current-buffer (marker-buffer mk)
-                         (save-excursion
-                           (goto-char (marker-position mk))
-                           (string= (or (org-get-heading t t t t) "")
-                                    (or (plist-get task :heading) "")))))
-                     cands))
-               ;; Else closest to cached :pos
-               (and (numberp pos0)
-                    (car (sort (copy-sequence cands)
-                               (lambda (a b)
-                                 (< (abs (- (marker-position a) pos0))
-                                    (abs (- (marker-position b) pos0)))))))
-               ;; Else first candidate
-               (car cands))))
-        (when (and chosen (marker-buffer chosen) (buffer-live-p (marker-buffer chosen)))
-          (my--task-sync-metadata task chosen)
-          (org-queue--update-available-at! task)
-          (cl-return-from org-queue-id-guard--refresh-task-marker! t))))
-    nil))
+  (cl-block org-queue-id-guard--refresh-task-marker!
+    (let* ((id   (plist-get task :id))
+           (file (plist-get task :file))
+           (pos0 (plist-get task :pos)))
+      (when (and id file (file-exists-p file) (not (file-remote-p file)))
+        (let* ((cands (my--candidates-for-id-in-file id file))
+               (chosen
+                (or
+                 ;; Prefer candidate whose heading matches cached heading
+                 (and (plist-get task :heading)
+                      (cl-find-if
+                       (lambda (mk)
+                         (with-current-buffer (marker-buffer mk)
+                           (save-excursion
+                             (goto-char (marker-position mk))
+                             (string= (or (org-get-heading t t t t) "")
+                                      (or (plist-get task :heading) "")))))
+                       cands))
+                 ;; Else closest to cached :pos
+                 (and (numberp pos0)
+                      (car (sort (copy-sequence cands)
+                                 (lambda (a b)
+                                   (< (abs (- (marker-position a) pos0))
+                                      (abs (- (marker-position b) pos0)))))))
+                 ;; Else first candidate
+                 (car cands))))
+          (when (and chosen (marker-buffer chosen) (buffer-live-p (marker-buffer chosen)))
+            (my--task-sync-metadata task chosen)
+            (org-queue--update-available-at! task)
+            (cl-return-from org-queue-id-guard--refresh-task-marker! t))))
+      nil)))
 
 (defun org-queue-id-guard--refresh-queue-markers-for-file (file &optional silent)
   "For FILE: re-resolve markers for queue entries (outstanding + pending).
@@ -208,8 +209,7 @@ refresh queue entries strictly inside those files (no global org-id updates)."
               (setq changed t))))
         ;; reflect changes
         (when changed
-          (my-queue-limit-visible-buffers)
-          (ignore-errors (org-queue-show-top t)))))))
+          (my-queue-limit-visible-buffers))))))
 
 (add-hook 'org-mode-hook
           (lambda ()

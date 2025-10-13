@@ -575,43 +575,44 @@ DONE tasks are excluded elsewhere."
                 (goto-char after)))
             (nreverse ms)))))))
 
-(defun my--task-sync-metadata (task mk)
+(cl-defun my--task-sync-metadata (task mk)
   "Update TASK plist with MK's current location: :marker :file :heading :pos.
 Return MK. Widen temporarily and only update :heading when the ID matches."
-  (when (and (listp task)
-             (markerp mk)
-             (marker-buffer mk)
-             (buffer-live-p (marker-buffer mk)))
-    (with-current-buffer (marker-buffer mk)
-      (save-restriction
-        (widen)
-        (save-excursion
-          (goto-char (marker-position mk))
-          (let ((file (buffer-file-name))
-                (pos  nil)
-                (heading nil)
-                (id-at-point (and (derived-mode-p 'org-mode)
-                                  (progn (org-back-to-heading t)
-                                         (org-entry-get nil "ID")))))
-            ;; STRICT ID CHECK: if task has :id and it doesn't match, refuse.
-            (when (and org-queue-strict-id-resolution
-                       (plist-get task :id)
-                       (not (string= (or id-at-point "") (plist-get task :id))))
-              (cl-return-from my--task-sync-metadata nil))
+  (cl-block my--task-sync-metadata
+    (when (and (listp task)
+               (markerp mk)
+               (marker-buffer mk)
+               (buffer-live-p (marker-buffer mk)))
+      (with-current-buffer (marker-buffer mk)
+        (save-restriction
+          (widen)
+          (save-excursion
+            (goto-char (marker-position mk))
+            (let ((file (buffer-file-name))
+                  (pos  nil)
+                  (heading nil)
+                  (id-at-point (and (derived-mode-p 'org-mode)
+                                    (progn (org-back-to-heading t)
+                                           (org-entry-get nil "ID")))))
+              ;; STRICT ID CHECK: if task has :id and it doesn't match, refuse.
+              (when (and org-queue-strict-id-resolution
+                         (plist-get task :id)
+                         (not (string= (or id-at-point "") (plist-get task :id))))
+                (cl-return-from my--task-sync-metadata nil))
 
-            ;; Proceed with updates only if accepted above.
-            (when (derived-mode-p 'org-mode)
-              (setq pos (point))
-              (setq heading (org-get-heading t t t t)))
-            (plist-put task :marker mk)
-            (plist-put task :file file)
-            (when pos (plist-put task :pos pos))
-            ;; Only update heading if it really belongs to this task's ID.
-            (when (and (derived-mode-p 'org-mode)
-                       (plist-get task :id)
-                       (string= (or id-at-point "") (plist-get task :id)))
-              (plist-put task :heading heading)))))))
-  mk)
+              ;; Proceed with updates only if accepted above.
+              (when (derived-mode-p 'org-mode)
+                (setq pos (point))
+                (setq heading (org-get-heading t t t t)))
+              (plist-put task :marker mk)
+              (plist-put task :file file)
+              (when pos (plist-put task :pos pos))
+              ;; Only update heading if it really belongs to this task's ID.
+              (when (and (derived-mode-p 'org-mode)
+                         (plist-get task :id)
+                         (string= (or id-at-point "") (plist-get task :id)))
+                (plist-put task :heading heading)))))))
+    mk))
 
 (defun my-extract-marker (task-or-marker)
   "Robustly extract a live marker from TASK-OR-MARKER (file-local only).
@@ -1144,10 +1145,24 @@ Saves buffers and regenerates the task list for consistency."
   (my-ensure-task-list-present)
   (if (and my-outstanding-tasks-list
            (< my-outstanding-tasks-index (length my-outstanding-tasks-list)))
-      (let ((task (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
-        (my-display-task-at-marker task)
-        (when pulse (my-pulse-highlight-current-line))
-        (my-queue-limit-visible-buffers))
+      (let ((shown nil))
+        (while (and my-outstanding-tasks-list (not shown))
+          (let ((task (nth my-outstanding-tasks-index my-outstanding-tasks-list)))
+            (condition-case _err
+                (progn
+                  (my-display-task-at-marker task)
+                  (setq shown t))
+              (error
+               ;; If we can't resolve this task, drop it and try the next head.
+               (my-queue--remove-index my-outstanding-tasks-index t t)
+               (setq my-outstanding-tasks-index
+                     (min my-outstanding-tasks-index
+                          (max 0 (1- (length my-outstanding-tasks-list)))))))))
+        (if shown
+            (progn
+              (when pulse (my-pulse-highlight-current-line))
+              (my-queue-limit-visible-buffers))
+          (message "No outstanding tasks found.")))
     (message "No outstanding tasks found.")))
 
 (defun org-queue-show-top (&optional pulse)
@@ -1172,6 +1187,16 @@ Saves buffers and regenerates the task list for consistency."
         (my-queue--remove-index 0 t t)
         (setq my-outstanding-tasks-index 0)
         (setq pruned (1+ pruned))))
+    (let ((dropped 0))
+      (while (and my-outstanding-tasks-list
+                  (let* ((task (nth 0 my-outstanding-tasks-list))
+                         (m (my-extract-marker task)))
+                    (not (and (markerp m)
+                              (marker-buffer m)
+                              (buffer-live-p (marker-buffer m))))))
+        (my-queue--remove-index 0 t t)
+        (setq my-outstanding-tasks-index 0)
+        (setq dropped (1+ dropped))))
     ;; Show current head immediately; feels instant
     (my-show-current-outstanding-task-no-srs (or pulse t))))
 
