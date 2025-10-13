@@ -45,6 +45,17 @@ When enabled, QFORCE tasks set available-at = now regardless of LAST_REPEAT."
   :type 'boolean
   :group 'org-queue)
 
+(defcustom org-queue-strict-id-resolution t
+  "When non-nil, a task plist that contains :id must resolve to a heading
+with the *same* :ID: in its recorded :file. If the :id cannot be found or
+the heading at the fallback position has a different :ID:, resolution fails
+(nil) instead of snapping to the nearest heading.
+
+When nil, resolution may fall back to :file + :pos even if the :id is missing
+or mismatched."
+  :type 'boolean
+  :group 'org-queue)
+
 (defvar org-queue--suppress-ui nil
   "When non-nil (dynamically bound), suppresses queue UI updates like
 reassign/show-top during batch operations (e.g., chooser bulk actions).")

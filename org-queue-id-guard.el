@@ -47,9 +47,12 @@
       (org-queue--note-id-failure id)
       nil)
      (t
-      (with-timeout (org-queue-id-guard--timeout
-                     (progn (org-queue--note-id-failure id) nil))
-        (funcall orig-fn task-or-marker))))))
+      (let ((res (with-timeout (org-queue-id-guard--timeout
+                                (progn (org-queue--note-id-failure id) nil))
+                   (funcall orig-fn task-or-marker))))
+        (when (and id (not res))
+          (org-queue--note-id-failure id))
+        res)))))
 
 (unless (advice-member-p #'org-queue--timebox-id-resolution 'my-extract-marker)
   (advice-add 'my-extract-marker :around #'org-queue--timebox-id-resolution))

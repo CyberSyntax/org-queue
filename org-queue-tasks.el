@@ -582,26 +582,34 @@ Return MK. Widen temporarily and only update :heading when the ID matches."
              (markerp mk)
              (marker-buffer mk)
              (buffer-live-p (marker-buffer mk)))
-    (plist-put task :marker mk)
     (with-current-buffer (marker-buffer mk)
       (save-restriction
         (widen)
         (save-excursion
           (goto-char (marker-position mk))
           (let ((file (buffer-file-name))
-                (pos nil)
-                (heading nil))
+                (pos  nil)
+                (heading nil)
+                (id-at-point (and (derived-mode-p 'org-mode)
+                                  (progn (org-back-to-heading t)
+                                         (org-entry-get nil "ID")))))
+            ;; STRICT ID CHECK: if task has :id and it doesn't match, refuse.
+            (when (and org-queue-strict-id-resolution
+                       (plist-get task :id)
+                       (not (string= (or id-at-point "") (plist-get task :id))))
+              (cl-return-from my--task-sync-metadata nil))
+
+            ;; Proceed with updates only if accepted above.
             (when (derived-mode-p 'org-mode)
-              (org-back-to-heading t)
               (setq pos (point))
               (setq heading (org-get-heading t t t t)))
+            (plist-put task :marker mk)
             (plist-put task :file file)
             (when pos (plist-put task :pos pos))
             ;; Only update heading if it really belongs to this task's ID.
             (when (and (derived-mode-p 'org-mode)
                        (plist-get task :id)
-                       (string= (or (org-entry-get nil "ID") "")
-                                (plist-get task :id)))
+                       (string= (or id-at-point "") (plist-get task :id)))
               (plist-put task :heading heading)))))))
   mk)
 
@@ -658,8 +666,11 @@ Strategy (single path):
                        (marker-buffer chosen)
                        (buffer-live-p (marker-buffer chosen)))
               (setq result (my--task-sync-metadata task-or-marker chosen)))))
-        ;; Fallback to file+pos if available
-        (when (and (not result) file (file-exists-p file) (numberp pos0))
+        ;; Fallback to file+pos ONLY when there is no :id (or strict disabled).
+        (when (and (not result)
+                   file (file-exists-p file) (numberp pos0)
+                   (or (not org-queue-strict-id-resolution)
+                       (null id)))
           (with-current-buffer (find-file-noselect file)
             (save-restriction
               (widen)
