@@ -33,7 +33,7 @@ Used by the non-SRS Next Repetition action to compute available-at."
   :type 'integer
   :group 'org-queue)
 
-(defcustom org-queue-non-srs-snooze-slope-minutes 1
+(defcustom org-queue-non-srs-snooze-slope-minutes 10
   "Slope minutes multiplied by numeric priority for non-SRS snooze.
 Deferral is computed as f(p) = BASE + SLOPE * p, where p is the numeric priority (1..64)."
   :type 'integer
