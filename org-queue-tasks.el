@@ -140,11 +140,11 @@ Returns the number of removed items. Only touches items already in the queue."
       removed)))
 
 (defun org-queue--non-srs-sort-key (task)
-  "Return non-SRS ordering key for TASK: (todo-first, numeric-priority, last-repeat-float).
+  "Return ordering key for TASK: (todo-first, numeric-priority, tie-hash).
 Lower is better for each component.
 - todo-first: 0 for TODO, 1 otherwise
 - numeric-priority: ascending
-- last-repeat-float: seconds since epoch for :LAST_REPEAT: (missing treated as 0 => oldest)"
+- tie-hash: deterministic per-task hash to randomize items with equal priority (changes daily)"
   (let* ((is-todo (or (plist-get task :is-todo)
                       (let ((m (my-extract-marker task)))
                         (and (markerp m)
@@ -154,19 +154,16 @@ Lower is better for each component.
                      (and (markerp m)
                           (org-with-point-at m (my-get-raw-priority-value))))))
          (prio (or prio org-priority-default))
-         (lastf
-          (let ((m (my-extract-marker task)))
-            (if (and (markerp m) (marker-buffer m) (buffer-live-p (marker-buffer m)))
-                (with-current-buffer (marker-buffer m)
-                  (org-with-point-at m
-                    (let ((lt (org-queue--parse-last-repeat)))
-                      (if lt (float-time lt) 0.0))))
-              0.0))))
-    (list (if is-todo 0 1) prio lastf)))
+         ;; Daily rotating tie-breaker: hash changes each day
+         (tie (logand (sxhash (format "%s@%s" 
+                                      (or (my--task-unique-key task) "")
+                                      (format-time-string "%Y-%m-%d")))
+                      #x7fffffff)))
+    (list (if is-todo 0 1) prio tie)))
 
 (defun org-queue--non-srs-key<= (a b)
-  "Return non-nil if TASK A should not come after TASK B under non-SRS ordering.
-Compares (todo-first, priority, last-repeat-float) lexicographically."
+  "Return non-nil if TASK A should not come after TASK B.
+Compares (todo-first, priority, tie-hash) lexicographically."
   (let* ((ka (org-queue--non-srs-sort-key a))
          (kb (org-queue--non-srs-sort-key b)))
     (or (< (nth 0 ka) (nth 0 kb))
@@ -230,18 +227,29 @@ Returns the number of tasks promoted."
             ;; Promote this task
             (progn
               (if is-srs
-                  (let ((last-srs
-                         (let ((j 0) (last -1))
-                           (dolist (e my-outstanding-tasks-list last)
-                             (when (plist-get e :srs) (setq last j))
-                             (setq j (1+ j))))))
-                    (if (>= last-srs 0)
-                        (setq my-outstanding-tasks-list
-                              (append (seq-take my-outstanding-tasks-list (1+ last-srs))
-                                      (list task)
-                                      (seq-drop my-outstanding-tasks-list (1+ last-srs))))
-                      (setq my-outstanding-tasks-list
-                            (append my-outstanding-tasks-list (list task)))))
+                  (let* ((first-srs (let ((j 0) (first -1))
+                                      (dolist (e my-outstanding-tasks-list)
+                                        (when (and (= first -1) (plist-get e :srs)) (setq first j))
+                                        (setq j (1+ j)))
+                                      first))
+                        (last-srs  (let ((j 0) (last -1))
+                                      (dolist (e my-outstanding-tasks-list last)
+                                        (when (plist-get e :srs) (setq last j))
+                                        (setq j (1+ j)))))
+                        (key       (or (my--task-unique-key task) ""))
+                        ;; Daily rotating position: hash changes each day
+                        (ins       (if (>= last-srs 0)
+                                        (+ (or first-srs last-srs)
+                                          (mod (logand (sxhash (format "%s@%s" 
+                                                                      key 
+                                                                      (format-time-string "%Y-%m-%d")))
+                                                      #x7fffffff)
+                                                (1+ (- last-srs (or first-srs last-srs)))))
+                                      (length my-outstanding-tasks-list))))
+                    (setq my-outstanding-tasks-list
+                          (append (seq-take my-outstanding-tasks-list ins)
+                                  (list task)
+                                  (seq-drop my-outstanding-tasks-list ins))))
                 (org-queue--insert-non-srs-outstanding-sorted task))
               (setq promoted (1+ promoted)))
           ;; Keep pending
