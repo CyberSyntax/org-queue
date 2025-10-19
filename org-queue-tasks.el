@@ -161,16 +161,23 @@ Lower is better for each component.
                       #x7fffffff)))
     (list (if is-todo 0 1) prio tie)))
 
-(defun org-queue--non-srs-key<= (a b)
-  "Return non-nil if TASK A should not come after TASK B.
-Compares (todo-first, priority, tie-hash) lexicographically."
+(defun org-queue--non-srs-key< (a b)
+  "Strict order on (todo-first, numeric-priority, daily tie-hash)."
   (let* ((ka (org-queue--non-srs-sort-key a))
          (kb (org-queue--non-srs-sort-key b)))
-    (or (< (nth 0 ka) (nth 0 kb))
-        (and (= (nth 0 ka) (nth 0 kb))
-             (or (< (nth 1 ka) (nth 1 kb))
-                 (and (= (nth 1 ka) (nth 1 kb))
-                      (<= (nth 2 ka) (nth 2 kb))))))))
+    (cond
+     ((< (nth 0 ka) (nth 0 kb)) t)
+     ((> (nth 0 ka) (nth 0 kb)) nil)
+     ((< (nth 1 ka) (nth 1 kb)) t)
+     ((> (nth 1 ka) (nth 1 kb)) nil)
+     (t (< (nth 2 ka) (nth 2 kb))))))
+
+(defun org-queue--non-srs-key<= (a b)
+  "Non-strict version of `org-queue--non-srs-key<` for stable *insertion*.
+Safe for insertion scans; do NOT use with `cl-stable-sort`."
+  (or (org-queue--non-srs-key< a b)
+      (equal (org-queue--non-srs-sort-key a)
+             (org-queue--non-srs-sort-key b))))
 
 ;; --- Micro update helpers (single-item only) -----------------------------
 (defun org-queue--insert-non-srs-outstanding-sorted (task)
@@ -338,6 +345,29 @@ REASON is informational ('priority 'schedule 'advance 'postpone 'review 'stamp '
 (defvar my-today-pending-tasks nil
   "List of today's pending tasks (not yet available).
 Each element is a task plist (same shape as outstanding) with :available-at set.")
+
+;; === Mix configuration (head interleaving) ===
+
+(defcustom org-queue-mix-start 'non-srs
+  "Which pool starts when interleaving outstanding tasks.
+Choices:
+- 'non-srs — non-SRS first
+- 'srs     — SRS first
+- 'rotate  — alternate according to `org-queue-srs-mix-ratio` and `org-queue--mix-phase`
+- 'auto    — whichever pool has the earlier earliest due time for today"
+  :type '(choice (const non-srs) (const srs) (const rotate) (const auto))
+  :group 'org-queue)
+
+(defcustom org-queue-srs-mix-ratio '(1 . 4)
+  "CONS (NON‑SRS . SRS) item counts used by the interleaver.
+For example, '(1 . 4) means 1 non‑SRS item, then 4 SRS items, then repeat.
+Night shift forces '(1 . 0) to suppress SRS."
+  :type '(cons (integer :tag "Non‑SRS count")
+               (integer :tag "SRS count"))
+  :group 'org-queue)
+
+(defvar org-queue--mix-phase 0
+  "Internal rotation phase used when `org-queue-mix-start` is 'rotate'.")
 
 ;; === Daily maintenance gating (stamp + on-startup scheduling) ===
 (defcustom org-queue-maintenance-on-startup 'if-needed
@@ -842,10 +872,12 @@ SRS    : scoped if the next due timestamp (from :SRSITEMS:) has
 
 (defun my-get-outstanding-tasks ()
   "Build outstanding/pending queues in ONE pass over files."
-  (let* ((now (org-queue--now))
+  (let* ((now   (org-queue--now))
          (night (org-queue-night-shift-p))
-         (non-srs-out '()) (non-srs-pending '())
-         (srs-out '())      (srs-pending '()))
+         (non-srs-out '())
+         (non-srs-pending '())
+         (srs-out '())
+         (srs-pending '()))
     (org-queue-map-entries
      (lambda ()
        (unless (my-is-done-task)
@@ -867,7 +899,7 @@ SRS    : scoped if the next due timestamp (from :SRSITEMS:) has
                    (cond
                     (night
                      (push task srs-pending))
-                    ((not (time-less-p now due))   ; due <= now
+                    ((not (time-less-p now due))   ;; due <= now
                      (push task srs-out))
                     ((org-queue--same-day-p due now)
                      (push task srs-pending)))))))
@@ -885,21 +917,23 @@ SRS    : scoped if the next due timestamp (from :SRSITEMS:) has
                        (push task non-srs-pending)))))))))))
      nil)
 
-    ;; pool-local ordering
-    (setq non-srs-out (cl-stable-sort non-srs-out #'org-queue--non-srs-key<=))
-    (setq srs-out     (cl-stable-sort srs-out     #'org-queue--non-srs-key<=))
+    ;; Pool-local ordering (STRICT comparator!)
+    (setq non-srs-out (cl-stable-sort non-srs-out #'org-queue--non-srs-key<))
+    (setq srs-out     (cl-stable-sort srs-out     #'org-queue--non-srs-key<))
 
-    ;; interleave head
-    (let* ((ratio (if night '(1 . 0)
+    ;; Interleave head
+    (let* ((ratio (if night
+                      '(1 . 0)
                     (or (and (boundp 'org-queue-srs-mix-ratio) org-queue-srs-mix-ratio)
                         '(1 . 4))))
-           (a (car ratio)) (b (cdr ratio))
+           (a (car ratio))
+           (b (cdr ratio))
            (start (org-queue--decide-mix-start a b non-srs-out srs-out))
            (mixed (org-queue--interleave-by-ratio-start
                    (copy-sequence non-srs-out) (copy-sequence srs-out) a b start)))
       (setq my-outstanding-tasks-list mixed))
 
-    ;; pending (dedupe)
+    ;; Pending (dedupe)
     (let* ((pending (append (nreverse non-srs-pending) (nreverse srs-pending)))
            (seen (make-hash-table :test 'equal))
            (acc '()))
@@ -911,14 +945,17 @@ SRS    : scoped if the next due timestamp (from :SRSITEMS:) has
       (setq my-today-pending-tasks (nreverse acc)))
 
     (my-dedupe-outstanding-tasks)
-    (let ((todo-count (length (cl-remove-if-not (lambda (t) (plist-get t :is-todo))
-                                                my-outstanding-tasks-list))))
+
+    (let ((todo-count (length (cl-remove-if-not
+                               (lambda (t) (plist-get t :is-todo))
+                               my-outstanding-tasks-list))))
       (message (if night
                    "=== QUEUE BUILT (single-pass; SRS suppressed for night shift) ==="
                  "=== QUEUE BUILT (single-pass; SRS integrated) ==="))
       (message "Outstanding: %d (TODO: %d) | Pending≤today: %d"
                (length my-outstanding-tasks-list) todo-count
                (length my-today-pending-tasks)))
+
     (setq my-outstanding-tasks-index 0)
     (my-queue-limit-visible-buffers)))
 
