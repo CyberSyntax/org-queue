@@ -97,7 +97,12 @@ Saves once at end; refreshes chooser buffers."
             (setq dropped (1+ dropped))))))
     (when (> dropped 0)
       (unless silent
-        (message "org-queue: auto-dropped %d unresolved item(s)" dropped)))))
+        (message "org-queue: auto-dropped %d unresolved item(s)" dropped))
+      ;; Re‑shape after deletions if both pools exist
+      (when (and (boundp 'my-outstanding-tasks-list)
+                 (seq-some (lambda (t) (plist-get t :srs))     my-outstanding-tasks-list)
+                 (seq-some (lambda (t) (not (plist-get t :srs))) my-outstanding-tasks-list))
+        (org-queue--reinterleave-outstanding!)))))
 
 ;; Hook auto-drop into maintenance, and midnight refresh.
 (unless (advice-member-p #'org-queue-id-guard--auto-drop-unresolved 'org-queue-maintenance)
@@ -187,6 +192,12 @@ Returns (REFRESHED . DROPPED). Skips remote/TRAMP files entirely."
     (unless silent
       (message "org-queue: %s → refreshed %d, dropped %d"
                (and file (file-name-nondirectory file)) refreshed dropped))
+    ;; If anything was dropped from outstanding/pending, keep the ratio honest for outstanding.
+    (when (> dropped 0)
+      (when (and (boundp 'my-outstanding-tasks-list)
+                 (seq-some (lambda (t) (plist-get t :srs))     my-outstanding-tasks-list)
+                 (seq-some (lambda (t) (not (plist-get t :srs))) my-outstanding-tasks-list))
+        (org-queue--reinterleave-outstanding!)))
     (cons refreshed dropped)))
 
 (defun org-queue-id-guard--flush-id-updates ()

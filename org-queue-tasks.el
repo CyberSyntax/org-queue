@@ -133,6 +133,14 @@ Returns the number of removed items. Only touches items already in the queue."
       ;; Clamp index if needed
       (when (>= my-outstanding-tasks-index (length new))
         (setq my-outstanding-tasks-index (max 0 (1- (length new)))))
+      ;; If we removed anything and both pools still exist, re‑interleave.
+      (when (> removed 0)
+        (let ((has-non (seq-some (lambda (t) (not (plist-get t :srs)))
+                                 my-outstanding-tasks-list))
+              (has-srs (seq-some (lambda (t) (plist-get t :srs))
+                                 my-outstanding-tasks-list)))
+          (when (and has-non has-srs)
+            (org-queue--reinterleave-outstanding!))))
       ;; Tidy, save, refresh chooser
       (my-queue-limit-visible-buffers)
       (unless quiet
@@ -262,6 +270,9 @@ Returns the number of tasks promoted."
           ;; Keep pending
           (push task keep))))
     (setq my-today-pending-tasks (nreverse keep))
+    ;; Keep the global non‑SRS:SRS ratio honest after promotions
+    (when (> promoted 0)
+      (org-queue--reinterleave-outstanding!))
     promoted))
 
 (defun org-queue--micro-update-current! (&optional reason)
@@ -326,6 +337,8 @@ REASON is informational ('priority 'schedule 'advance 'postpone 'review 'stamp '
             (if due-now
                 (org-queue--insert-non-srs-outstanding-sorted task)
               (push task my-today-pending-tasks)))))
+          ;; re‑shape outstanding list to maintain global ratio
+          (org-queue--reinterleave-outstanding!)
         ;; finalize
     (setq my-outstanding-tasks-index 0)
     (setq my-queue--last-visible-buffers nil
@@ -345,29 +358,6 @@ REASON is informational ('priority 'schedule 'advance 'postpone 'review 'stamp '
 (defvar my-today-pending-tasks nil
   "List of today's pending tasks (not yet available).
 Each element is a task plist (same shape as outstanding) with :available-at set.")
-
-;; === Mix configuration (head interleaving) ===
-
-(defcustom org-queue-mix-start 'non-srs
-  "Which pool starts when interleaving outstanding tasks.
-Choices:
-- 'non-srs — non-SRS first
-- 'srs     — SRS first
-- 'rotate  — alternate according to `org-queue-srs-mix-ratio` and `org-queue--mix-phase`
-- 'auto    — whichever pool has the earlier earliest due time for today"
-  :type '(choice (const non-srs) (const srs) (const rotate) (const auto))
-  :group 'org-queue)
-
-(defcustom org-queue-srs-mix-ratio '(1 . 4)
-  "CONS (NON‑SRS . SRS) item counts used by the interleaver.
-For example, '(1 . 4) means 1 non‑SRS item, then 4 SRS items, then repeat.
-Night shift forces '(1 . 0) to suppress SRS."
-  :type '(cons (integer :tag "Non‑SRS count")
-               (integer :tag "SRS count"))
-  :group 'org-queue)
-
-(defvar org-queue--mix-phase 0
-  "Internal rotation phase used when `org-queue-mix-start` is 'rotate'.")
 
 ;; === Daily maintenance gating (stamp + on-startup scheduling) ===
 (defcustom org-queue-maintenance-on-startup 'if-needed
@@ -818,6 +808,29 @@ Returns nil if not found."
       (org-queue--interleave-by-ratio b a b-count a-count)
     (org-queue--interleave-by-ratio a b a-count b-count)))
 
+(defun org-queue--reinterleave-outstanding! ()
+  "Reinterleave `my-outstanding-tasks-list` according to `org-queue-srs-mix-ratio`.
+Keeps the relative order inside the SRS pool and inside the non‑SRS pool (stable)."
+  (let* ((night (org-queue-night-shift-p))
+         (ratio (if night
+                    '(1 . 0)
+                  (or (and (boundp 'org-queue-srs-mix-ratio) org-queue-srs-mix-ratio)
+                      '(1 . 4))))
+         (a (max 0 (car ratio)))   ;; non‑SRS block size
+         (b (max 0 (cdr ratio)))   ;; SRS block size
+         (non-srs '())
+         (srs '()))
+    ;; Stable partition into two lists
+    (dolist (t my-outstanding-tasks-list)
+      (if (plist-get t :srs) (push t srs) (push t non-srs)))
+    (setq non-srs (nreverse non-srs)
+          srs     (nreverse srs))
+    ;; Decide start side and interleave
+    (let* ((start (org-queue--decide-mix-start a b non-srs srs))
+           (mixed (org-queue--interleave-by-ratio-start
+                   (copy-sequence non-srs) (copy-sequence srs) a b start)))
+      (setq my-outstanding-tasks-list mixed))))
+
 (defun org-queue--earliest-time (tasks)
   "Return earliest of :available-at or :srs-due in TASKS, or nil."
   (let* ((ts (delq nil (mapcar (lambda (task)
@@ -1006,6 +1019,11 @@ Behavior:
           (setq my-outstanding-tasks-index (1- new-length))))
       (when (buffer-live-p removed-buffer)
         (bury-buffer removed-buffer))
+      ;; Keep global ratio honest after a deletion
+      (let ((has-srs (seq-some (lambda (t) (plist-get t :srs))     my-outstanding-tasks-list))
+            (has-non (seq-some (lambda (t) (not (plist-get t :srs))) my-outstanding-tasks-list)))
+        (when (and has-srs has-non)
+          (org-queue--reinterleave-outstanding!)))
       ;; Limit visible queue buffers (no global MRU reordering)
       (my-queue-limit-visible-buffers)
       ;; Save
@@ -1223,16 +1241,17 @@ Saves buffers and regenerates the task list for consistency."
       (message "No outstanding tasks found.")
     (setq my-outstanding-tasks-index 0)
     (let ((pruned 0)
+          (dropped 0)
           (org-queue--suppress-ui t))  ;; suppress chooser churn while pruning
+      ;; 1) Prune head items that aren't due yet
       (while (and my-outstanding-tasks-list
                   (>= my-outstanding-tasks-index 0)
                   (< my-outstanding-tasks-index (length my-outstanding-tasks-list))
                   (not (my-queue--task-due-p (nth 0 my-outstanding-tasks-list))))
-        ;; Remove head quietly (no save), keep index at 0
-        (my-queue--remove-index 0 t t)
+        (my-queue--remove-index 0 t t)       ;; quiet remove, no save
         (setq my-outstanding-tasks-index 0)
-        (setq pruned (1+ pruned))))
-    (let ((dropped 0))
+        (setq pruned (1+ pruned)))
+      ;; 2) Drop head items whose marker/buffer is dead
       (while (and my-outstanding-tasks-list
                   (let* ((task (nth 0 my-outstanding-tasks-list))
                          (m (my-extract-marker task)))
@@ -1241,8 +1260,20 @@ Saves buffers and regenerates the task list for consistency."
                               (buffer-live-p (marker-buffer m))))))
         (my-queue--remove-index 0 t t)
         (setq my-outstanding-tasks-index 0)
-        (setq dropped (1+ dropped))))
-    ;; Show current head immediately; feels instant
+        (setq dropped (1+ dropped)))
+      ;; 3) If anything changed, re‑shape and ensure head is due
+      (when (> (+ pruned dropped) 0)
+        (let ((had-srs (seq-some (lambda (t) (plist-get t :srs))     my-outstanding-tasks-list))
+              (had-non (seq-some (lambda (t) (not (plist-get t :srs))) my-outstanding-tasks-list)))
+          (when (and had-srs had-non)
+            (org-queue--reinterleave-outstanding!)))
+        ;; One quick head prune pass in case re‑interleave brought a not‑due to head.
+        (let ((org-queue--suppress-ui t))
+          (while (and my-outstanding-tasks-list
+                      (not (my-queue--task-due-p (nth 0 my-outstanding-tasks-list))))
+            (my-queue--remove-index 0 t t)
+            (setq my-outstanding-tasks-index 0)))))
+    ;; 4) Show current head immediately; feels instant
     (my-show-current-outstanding-task-no-srs (or pulse t))))
 
 (defvar org-queue--midnight-timer nil
