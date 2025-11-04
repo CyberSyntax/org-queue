@@ -107,6 +107,49 @@
               (start-process "Anki" nil exe)
             (message "Anki executable not found on PATH."))))))))
 
+;;; --- Launch Anki BEFORE saving (debounced) -------------------------------
+
+(defcustom org-queue-anki-launch-on-save t
+  "If non-nil, launch/focus Anki when an Org buffer starts saving."
+  :type 'boolean :group 'org-queue)
+
+(defcustom org-queue-anki-on-save-debounce-secs 10
+  "Minimum seconds between pre-save Anki launches."
+  :type 'integer :group 'org-queue)
+
+(defvar org-queue--anki-pre-save-last 0)
+
+(defun org-queue--maybe-launch-anki-pre-save ()
+  "Fire once at the start of a save, not after it finishes."
+  (when (and org-queue-anki-launch-on-save
+             (derived-mode-p 'org-mode)
+             (not (org-queue-night-shift-p))
+             ;; Only files inside your queue dir, if you set one:
+             (or (null org-queue-directory)
+                 (and buffer-file-name
+                      (file-in-directory-p (file-truename buffer-file-name)
+                                           (file-truename org-queue-directory)))))
+    (let ((now (float-time)))
+      (when (> (- now org-queue--anki-pre-save-last)
+               (max 0.1 org-queue-anki-on-save-debounce-secs))
+        (setq org-queue--anki-pre-save-last now)
+        ;; Call immediately so it happens *before* the long save.
+        (ignore-errors (my-launch-anki))))))
+
+;; Buffer-local so only Org buffers participate.
+(add-hook 'org-mode-hook
+          (lambda ()
+            (add-hook 'before-save-hook
+                      #'org-queue--maybe-launch-anki-pre-save
+                      nil t)))
+
+(with-eval-after-load 'files
+  (advice-add 'save-some-buffers :before
+              (lambda (&rest _)
+                (when (and org-queue-anki-launch-on-save
+                           (not (org-queue-night-shift-p)))
+                  (ignore-errors (my-launch-anki))))))
+
 ;; Display and highlighting functions
 (defun my-pulse-highlight-current-line (&optional time)
   "Temporarily pulse-highlight the current line.
