@@ -103,16 +103,17 @@ Advances the interleave phase after consuming the head, then reassigns the top."
 Saves are batched; ends with a final micro-update tagged 'priority."
   (interactive)
   (org-queue--with-batched-saves
-    ;; 1) Rate as AGAIN (advances mix phase, emits 'review update inside)
+    ;; Rate as AGAIN (advances mix phase, emits 'review update inside)
     (org-queue-srs-rate-again)
-    ;; 2) Prompt for priority range exactly like pressing ","
+    ;; Prompt for priority range exactly like pressing ","
     (when (derived-mode-p 'org-mode)
       (save-excursion
         (org-back-to-heading t)
         (call-interactively 'my-set-priority-with-heuristics)
         (ignore-errors (my-ensure-priority-set))
-        ;; 3) Reflect final state after priority change
-        (ignore-errors (org-queue--micro-update-current! 'priority))))))
+        ;; Reflect final state after priority change
+        (ignore-errors (org-queue--micro-update-current! 'priority)))))
+    (org-queue-show-top))
 
 ;; Rate GOOD, then prompt for priority (single save; final 'priority update)
 (defun org-queue-srs-rate-good-and-prioritize ()
@@ -120,16 +121,17 @@ Saves are batched; ends with a final micro-update tagged 'priority."
 Saves are batched; ends with a final micro-update tagged 'priority."
   (interactive)
   (org-queue--with-batched-saves
-    ;; 1) Rate as GOOD (advances mix phase, emits 'review update inside)
+    ;; Rate as GOOD (advances mix phase, emits 'review update inside)
     (org-queue-srs-rate-good)
-    ;; 2) Prompt for priority range exactly like pressing ","
+    ;; Prompt for priority range exactly like pressing ","
     (when (derived-mode-p 'org-mode)
       (save-excursion
         (org-back-to-heading t)
         (call-interactively 'my-set-priority-with-heuristics)
         (ignore-errors (my-ensure-priority-set))
-        ;; 3) Reflect final state after priority change
-        (ignore-errors (org-queue--micro-update-current! 'priority))))))
+        ;; Reflect final state after priority change
+        (ignore-errors (org-queue--micro-update-current! 'priority)))))
+    (org-queue-show-top))
 
 (defun org-queue-srs-item-create-card ()
   "Create an org-srs review item of type 'card' at the current entry without prompting.

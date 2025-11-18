@@ -359,7 +359,8 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
     ;; Stamp LAST_REPEAT (no-op on SRS/parent) and reflect a final 'stamp update
     (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
       (when (eq st :stamped)
-        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
+        (ignore-errors (org-queue--micro-update-current! 'stamp)))))
+    (org-queue-show-top))
 
 (defun org-queue-stamp-last-repeat-current ()
   "Stamp :LAST_REPEAT: on the current heading only if it’s a pure non-SRS entry.
