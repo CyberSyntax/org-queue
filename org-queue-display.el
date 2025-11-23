@@ -107,7 +107,7 @@
               (start-process "Anki" nil exe)
             (message "Anki executable not found on PATH."))))))))
 
-;;; --- Launch Anki BEFORE saving (debounced) -------------------------------
+;;; --- Launch Anki BEFORE saving (debounced, only for “long” saves) --------
 
 (defcustom org-queue-anki-launch-on-save t
   "If non-nil, launch/focus Anki when an Org buffer starts saving."
@@ -117,11 +117,78 @@
   "Minimum seconds between pre-save Anki launches."
   :type 'integer :group 'org-queue)
 
+(defcustom org-queue-anki-long-save-min-seconds 0.3
+  "If the previous save of this buffer took at least this many seconds,
+the buffer is treated as having a \"long\" save for Anki pre-launch."
+  :type 'number :group 'org-queue)
+
+(defcustom org-queue-anki-long-save-min-size 200000
+  "Minimum buffer size in characters before a save is considered \"long\",
+even when we don't yet have timing information."
+  :type 'integer :group 'org-queue)
+
 (defvar org-queue--anki-pre-save-last 0)
 
+(defvar-local org-queue--save-start-time nil)
+(defvar-local org-queue--last-save-duration nil)
+
+(defun org-queue--interactive-save-p ()
+  "Non-nil when we're in a *user-initiated* save command.
+
+Specifically: C-x C-s / M-x save-buffer,
+C-x C-w / M-x write-file, or C-x s / M-x save-some-buffers.
+
+Programmatic saves (e.g. org-queue autosaves, queue bulk ops,
+timer-driven code) will *not* count as interactive."
+  (and (not executing-kbd-macro)
+       (memq this-command
+             '(save-buffer
+               write-file
+               save-some-buffers))))
+
+(defun org-queue--note-save-start ()
+  "Remember when this save started, for duration measurement."
+  (setq org-queue--save-start-time (current-time)))
+
+(defun org-queue--note-save-end ()
+  "Record how long the last save took, per buffer."
+  (when org-queue--save-start-time
+    (setq org-queue--last-save-duration
+          (float-time (time-subtract (current-time)
+                                     org-queue--save-start-time)))))
+
+(defun org-queue--long-save-p ()
+  "Return non-nil when this buffer is expected to have a \"long\" save.
+
+Heuristic:
+- Any TRAMP/remote file counts as long.
+- Any buffer with size >= `org-queue-anki-long-save-min-size`.
+- Any buffer whose previous save took at least
+  `org-queue-anki-long-save-min-seconds` seconds."
+  (or
+   ;; Remote / TRAMP files are almost always slower.
+   (and buffer-file-name
+        (file-remote-p (file-truename buffer-file-name)))
+   ;; Big buffers: crude but cheap heuristic.
+   (>= (buffer-size) org-queue-anki-long-save-min-size)
+   ;; Empirical timing from the previous save.
+   (and org-queue--last-save-duration
+        (>= org-queue--last-save-duration
+            org-queue-anki-long-save-min-seconds))))
+
 (defun org-queue--maybe-launch-anki-pre-save ()
-  "Fire once at the start of a save, not after it finishes."
+  "Fire once at the start of an *interactive, long* save.
+
+Only runs when:
+- we're in org-mode
+- this buffer lives under `org-queue-directory` (if set)
+- save is considered \"long\" by `org-queue--long-save-p`
+- not during night shift
+- and the save was explicitly triggered by the user
+  (see `org-queue--interactive-save-p`)."
   (when (and org-queue-anki-launch-on-save
+             (org-queue--interactive-save-p)
+             (org-queue--long-save-p)
              (derived-mode-p 'org-mode)
              (not (org-queue-night-shift-p))
              ;; Only files inside your queue dir, if you set one:
@@ -133,12 +200,15 @@
       (when (> (- now org-queue--anki-pre-save-last)
                (max 0.1 org-queue-anki-on-save-debounce-secs))
         (setq org-queue--anki-pre-save-last now)
-        ;; Call immediately so it happens *before* the long save.
         (ignore-errors (my-launch-anki))))))
 
 ;; Buffer-local so only Org buffers participate.
 (add-hook 'org-mode-hook
           (lambda ()
+            ;; Track how long saves actually take in this buffer.
+            (add-hook 'before-save-hook #'org-queue--note-save-start nil t)
+            (add-hook 'after-save-hook  #'org-queue--note-save-end  nil t)
+            ;; Maybe launch Anki before *interactive, long* saves.
             (add-hook 'before-save-hook
                       #'org-queue--maybe-launch-anki-pre-save
                       nil t)))
@@ -146,8 +216,22 @@
 (with-eval-after-load 'files
   (advice-add 'save-some-buffers :before
               (lambda (&rest _)
-                (when (and org-queue-anki-launch-on-save
-                           (not (org-queue-night-shift-p)))
+                (when (and (called-interactively-p 'any)
+                           org-queue-anki-launch-on-save
+                           (not (org-queue-night-shift-p))
+                           ;; Only if there's at least one org-queue org buffer
+                           ;; whose save is likely long.
+                           (cl-some
+                            (lambda (buf)
+                              (with-current-buffer buf
+                                (and (derived-mode-p 'org-mode)
+                                     (or (null org-queue-directory)
+                                         (and buffer-file-name
+                                              (file-in-directory-p
+                                               (file-truename buffer-file-name)
+                                               (file-truename org-queue-directory))))
+                                     (org-queue--long-save-p))))
+                            (buffer-list)))
                   (ignore-errors (my-launch-anki))))))
 
 ;; Display and highlighting functions
@@ -399,48 +483,43 @@ Defaults to 0.2 seconds."
 (defun org-queue-cloze-and-stamp ()
   "Create a cloze (interactive), then stamp LAST_REPEAT (single save)."
   (interactive)
-  (org-queue--with-batched-saves
-    (call-interactively 'org-interactive-cloze)
-    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
-      (when (eq st :stamped)
-        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
+  (call-interactively 'org-interactive-cloze)
+  (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+    (when (eq st :stamped)
+      (ignore-errors (org-queue--micro-update-current! 'stamp)))))
 
 (defun org-queue-cloze-prefix-and-stamp ()
   "Create a cloze (prefix front), then stamp LAST_REPEAT (single save)."
   (interactive)
-  (org-queue--with-batched-saves
-    (org-interactive-cloze-prefix)
-    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
-      (when (eq st :stamped)
-        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
+  (org-interactive-cloze-prefix)
+  (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+    (when (eq st :stamped)
+      (ignore-errors (org-queue--micro-update-current! 'stamp)))))
 
 (defun org-queue-cloze-suffix-and-stamp ()
   "Create a cloze (suffix front), then stamp LAST_REPEAT (single save)."
   (interactive)
-  (org-queue--with-batched-saves
-    (org-interactive-cloze-suffix)
-    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
-      (when (eq st :stamped)
-        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
+  (org-interactive-cloze-suffix)
+  (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+    (when (eq st :stamped)
+      (ignore-errors (org-queue--micro-update-current! 'stamp)))))
 
 (defun org-queue-extract-and-stamp ()
   "Create an extract from the region, then stamp LAST_REPEAT (single save)."
   (interactive)
-  (org-queue--with-batched-saves
-    (call-interactively 'org-interactive-extract)
-    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
-      (when (eq st :stamped)
-        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
+  (call-interactively 'org-interactive-extract)
+  (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+    (when (eq st :stamped)
+      (ignore-errors (org-queue--micro-update-current! 'stamp)))))
 
 (defun org-queue-remove-all-extracts-and-stamp ()
   "Remove all extract blocks in the buffer, then stamp LAST_REPEAT (single save).
 Note: the stamp applies to the current heading; SRS entries are skipped by design."
   (interactive)
-  (org-queue--with-batched-saves
-    (org-remove-all-extract-blocks)
-    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
-      (when (eq st :stamped)
-        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
+  (org-remove-all-extract-blocks)
+  (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+    (when (eq st :stamped)
+      (ignore-errors (org-queue--micro-update-current! 'stamp)))))
 
 ;; Interactive content creation functions
 (defun my--strip-leading-stars (s)
@@ -490,7 +569,7 @@ Note: the stamp applies to the current heading; SRS entries are skipped by desig
   :group 'org)
 
 (defun org-interactive-cloze (&optional front-context)
-  "Create a cloze deletion using {{clozed#ID|SELECTION|ID}} 
+  "Create a cloze deletion using {{clozed#ID|SELECTION|ID}}
   and {{cloze#ID|[...]|ID}} for the Front ellipsis.
 
 Front context options:
@@ -584,8 +663,7 @@ Other cloze markers are unwrapped on the Front only."
           (org-id-get-create)
           (when (fboundp 'org-srs-item-new)
             (org-srs-item-new 'card))))
-      (message "Created cloze (%s)" (symbol-name front-context))
-      (org-queue--autosave-current))))
+      (message "Created cloze (%s)" (symbol-name front-context)))))
 
 ;; Thin wrappers (no duplicated logic): just pass the option for convenience
 (defun org-interactive-cloze-prefix ()
@@ -597,7 +675,7 @@ Other cloze markers are unwrapped on the Front only."
   "Create a cloze whose Front shows only the following context."
   (interactive)
   (org-interactive-cloze 'suffix))
-  
+
 (defun org-interactive-extract ()
   "Create an extract using {{extract#ID|SELECTION|ID}} and a child heading."
   (interactive)
@@ -606,14 +684,14 @@ Other cloze markers are unwrapped on the Front only."
     (let* ((start (region-beginning))
            (end (region-end))
            (selected-text (buffer-substring-no-properties start end))
-           (heading-pos (save-excursion 
+           (heading-pos (save-excursion
                           (goto-char start)
-                          (org-back-to-heading t) 
+                          (org-back-to-heading t)
                           (point)))
-           (heading-level (save-excursion 
-                            (goto-char heading-pos) 
+           (heading-level (save-excursion
+                            (goto-char heading-pos)
                             (org-current-level)))
-           (parent-priority-range (save-excursion 
+           (parent-priority-range (save-excursion
                                    (goto-char heading-pos)
                                    (my-get-current-priority-range)))
            (cleaned-text selected-text)
@@ -636,8 +714,7 @@ Other cloze markers are unwrapped on the Front only."
           (when parent-priority-range
             (goto-char (1+ new-heading-pos))
             (my-set-priority-with-heuristics parent-priority-range))))
-      (message "Created extract from selected text")
-      (org-queue--autosave-current))))
+      (message "Created extract from selected text"))))
 
 (defun org-remove-all-extract-blocks ()
   "Remove all {{extract#ID|...|ID}} blocks entirely from the current buffer."
@@ -658,8 +735,7 @@ Other cloze markers are unwrapped on the Front only."
         (goto-char (point-min))
         (while (re-search-forward "\n\n\n+" nil t)
           (replace-match "\n\n"))
-        (message "Removed %d extract blocks" count)
-        (save-buffer)))
+        (message "Removed %d extract blocks" count)))
     (org-highlight-custom-syntax)))
 
 ;; make the timer buffer-local
@@ -683,7 +759,7 @@ Other cloze markers are unwrapped on the Front only."
 (add-hook 'org-mode-hook 'org-highlight-custom-syntax)
 (add-hook 'org-mode-hook
           (lambda ()
-            (add-hook 'after-change-functions 
+            (add-hook 'after-change-functions
                       'org-update-custom-syntax-after-change nil t)))
 
 (defvar-local org-syntax-markers-visible nil
@@ -692,13 +768,13 @@ Other cloze markers are unwrapped on the Front only."
 (defun org-toggle-syntax-markers ()
   "Toggle visibility of custom syntax markers."
   (interactive)
-  (setq-local org-syntax-markers-visible 
+  (setq-local org-syntax-markers-visible
               (not org-syntax-markers-visible))
   (dolist (ov org-custom-overlays)
     (when (overlay-get ov 'invisible)
-      (overlay-put ov 'invisible 
+      (overlay-put ov 'invisible
                    (not org-syntax-markers-visible))))
-  (message "Syntax markers now %s" 
+  (message "Syntax markers now %s"
            (if org-syntax-markers-visible "visible" "hidden")))
 
 (provide 'org-queue-display)

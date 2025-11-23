@@ -75,7 +75,6 @@ Optional RETRIED is used internally to prevent infinite recursion."
                    (my-set-priority-with-heuristics specific-range t))))))  ; end condition-case
           (when success
             (message "Priority set to: %d" random-priority)
-            (org-queue--autosave-current)
             (ignore-errors (org-queue--micro-update-current! 'priority))))
       (message "Invalid range."))))
 
@@ -87,7 +86,6 @@ Adjusts the priority within the new range, even if already at the highest."
     (let ((new-range (max 0 (1- current-range))))
       (my-set-priority-with-heuristics new-range)
       (message "Priority range increased to %d" new-range)
-      (save-buffer)
       (ignore-errors (org-queue--micro-update-current! 'priority)))))
 
 (defun my-decrease-priority-range ()
@@ -98,7 +96,6 @@ Adjusts the priority within the new range, even if already at the lowest."
     (let ((new-range (min 9 (1+ current-range))))
       (my-set-priority-with-heuristics new-range)
       (message "Priority range decreased to %d" new-range)
-      (save-buffer)
       (ignore-errors (org-queue--micro-update-current! 'priority)))))
 
 (defun my-ensure-priority-set (&optional max-attempts)
@@ -110,17 +107,17 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
   (let ((max-attempts (or max-attempts 15))
         (attempt 0)
         (success nil))
-    
+
     ;; First check if this is a parent-level SRS entry
     (save-excursion
       (org-back-to-heading t)
       (when (eq (org-srs-entry-p (point)) 'parent)
         (message "Skipping priority set - SRS drawer is in parent entry")
         (setq success t)))  ;; Mark as successful to skip the loop
-    
+
     (while (and (not success) (< attempt max-attempts))
       (setq attempt (1+ attempt))
-      
+
       (condition-case err
           (save-excursion
             ;; Move to the current heading
@@ -158,11 +155,11 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
                         (setq success t))
                     (error "No valid range found for default priority settings. Check configurations."))))))
         (error
-         (message "Attempt %d/%d failed in my-ensure-priority-set: %s" 
+         (message "Attempt %d/%d failed in my-ensure-priority-set: %s"
                   attempt max-attempts (error-message-string err))
          (when (>= attempt max-attempts)
            (signal (car err) (cdr err))))))
-    
+
     (unless success
       (error "Failed to set priority after %d attempts" max-attempts))))
 
@@ -295,30 +292,27 @@ Notes:
 (defun org-queue-prioritize-and-stamp ()
   "Prompt for priority range, set it, then stamp LAST_REPEAT (single save)."
   (interactive)
-  (org-queue--with-batched-saves
-    (call-interactively 'my-set-priority-with-heuristics)
-    (ignore-errors (my-ensure-priority-set))
-    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
-      (when (eq st :stamped)
-        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
+  (call-interactively 'my-set-priority-with-heuristics)
+  (ignore-errors (my-ensure-priority-set))
+  (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+    (when (eq st :stamped)
+      (ignore-errors (org-queue--micro-update-current! 'stamp)))))
 
 (defun org-queue-increase-priority-range-and-stamp ()
   "Increase priority range, set it, then stamp LAST_REPEAT (single save)."
   (interactive)
-  (org-queue--with-batched-saves
-    (my-increase-priority-range)
-    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
-      (when (eq st :stamped)
-        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
+  (my-increase-priority-range)
+  (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+    (when (eq st :stamped)
+      (ignore-errors (org-queue--micro-update-current! 'stamp)))))
 
 (defun org-queue-decrease-priority-range-and-stamp ()
   "Decrease priority range, set it, then stamp LAST_REPEAT (single save)."
   (interactive)
-  (org-queue--with-batched-saves
-    (my-decrease-priority-range)
-    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
-      (when (eq st :stamped)
-        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
+  (my-decrease-priority-range)
+  (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+    (when (eq st :stamped)
+      (ignore-errors (org-queue--micro-update-current! 'stamp)))))
 
 (provide 'org-queue-priority)
 ;;; org-queue-priority.el ends here

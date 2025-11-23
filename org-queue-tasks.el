@@ -163,7 +163,7 @@ Lower is better for each component.
                           (org-with-point-at m (my-get-raw-priority-value))))))
          (prio (or prio org-priority-default))
          ;; Daily rotating tie-breaker: hash changes each day
-         (tie (logand (sxhash (format "%s@%s" 
+         (tie (logand (sxhash (format "%s@%s"
                                       (or (my--task-unique-key task) "")
                                       (format-time-string "%Y-%m-%d")))
                       #x7fffffff)))
@@ -255,8 +255,8 @@ Returns the number of tasks promoted."
                         ;; Daily rotating position: hash changes each day
                         (ins       (if (>= last-srs 0)
                                         (+ (or first-srs last-srs)
-                                          (mod (logand (sxhash (format "%s@%s" 
-                                                                      key 
+                                          (mod (logand (sxhash (format "%s@%s"
+                                                                      key
                                                                       (format-time-string "%Y-%m-%d")))
                                                       #x7fffffff)
                                                 (1+ (- last-srs (or first-srs last-srs)))))
@@ -344,9 +344,7 @@ REASON is informational ('priority 'schedule 'advance 'postpone 'review 'stamp '
     (setq my-queue--last-visible-buffers nil
           my-queue--last-head-key nil)
     (setq org-queue--flag-counts-cache nil)
-    (my-queue-limit-visible-buffers)
-    ;; Save only the current buffer (respects suppression flags).
-    (org-queue--autosave-current)))))  ;; end micro-update
+    (my-queue-limit-visible-buffers)))))
 
 ;; Variables for task list management
 (defvar my-outstanding-tasks-list nil
@@ -713,7 +711,7 @@ Strategy (single path):
   "Safely get the buffer of TASK-OR-MARKER.
 TASK-OR-MARKER can be a marker or a plist with a :marker property."
   (let ((marker (my-extract-marker task-or-marker)))
-    (when (and marker 
+    (when (and marker
                (markerp marker)
                (marker-buffer marker)
                (buffer-live-p (marker-buffer marker)))
@@ -723,7 +721,7 @@ TASK-OR-MARKER can be a marker or a plist with a :marker property."
   "Safely get the position of TASK-OR-MARKER.
 TASK-OR-MARKER can be a marker or a plist with a :marker property."
   (let ((marker (my-extract-marker task-or-marker)))
-    (when (and marker 
+    (when (and marker
                (markerp marker)
                (marker-buffer marker)
                (buffer-live-p (marker-buffer marker)))
@@ -766,7 +764,7 @@ Returns nil if not found."
             (< my-outstanding-tasks-index 0)
             (>= my-outstanding-tasks-index (length my-outstanding-tasks-list)))
     (setq my-outstanding-tasks-index 0)))
-  
+
 (defun my-ensure-synchronized-task-list ()
   "Ensure we have a current, synchronized task list and valid index."
   (my-get-outstanding-tasks)
@@ -1036,7 +1034,6 @@ Behavior:
 (defun my-auto-postpone-overdue-tasks ()
   "Auto-postpone all overdue TODO tasks (excluding DONE tasks)."
   (interactive)
-  (save-some-buffers t)
   (let ((processed-count 0)
         (total-overdue 0))
     (let ((org-queue--suppress-ui t))
@@ -1056,7 +1053,6 @@ Behavior:
            (when (= (mod processed-count 10) 0)
              (message "Processed %d/%d overdue TODO tasks..." processed-count total-overdue))))
        nil))
-    (save-some-buffers t)
     (message "✓ Auto-postponed %d overdue TODO tasks." processed-count)))
 
 (defun my-postpone-duplicate-priority-tasks ()
@@ -1084,7 +1080,6 @@ Behavior:
                                       prio (file-name-nondirectory file)))
                         (puthash key t seen)))))
                 nil 'file)))))
-    (save-some-buffers t)
     (message "Processed duplicate outstanding priorities.")))))
 
 (defun my-enforce-priority-constraints ()
@@ -1145,7 +1140,6 @@ Walk priorities in ascending order; postpone overflow FIFO within each priority.
             (setq current-max (if (numberp current-max)
                                   (min current-max (gethash prio priority-counts 0))
                                 (gethash prio priority-counts 0)))))
-        (save-some-buffers t)
         (message "[COMPLETE] Constraint enforcement done; final cap %s"
                  (or current-max 0))))))
 
@@ -1174,11 +1168,6 @@ Saves buffers and regenerates the task list for consistency."
                     (message "Postponed duplicate in: %s"
                             (file-name-nondirectory file)))
                 (setq prev-file file))))))
-      ;; Save all changed buffers
-      (dolist (buf (delete-dups modified-buffers))
-        (when (buffer-live-p buf)
-          (with-current-buffer buf
-            (save-buffer))))
       ;; If we actually postponed anything, rebuild the list
       (when modified-buffers
         (my-get-outstanding-tasks)
@@ -1276,6 +1265,11 @@ Saves buffers and regenerates the task list for consistency."
     ;; 4) Show current head immediately; feels instant
     (my-show-current-outstanding-task-no-srs (or pulse t))))
 
+(defun org-queue-save-and-show-top ()
+  (interactive)
+  (org-queue-show-top)
+  (save-some-buffers t))
+
 (defvar org-queue--midnight-timer nil
   "Timer that triggers a daily midnight refresh of org-queue.")
 
@@ -1306,7 +1300,6 @@ Schedules a single micro-update + autosave (+ optional show-top) after brief idl
              (when (buffer-live-p b)
                (with-current-buffer b
                  (ignore-errors (org-queue--micro-update-current! r))
-                 (org-queue--autosave-current)
                  (when org-queue-auto-show-top-after-change
                    (org-queue-show-top t)))))
            buf why))))
@@ -1375,7 +1368,8 @@ Schedules a single micro-update + autosave (+ optional show-top) after brief idl
                            (error
                             (message "Error preparing task display: %s" (error-message-string err))))))
   ;; Kick off today's maintenance if needed (lazy; runs once per day).
-  (org-queue-daily-maintenance-maybe))
+  (org-queue--with-batched-saves
+    (org-queue-daily-maintenance-maybe)))
 
 ;; Automatic startup
 (add-hook 'emacs-startup-hook #'org-queue-startup 100)
@@ -1427,11 +1421,10 @@ Runs the complete maintenance pipeline and flushes a single save at the end."
       ;; Rebuild/refresh lists (single canonical path)
       (my-get-outstanding-tasks)))
 
-  ;; After the macro exits, a single save-some-buffers t has been executed.
+  (save-some-buffers t)
   (delete-other-windows)
   (org-queue-show-top t)
   (org-queue--write-maintenance-stamp)
-  (save-some-buffers t)
   (message "org-queue: maintenance complete.")
   (ignore-errors (org-queue--schedule-midnight-refresh)))
 

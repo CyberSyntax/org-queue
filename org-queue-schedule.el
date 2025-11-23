@@ -105,7 +105,6 @@ Rules:
   (let* ((final (org-queue--apply-scheduling-constraints tm)))
     (org-schedule nil (format-time-string "%Y-%m-%d %a %H:%M" final))
     (ignore-errors (org-queue--micro-update-current! 'schedule))
-    (org-queue--autosave-current)
     (when org-queue-auto-show-top-after-change
       (org-queue-show-top t))
     final))
@@ -193,8 +192,7 @@ If MONTHS is not provided, uses the result of my-find-schedule-weight."
           (my-find-schedule-weight))))
   (save-excursion
     ;; Schedule the current heading
-    (my-random-schedule (or months (my-find-schedule-weight))))
-  (save-buffer))
+    (my-random-schedule (or months (my-find-schedule-weight)))))
 
 (defun my-advance-schedule ()
   "Advance the current Org heading by a mathematically adjusted number of months.
@@ -269,20 +267,18 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
 (defun org-queue-advance-schedule-and-stamp ()
   "Advance schedule, then stamp LAST_REPEAT (single save)."
   (interactive)
-  (org-queue--with-batched-saves
-    (my-advance-schedule)
-    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
-      (when (eq st :stamped)
-        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
+  (my-advance-schedule)
+  (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+    (when (eq st :stamped)
+      (ignore-errors (org-queue--micro-update-current! 'stamp)))))
 
 (defun org-queue-postpone-schedule-and-stamp ()
   "Postpone schedule, then stamp LAST_REPEAT (single save)."
   (interactive)
-  (org-queue--with-batched-saves
-    (my-postpone-schedule)
-    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
-      (when (eq st :stamped)
-        (ignore-errors (org-queue--micro-update-current! 'stamp))))))
+  (my-postpone-schedule)
+  (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+    (when (eq st :stamped)
+      (ignore-errors (org-queue--micro-update-current! 'stamp)))))
 
 (defun my-auto-advance-schedules (&optional power)
   "Advance 2^POWER random tasks (default: 64) across org-queue files."
@@ -294,7 +290,6 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
          (total (length shuffled))
          (processed 0)
          (count 0))
-    (save-some-buffers t)
     (let ((org-queue--suppress-ui t))
       (catch 'break
         (dolist (m shuffled)
@@ -303,7 +298,6 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
           (org-with-point-at m
             (my-advance-schedule)
             (setq processed (1+ processed))))))
-    (save-some-buffers t)
     (message "Advanced %d/%d (2^%d=%d)" processed total n limit)))
 
 (defun my-auto-postpone-schedules (&optional power)
@@ -316,7 +310,6 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
          (total (length shuffled))
          (processed 0)
          (count 0))
-    (save-some-buffers t)
     (let ((org-queue--suppress-ui t))
       (catch 'break
         (dolist (m shuffled)
@@ -325,7 +318,6 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
           (org-with-point-at m
             (my-postpone-schedule)
             (setq processed (1+ processed))))))
-    (save-some-buffers t)
     (message "Postponed %d/%d (2^%d=%d)" processed total n limit)))
 
 (defun my-schedule-command (&optional months)
@@ -338,7 +330,6 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
     (my-random-schedule (or months (my-find-schedule-weight)))
     (my-set-priority-with-heuristics)
     (my-ensure-priority-set)
-    (save-buffer)
     (ignore-errors (org-queue--micro-update-current! 'schedule))))
 
 ;; --- Schedule → priority (reuse) → stamp. Single save.
@@ -348,18 +339,16 @@ Skip postponing if the current entry or its parent contains an SRS drawer."
    (list (read-number
           "Enter the upper month limit: "
           (my-find-schedule-weight))))
-  (org-queue--with-batched-saves
-    ;; Schedule (keeps invariants)
-    (my-random-schedule (or months (my-find-schedule-weight)))
-    ;; Priority prompt (identical UX to pressing \",\")
-    (call-interactively 'my-set-priority-with-heuristics)
-    ;; Keep property consistent (no-op if already correct)
-    (ignore-errors (my-ensure-priority-set))
-    ;; Stamp LAST_REPEAT (no-op on SRS/parent) and reflect a final 'stamp update
-    (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
-      (when (eq st :stamped)
-        (ignore-errors (org-queue--micro-update-current! 'stamp)))))
-    (org-queue-show-top))
+  ;; Schedule (keeps invariants)
+  (my-random-schedule (or months (my-find-schedule-weight)))
+  ;; Priority prompt (identical UX to pressing \",\")
+  (call-interactively 'my-set-priority-with-heuristics)
+  ;; Keep property consistent (no-op if already correct)
+  (ignore-errors (my-ensure-priority-set))
+  ;; Stamp LAST_REPEAT (no-op on SRS/parent) and reflect a final 'stamp update
+  (let ((st (ignore-errors (org-queue-stamp-last-repeat-current))))
+    (when (eq st :stamped)
+      (ignore-errors (org-queue--micro-update-current! 'stamp)))))
 
 (defun org-queue-stamp-last-repeat-current ()
   "Stamp :LAST_REPEAT: on the current heading only if it’s a pure non-SRS entry.
@@ -386,7 +375,6 @@ Never signals on those skip cases."
               (unless (and verify (string= (string-trim verify) now-str))
                 (org-set-property "LAST_REPEAT" now-str)))
             (message "Stamped LAST_REPEAT %s on current heading" now-str)
-            (save-buffer)
             :stamped))))))
 
 (defun my-ensure-priorities-and-schedules-for-all-headings (&optional max-attempts)
@@ -402,7 +390,6 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
 
     (while (and (not all-complete) (< attempt max-attempts))
       (setq attempt (1+ attempt))
-      (save-some-buffers t)
 
       ;; First pass: Count total entries and incomplete entries
       (let ((total-entries 0)
@@ -489,8 +476,6 @@ MAX-ATTEMPTS: Maximum number of retry attempts (defaults to 15)."
 
         ;; Set all-complete if no incomplete entries found
         (setq all-complete (zerop incomplete-entries)))
-
-      (save-some-buffers t)
 
       (message "Attempt %d/%d completed. %s"
                attempt

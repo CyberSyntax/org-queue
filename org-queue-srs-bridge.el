@@ -69,8 +69,6 @@ Advances the interleave phase after consuming the head, then reassigns the top."
                               '(1 . 4))))
               (org-queue--advance-mix-phase (car ratio) (cdr ratio)))
             (ignore-errors (org-queue--micro-update-current! 'review))
-            ;; Save only the current buffer; maintenance disables this.
-            (save-buffer)
             (message "Rated as '%s'" "again"))
         (error
          (message "Error rating entry: %s" (error-message-string err)))))))
@@ -91,8 +89,6 @@ Advances the interleave phase after consuming the head, then reassigns the top."
                               '(1 . 4))))
               (org-queue--advance-mix-phase (car ratio) (cdr ratio)))
             (ignore-errors (org-queue--micro-update-current! 'review))
-            ;; Save only the current buffer; maintenance disables this.
-            (save-buffer)
             (message "Rated as '%s'" "good"))
         (error
          (message "Error rating entry: %s" (error-message-string err)))))))
@@ -102,36 +98,32 @@ Advances the interleave phase after consuming the head, then reassigns the top."
   "Rate current SRS entry as 'again', then interactively choose a priority range.
 Saves are batched; ends with a final micro-update tagged 'priority."
   (interactive)
-  (org-queue--with-batched-saves
-    ;; Rate as AGAIN (advances mix phase, emits 'review update inside)
-    (org-queue-srs-rate-again)
-    ;; Prompt for priority range exactly like pressing ","
-    (when (derived-mode-p 'org-mode)
-      (save-excursion
-        (org-back-to-heading t)
-        (call-interactively 'my-set-priority-with-heuristics)
-        (ignore-errors (my-ensure-priority-set))
-        ;; Reflect final state after priority change
-        (ignore-errors (org-queue--micro-update-current! 'priority)))))
-    (org-queue-show-top))
+  ;; Rate as AGAIN (advances mix phase, emits 'review update inside)
+  (org-queue-srs-rate-again)
+  ;; Prompt for priority range exactly like pressing ","
+  (when (derived-mode-p 'org-mode)
+    (save-excursion
+      (org-back-to-heading t)
+      (call-interactively 'my-set-priority-with-heuristics)
+      (ignore-errors (my-ensure-priority-set))
+      ;; Reflect final state after priority change
+      (ignore-errors (org-queue--micro-update-current! 'priority)))))
 
 ;; Rate GOOD, then prompt for priority (single save; final 'priority update)
 (defun org-queue-srs-rate-good-and-prioritize ()
   "Rate current SRS entry as 'good', then interactively choose a priority range.
 Saves are batched; ends with a final micro-update tagged 'priority."
   (interactive)
-  (org-queue--with-batched-saves
-    ;; Rate as GOOD (advances mix phase, emits 'review update inside)
-    (org-queue-srs-rate-good)
-    ;; Prompt for priority range exactly like pressing ","
-    (when (derived-mode-p 'org-mode)
-      (save-excursion
-        (org-back-to-heading t)
-        (call-interactively 'my-set-priority-with-heuristics)
-        (ignore-errors (my-ensure-priority-set))
-        ;; Reflect final state after priority change
-        (ignore-errors (org-queue--micro-update-current! 'priority)))))
-    (org-queue-show-top))
+  ;; Rate as GOOD (advances mix phase, emits 'review update inside)
+  (org-queue-srs-rate-good)
+  ;; Prompt for priority range exactly like pressing ","
+  (when (derived-mode-p 'org-mode)
+    (save-excursion
+      (org-back-to-heading t)
+      (call-interactively 'my-set-priority-with-heuristics)
+      (ignore-errors (my-ensure-priority-set))
+      ;; Reflect final state after priority change
+      (ignore-errors (org-queue--micro-update-current! 'priority)))))
 
 (defun org-queue-srs-item-create-card ()
   "Create an org-srs review item of type 'card' at the current entry without prompting.
@@ -152,9 +144,7 @@ Ensures the entry has an ID. Gracefully degrades if org-srs is not available."
             (org-srs-item-new-interactively 'card))
            (t
             (user-error "org-srs: no item creation API found")))
-          (message "Created org-srs card")
-          ;; Save only the current buffer; maintenance disables this.
-          (save-buffer))
+          (message "Created org-srs card"))
       (error
        (user-error "Failed to create SRS card: %s" (error-message-string err))))))
 
@@ -163,15 +153,14 @@ Ensures the entry has an ID. Gracefully degrades if org-srs is not available."
 If :LAST_REPEAT: exists on this heading, remove it.
 Single save; final micro-update tagged 'create."
   (interactive)
-  (org-queue--with-batched-saves
-    (save-excursion
-      (org-back-to-heading t)
-      (let ((was (org-entry-get nil "LAST_REPEAT")))
-        (when (and was (not (string-empty-p was)))
-          (ignore-errors (org-entry-delete nil "LAST_REPEAT"))
-          (message "Removed :LAST_REPEAT: from current heading")))
-      (org-queue-srs-item-create-card)
-      (ignore-errors (org-queue--micro-update-current! 'create)))))
+  (save-excursion
+    (org-back-to-heading t)
+    (let ((was (org-entry-get nil "LAST_REPEAT")))
+      (when (and was (not (string-empty-p was)))
+        (ignore-errors (org-entry-delete nil "LAST_REPEAT"))
+        (message "Removed :LAST_REPEAT: from current heading")))
+    (org-queue-srs-item-create-card)
+    (ignore-errors (org-queue--micro-update-current! 'create))))
 
 (defun org-queue-srs--drawer-bounds (&optional pos)
   "Return cons (beg . end) of :SRSITEMS: drawer in entry at POS (default point), or nil."

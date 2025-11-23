@@ -14,7 +14,7 @@
 (defvar org-queue-prefix-map (make-sparse-keymap)
   "Prefix keymap for org-queue commands.")
 
-(dolist (binding '(("c" org-queue-show-top)
+(dolist (binding '(("c" org-queue-save-and-show-top)
                    ("s" org-queue-schedule-and-prioritize)
                    ("," org-queue-prioritize-and-stamp)
                    ("+" org-queue-increase-priority-range-and-stamp)

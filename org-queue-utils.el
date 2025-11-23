@@ -26,20 +26,6 @@ Disables save-buffer/save-some-buffers and sets org-queue--suppress-save."
        (let ((org-queue--suppress-save nil))
          (save-some-buffers t)))))
 
-(defun org-queue--maybe-save (&optional buffer)
-  "Save BUFFER (or current buffer) if it visits a file and is modified.
-No-op when `org-queue--suppress-save` is non-nil."
-  (unless org-queue--suppress-save
-    (let ((buf (or buffer (current-buffer))))
-      (when (buffer-live-p buf)
-        (with-current-buffer buf
-          (when (and buffer-file-name (buffer-modified-p))
-            (save-buffer)))))))
-
-(defun org-queue--autosave-current ()
-  "Best-effort save of the current buffer if it visits a file."
-  (org-queue--maybe-save (current-buffer)))
-
 (defvar org-queue--file-cache nil)
 (defvar org-queue--file-cache-ts nil)
 
@@ -76,13 +62,13 @@ No-op when `org-queue--suppress-save` is non-nil."
 (defun my-is-todo-task ()
   "Return non-nil if the current task is in a TODO state (not DONE)."
   (let ((todo-state (org-get-todo-state)))
-    (and todo-state 
+    (and todo-state
          (not (member todo-state org-done-keywords)))))
 
 (defun my-is-done-task ()
   "Return non-nil if the current task is in a DONE state."
   (let ((todo-state (org-get-todo-state)))
-    (and todo-state 
+    (and todo-state
          (member todo-state org-done-keywords))))
 
 (defun my-cleanup-done-task ()
@@ -107,9 +93,6 @@ No-op when `org-queue--suppress-save` is non-nil."
   (interactive)
   (let ((cleaned-count 0)
         (total-done 0))
-    
-    (save-some-buffers t)
-    
     (org-queue-map-entries
      (lambda ()
        (when (my-is-done-task)
@@ -117,9 +100,7 @@ No-op when `org-queue--suppress-save` is non-nil."
          (when (my-cleanup-done-task)
            (setq cleaned-count (1+ cleaned-count)))))
      nil)
-    
-    (save-some-buffers t)
-    (message "✓ Cleaned %d of %d DONE tasks (removed SCHEDULED/PRIORITY)" 
+    (message "✓ Cleaned %d of %d DONE tasks (removed SCHEDULED/PRIORITY)"
              cleaned-count total-done)))
 
 ;;; Mathematical Utilities

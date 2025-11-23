@@ -17,7 +17,7 @@
   :group 'org-queue)
 
 ;;; System Detection
-(defvar my-android-p 
+(defvar my-android-p
   (eq system-type 'android)
   "Non-nil if running on Android.")
 
@@ -72,6 +72,14 @@ advice and change hooks. Bind around bursty edits to avoid thrashing.")
 (defcustom org-queue-auto-show-top-after-change nil
   "If non-nil, automatically call `org-queue-show-top` after operations
 that change schedule/priority (advance, postpone, schedule, stamp)."
+  :type 'boolean
+  :group 'org-queue)
+
+(defcustom org-queue-autosave-on-change nil
+  "If non-nil, org-queue automatically saves Org buffers after queue
+operations that touch priority, schedule, clozes, extracts, etc.
+
+Set this to nil if you prefer manual saving (for example via `C-; c`)."
   :type 'boolean
   :group 'org-queue)
 
