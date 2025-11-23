@@ -10,7 +10,6 @@
 
 ;;; --- FILE-FIRST SCHEDULING INVARIANTS (single path; no options) ---
 ;; Always-on rules (no user options here):
-;; - Never schedule on weekends: push to next Monday.
 ;; - Snap to local work window [09:00, 18:00).
 ;; - Apply a small ±10-minute jitter (kept inside the window).
 ;; - Respect LAST_REPEAT deferral (priority-based).
