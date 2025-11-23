@@ -107,132 +107,28 @@
               (start-process "Anki" nil exe)
             (message "Anki executable not found on PATH."))))))))
 
-;;; --- Launch Anki BEFORE saving (debounced, only for “long” saves) --------
+(defcustom org-queue-anki-buffer-size-threshold 72365
+  "Minimum buffer size (in characters) that counts as \"large\" for Anki auto-launch.
+Used by `my-launch-anki-if-large-buffer`."
+  :type 'integer
+  :group 'org-queue)
 
-(defcustom org-queue-anki-launch-on-save t
-  "If non-nil, launch/focus Anki when an Org buffer starts saving."
-  :type 'boolean :group 'org-queue)
+(defun my-launch-anki-if-large-buffer ()
+  "If the current Org buffer is larger than `org-queue-anki-buffer-size-threshold`,
+launch or focus Anki.
 
-(defcustom org-queue-anki-on-save-debounce-secs 10
-  "Minimum seconds between pre-save Anki launches."
-  :type 'integer :group 'org-queue)
+Uses `buffer-size`, which is the character count of the current buffer."
+  (interactive)
+  (when (and (derived-mode-p 'org-mode)
+             (buffer-file-name)
+             (>= (buffer-size) org-queue-anki-buffer-size-threshold))
+    (my-launch-anki)))
 
-(defcustom org-queue-anki-long-save-min-seconds 0.3
-  "If the previous save of this buffer took at least this many seconds,
-the buffer is treated as having a \"long\" save for Anki pre-launch."
-  :type 'number :group 'org-queue)
-
-(defcustom org-queue-anki-long-save-min-size 200000
-  "Minimum buffer size in characters before a save is considered \"long\",
-even when we don't yet have timing information."
-  :type 'integer :group 'org-queue)
-
-(defvar org-queue--anki-pre-save-last 0)
-
-(defvar-local org-queue--save-start-time nil)
-(defvar-local org-queue--last-save-duration nil)
-
-(defun org-queue--interactive-save-p ()
-  "Non-nil when we're in a *user-initiated* save command.
-
-Specifically: C-x C-s / M-x save-buffer,
-C-x C-w / M-x write-file, or C-x s / M-x save-some-buffers.
-
-Programmatic saves (e.g. org-queue autosaves, queue bulk ops,
-timer-driven code) will *not* count as interactive."
-  (and (not executing-kbd-macro)
-       (memq this-command
-             '(save-buffer
-               write-file
-               save-some-buffers))))
-
-(defun org-queue--note-save-start ()
-  "Remember when this save started, for duration measurement."
-  (setq org-queue--save-start-time (current-time)))
-
-(defun org-queue--note-save-end ()
-  "Record how long the last save took, per buffer."
-  (when org-queue--save-start-time
-    (setq org-queue--last-save-duration
-          (float-time (time-subtract (current-time)
-                                     org-queue--save-start-time)))))
-
-(defun org-queue--long-save-p ()
-  "Return non-nil when this buffer is expected to have a \"long\" save.
-
-Heuristic:
-- Any TRAMP/remote file counts as long.
-- Any buffer with size >= `org-queue-anki-long-save-min-size`.
-- Any buffer whose previous save took at least
-  `org-queue-anki-long-save-min-seconds` seconds."
-  (or
-   ;; Remote / TRAMP files are almost always slower.
-   (and buffer-file-name
-        (file-remote-p (file-truename buffer-file-name)))
-   ;; Big buffers: crude but cheap heuristic.
-   (>= (buffer-size) org-queue-anki-long-save-min-size)
-   ;; Empirical timing from the previous save.
-   (and org-queue--last-save-duration
-        (>= org-queue--last-save-duration
-            org-queue-anki-long-save-min-seconds))))
-
-(defun org-queue--maybe-launch-anki-pre-save ()
-  "Fire once at the start of an *interactive, long* save.
-
-Only runs when:
-- we're in org-mode
-- this buffer lives under `org-queue-directory` (if set)
-- save is considered \"long\" by `org-queue--long-save-p`
-- not during night shift
-- and the save was explicitly triggered by the user
-  (see `org-queue--interactive-save-p`)."
-  (when (and org-queue-anki-launch-on-save
-             (org-queue--interactive-save-p)
-             (org-queue--long-save-p)
-             (derived-mode-p 'org-mode)
-             (not (org-queue-night-shift-p))
-             ;; Only files inside your queue dir, if you set one:
-             (or (null org-queue-directory)
-                 (and buffer-file-name
-                      (file-in-directory-p (file-truename buffer-file-name)
-                                           (file-truename org-queue-directory)))))
-    (let ((now (float-time)))
-      (when (> (- now org-queue--anki-pre-save-last)
-               (max 0.1 org-queue-anki-on-save-debounce-secs))
-        (setq org-queue--anki-pre-save-last now)
-        (ignore-errors (my-launch-anki))))))
-
-;; Buffer-local so only Org buffers participate.
 (add-hook 'org-mode-hook
           (lambda ()
-            ;; Track how long saves actually take in this buffer.
-            (add-hook 'before-save-hook #'org-queue--note-save-start nil t)
-            (add-hook 'after-save-hook  #'org-queue--note-save-end  nil t)
-            ;; Maybe launch Anki before *interactive, long* saves.
             (add-hook 'before-save-hook
-                      #'org-queue--maybe-launch-anki-pre-save
+                      #'my-launch-anki-if-large-buffer
                       nil t)))
-
-(with-eval-after-load 'files
-  (advice-add 'save-some-buffers :before
-              (lambda (&rest _)
-                (when (and (called-interactively-p 'any)
-                           org-queue-anki-launch-on-save
-                           (not (org-queue-night-shift-p))
-                           ;; Only if there's at least one org-queue org buffer
-                           ;; whose save is likely long.
-                           (cl-some
-                            (lambda (buf)
-                              (with-current-buffer buf
-                                (and (derived-mode-p 'org-mode)
-                                     (or (null org-queue-directory)
-                                         (and buffer-file-name
-                                              (file-in-directory-p
-                                               (file-truename buffer-file-name)
-                                               (file-truename org-queue-directory))))
-                                     (org-queue--long-save-p))))
-                            (buffer-list)))
-                  (ignore-errors (my-launch-anki))))))
 
 ;; Display and highlighting functions
 (defun my-pulse-highlight-current-line (&optional time)
