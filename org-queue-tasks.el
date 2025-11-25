@@ -1266,9 +1266,20 @@ Saves buffers and regenerates the task list for consistency."
     (my-show-current-outstanding-task-no-srs (or pulse t))))
 
 (defun org-queue-save-and-show-top ()
+  "Display the next task immediately, then save all modified Org files.
+   Uses idle timer to avoid saving *before* the visual switch occurs."
   (interactive)
   (org-queue-show-top)
-  (save-some-buffers t))
+  (my-pulse-highlight-current-line)
+  (run-with-idle-timer
+   0.05 nil
+   (lambda ()
+     (let ((message-log-max nil))  ; suppress "Saved..." spam if desired
+       (save-some-buffers t
+         (lambda ()
+           (and (derived-mode-p 'org-mode)
+                (buffer-modified-p)
+                (buffer-file-name))))))))
 
 (defvar org-queue--midnight-timer nil
   "Timer that triggers a daily midnight refresh of org-queue.")
