@@ -107,7 +107,7 @@
               (start-process "Anki" nil exe)
             (message "Anki executable not found on PATH."))))))))
 
-(defcustom org-queue-anki-buffer-size-threshold 131072
+(defcustom org-queue-anki-buffer-size-threshold 262144
   "Minimum buffer size (in characters) that counts as \"large\" for Anki auto-launch.
 Used by `my-launch-anki-if-large-buffer`."
   :type 'integer
