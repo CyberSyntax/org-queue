@@ -180,7 +180,7 @@ and the cdr is a cons cell representing the minimum and maximum priority values.
 (setq org-id-locations-file (expand-file-name "org-id-locations" org-queue-cache-dir)
       org-id-locations-file-relative t)
 
-(defcustom org-queue-directory nil
+(defcustom org-queue-directory "~/org-queue"
   "Base directory for org-queue files (searched recursively). Set this or `org-queue-file-roots`."
   :type '(choice (const :tag "Unset" nil) directory)
   :group 'org-queue)

@@ -36,11 +36,12 @@ If you already use Org for planning and SRS for memory, `org-queue` helps you wo
 ## Installation
 
 1. Put all `org-queue-*.el` files on your `load-path`, then in your init:
+
    ```elisp
    (require 'org-queue)
 
    ;; Base directory for recursive .org indexing (required)
-   (setq org-queue-directory "~/org")
+   (setq org-queue-directory "~/org-queue")
 
    ;; Start up automatically (installed via emacs-startup-hook by default)
    ;; To start manually instead, remove the hook after require:
@@ -49,6 +50,7 @@ If you already use Org for planning and SRS for memory, `org-queue` helps you wo
    ```
 
 2. (Optional) If you want a different global prefix than the default **`C-;`**, rebind the prefix map **after** `(require 'org-queue)`:
+
    ```elisp
    (global-set-key (kbd "C-c q") org-queue-prefix-map)  ;; example
    ```
@@ -78,7 +80,7 @@ The global prefix map is installed in **`org-queue-keys.el`** and bound to `C-;`
 
 **Optional keys (present when packages are available):**
 
-- If `org-web-tools` is loaded:  
+- If `org-web-tools` is loaded:
   `l` → `org-web-tools-insert-link-for-url`, `I` → `org-web-tools-insert-web-page-as-entry`.
 
 ---
@@ -86,6 +88,7 @@ The global prefix map is installed in **`org-queue-keys.el`** and bound to `C-;`
 ## Everyday flows
 
 ### 1) Schedule **and** prioritize (recommended)
+
 **`C-; s` → `org-queue-schedule-and-prioritize`**
 
 1. Prompts for **months** and schedules through the canonical path:
@@ -97,6 +100,7 @@ The global prefix map is installed in **`org-queue-keys.el`** and bound to `C-;`
 3. Runs as a **single-save** batch and performs a final `'stamp` micro‑update if stamping occurred.
 
 ### 2) Review (SRS) and prioritize
+
 **`C-; 1`** (again) or **`C-; 3`** (good)
 
 - Rates via `org-srs` and advances the **interleave phase** once (to keep head rotation consistent).
@@ -108,15 +112,18 @@ The global prefix map is installed in **`org-queue-keys.el`** and bound to `C-;`
 ## Queue model
 
 ### Two pools, one head
+
 - Build **non‑SRS** and **SRS** items in one pass across your files.
-- Interleave by **ratio** at the head. Default: `(1 . 4)` → 1 non‑SRS per 4 SRS in the head block (daytime).  
+- Interleave by **ratio** at the head. Default: `(1 . 4)` → 1 non‑SRS per 4 SRS in the head block (daytime).
   During **night shift**, SRS are **kept pending** and not interleaved.
 
 ### Start policy
+
 - `org-queue-mix-start` controls which pool starts the head:
   - `'non-srs` | `'srs` | `'rotate` (default; tracked by a phase variable) | `'auto` (earlier due item wins).
 
 ### Outstanding vs. Pending (today)
+
 - **Outstanding**: tasks with `available‑at ≤ now`.
 - **Pending (today)**: tasks due later today. They are auto‑promoted when they become available:
   - Always promoted when you call `org-queue-show-top`.
@@ -127,15 +134,19 @@ The global prefix map is installed in **`org-queue-keys.el`** and bound to `C-;`
 ## How availability is computed
 
 ### SRS items
+
 - `available‑at` is the **next due time** parsed from the SRS drawer (default drawer name: `:SRSITEMS:`).
 - The **Front** is shown; **Back/Answer** content is concealed when `org-queue-srs-conceal-answer` is non‑nil.
 
 ### Non‑SRS items
+
 - `available‑at = max(SCHEDULED, LAST_REPEAT + f(priority))` where:
+
   ```elisp
   f(p) = org-queue-non-srs-snooze-base-minutes
        + org-queue-non-srs-snooze-slope-minutes * p
   ```
+
 - **QFORCE** (property named by `org-queue-force-outstanding-property`, default `"QFORCE"`) marks an item as “today” even if scheduled in the future.
   - When `org-queue-qforce-ignores-last-repeat` is non‑nil, QFORCE makes items **available immediately** (ignores `:LAST_REPEAT:`).
 
@@ -162,8 +173,9 @@ The global prefix map is installed in **`org-queue-keys.el`** and bound to `C-;`
 ```
 
 Commands:
-- `my-set-priority-with-heuristics` — prompt for range 0–9 (defaults to current range if any), then set a numeric priority in it.  
-- `my-increase-priority-range` / `my-decrease-priority-range` — shift the active range and set a new numeric priority.  
+
+- `my-set-priority-with-heuristics` — prompt for range 0–9 (defaults to current range if any), then set a numeric priority in it.
+- `my-increase-priority-range` / `my-decrease-priority-range` — shift the active range and set a new numeric priority.
 - `my-ensure-priority-set` — ensures the current heading has a valid numeric priority (skips SRS parent entries).
 
 ---
@@ -171,14 +183,16 @@ Commands:
 ## Scheduling invariants & helpers
 
 Always-on rules (single canonical path):
+
 - Avoid **weekends** (push to next Monday).
 - Snap into **local work window** `[09:00, 18:00)`.
 - Apply a small **±10-minute jitter** kept inside the window.
 - Respect **`LAST_REPEAT` deferral** (non‑SRS) using the priority-based function `f(p)` above.
 
 Interactive helpers:
+
 - `my-find-schedule-weight` — derive a month “weight” from current SCHEDULED date (past/today → 0; no schedule → default).
-- `my-random-schedule MONTHS &optional n` — power‑law distribution across `MONTHS` with **priority‑aware bias** (earlier for higher priority).  
+- `my-random-schedule MONTHS &optional n` — power‑law distribution across `MONTHS` with **priority‑aware bias** (earlier for higher priority).
 - `my-advance-schedule` / `my-postpone-schedule` — continuously adjusted by priority and current schedule weight; never schedules into the past.
 - `org-queue-stamp-last-repeat-current` — stamps `:LAST_REPEAT:` on non‑SRS entries only (SRS and SRS-parents are skipped safely).
 
@@ -187,13 +201,15 @@ Interactive helpers:
 ## SRS integration
 
 - `org-srs` is optional; functions are gated to degrade gracefully when absent.
-- Rating commands (for muscle memory):  
+- Rating commands (for muscle memory):
   `org-queue-srs-rate-again` / `org-queue-srs-rate-good` and their **…-and-prioritize** variants.
-- Creating cards:  
+- Creating cards:
   `org-queue-srs-item-create-card` and `org-queue-srs-item-create-card-and-clean-stamp` (removes `:LAST_REPEAT:` if present, then creates a card).
 
 **Concealment:**
+
 - `org-queue-srs-conceal-answer` (default `t`) hides Back/Answer bodies. Change with:
+
   ```elisp
   (setq org-queue-srs-conceal-answer t)  ;; or nil
   ```
@@ -208,10 +224,10 @@ Interactive helpers:
     - `{{clozed#ID|…|ID}}` in place of selection.
     - Front on child heading(s) using `{{cloze#ID|[…]|ID}}` (ellipsis configurable via `org-interactive-cloze-ellipsis`).
   - Front content unwraps other cloze markers for clean display.
-- **Extract:**  
+- **Extract:**
   `org-interactive-extract` creates `{{extract#ID|…|ID}}` and a child with the cleaned payload.
-- **Rendering:**  
-  Automatic highlighting hides wrappers and styles payload (nested markers supported).  
+- **Rendering:**
+  Automatic highlighting hides wrappers and styles payload (nested markers supported).
   Toggle visibility: `org-toggle-syntax-markers`.
 
 ---
@@ -237,7 +253,8 @@ Interactive helpers:
   - Micro‑updates (schedule/priority edits) are idle‑coalesced and autosaved.
 
 **Automatic scheduling:**
-- On Emacs startup, `org-queue-startup` builds the queue and shows the head (hooked by default).  
+
+- On Emacs startup, `org-queue-startup` builds the queue and shows the head (hooked by default).
 - Midnight refresh reschedules itself daily, clears today’s pending, rebuilds queues, and triggers daily maintenance (if needed).
 
 ---
@@ -246,7 +263,7 @@ Interactive helpers:
 
 ```elisp
 ;; Where to scan .org files (recursive)
-(setq org-queue-directory "~/org")
+(setq org-queue-directory "~/org-queue")
 
 ;; Night shift (suppresses SRS at head)
 (setq org-queue-night-shift-enabled t)
@@ -269,12 +286,15 @@ Interactive helpers:
 ```
 
 **Notes & defaults (from code):**
+
 - Numeric priorities are configured globally:
+
   ```elisp
   (setq org-priority-highest 1
         org-priority-default 32
         org-priority-lowest  64)
   ```
+
 - File roster cache TTL: `org-queue-file-cache-ttl` (seconds, default **10**).
 - Cache dir (best-effort) under `var/org-queue/` respecting `no-littering` if present.
 
@@ -295,9 +315,11 @@ Interactive helpers:
   - `C-; s` for schedule+priority (non‑SRS),
   - `C-; 1` / `C-; 3` for rate+priority (SRS).
 - Want just “raw schedule” with the same math but without the combo prompt? Use:
+
   ```elisp
   (call-interactively 'my-random-schedule-command)
   ```
+
 - To keep the head clean, rely on the built‑in pruning:
   - Night shift suppresses SRS,
   - `org-queue-show-top` prunes not‑due items at the head immediately.
