@@ -9,6 +9,10 @@
 (require 'org-queue-config)
 (require 'org-queue-utils)
 
+;; Ensure this variable always exists, even with older org-srs versions.
+(defvar org-srs-review-item nil
+  "Current Org-srs review item (compat variable for org-queue bridge).")
+
 (defun org-srs-entry-p (pos)
   ;; unchanged logic from your file, but keep requiring org-srs-log if available
   (interactive (list (point)))
@@ -40,18 +44,31 @@
                     (setq location 'parent)))))))
         location))))
 
-;; Modern SRS rating functions for use outside review sessions
-;; Based on your suggested org-srs-review-rate-entry function
+;; SRS rating functions for use outside review sessions
 (defun org-srs-review-rate-entry (rating)
-  "Rate entry at point using modern org-srs API."
-  (org-srs-property-let ((org-srs-review-cache-p nil))
-    (apply
-     #'org-srs-review-rate
-     rating
-     (save-excursion
-       (org-srs-log-beginning-of-drawer)
-       (forward-line)
-       (org-srs-item-at-point)))))
+  "Rate entry at point using org-srs, inside or outside review sessions.
+
+Works with:
+- New org-srs (ARGS-based `org-srs-review-rate`).
+- Older org-srs that rely on the dynamic variable `org-srs-review-item`."
+  (unless (require 'org-srs nil t)
+    (user-error "org-srs package not available"))
+  (require 'org-srs-log nil t)
+  (let ((item-args
+         (save-excursion
+           (org-srs-log-beginning-of-drawer)
+           (forward-line)
+           ;; org-srs-item-at-point returns the ARGS that org-srs expects.
+           (org-srs-item-at-point))))
+    ;; Disable review cache while we rate this one item.
+    (org-srs-property-let ((org-srs-review-cache-p nil))
+      (condition-case _
+          ;; New API: rating + ARGS
+          (apply #'org-srs-review-rate rating item-args)
+        (wrong-number-of-arguments
+         ;; Old API: only RATING, `org-srs-review-item` is read dynamically.
+         (let ((org-srs-review-item item-args))
+           (org-srs-review-rate rating)))))))
 
 (defun org-queue-srs-rate-again ()
   "Rate current entry as 'again' using org-srs-review-rate-entry.
