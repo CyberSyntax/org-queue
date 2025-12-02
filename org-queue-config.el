@@ -185,22 +185,94 @@ and the cdr is a cons cell representing the minimum and maximum priority values.
   :type '(choice (const :tag "Unset" nil) directory)
   :group 'org-queue)
 
+;;; Per-day file list cache (lives inside `org-queue-directory`)
+
+(defun org-queue--file-list-cache-path ()
+  "Return the path of the per-day Org file list cache, or nil if unset.
+The cache lives inside `org-queue-directory` so it can be synced across machines."
+  (when org-queue-directory
+    (expand-file-name ".org-queue-files-cache.el"
+                      (file-name-as-directory org-queue-directory))))
+
+(defun org-queue--read-file-list-cache (root)
+  "If there is a valid cache for ROOT for today, return an absolute file list.
+Otherwise return nil. ROOT must be the truename of `org-queue-directory`."
+  (let ((cache (org-queue--file-list-cache-path)))
+    (when (and cache (file-exists-p cache))
+      (condition-case _err
+          (with-temp-buffer
+            (insert-file-contents cache)
+            (let* ((data  (read (current-buffer)))
+                   (date  (plist-get data :date))
+                   (files (plist-get data :files)))
+              (when (and (stringp date)
+                         (string= date (format-time-string "%Y-%m-%d"))
+                         (listp files))
+                (let ((root* (file-truename root)))
+                  ;; Rebuild absolute paths from relative ones and drop missing files.
+                  (delq nil
+                        (mapcar
+                         (lambda (rel)
+                           (let* ((abs (expand-file-name rel root*)))
+                             (when (file-exists-p abs)
+                               (file-truename abs))))
+                         files))))))
+        (error nil)))))
+
+(defun org-queue--write-file-list-cache (root files)
+  "Write FILES (absolute paths) as today's cache rooted at ROOT.
+Files are stored as paths relative to ROOT so the cache is portable across machines."
+  (let ((cache (org-queue--file-list-cache-path)))
+    (when cache
+      (let* ((dir      (file-name-directory cache))
+             (root*    (file-truename root))
+             (relfiles (mapcar (lambda (f)
+                                 (file-relative-name (file-truename f) root*))
+                               files))
+             (data     (list :date  (format-time-string "%Y-%m-%d")
+                             :files relfiles)))
+        (when (and dir (not (file-directory-p dir)))
+          (ignore-errors (make-directory dir t)))
+        (with-temp-file cache
+          (insert (prin1-to-string data)))))))
+
 ;; === File indexing ===
 (defun org-queue-reindex-files (&optional silent)
   "Return the absolute list of .org files scanned by org-queue.
+
 It searches recursively under `org-queue-directory`.
+
+Optimization:
+- First, try to read today's cached file list from
+  `org-queue-directory/.org-queue-files-cache.el`.
+- If the cache is missing or stale, rescan and refresh it.
+
 Returns an empty list if the directory is unset or does not exist.
 Does not read or modify `org-agenda-files`."
   (let* ((root (and org-queue-directory
                     (file-directory-p org-queue-directory)
-                    (file-truename org-queue-directory)))
-         (files (if root
-                    (mapcar #'file-truename
-                            (directory-files-recursively root "\\.org\\'"))
-                  '())))
-    (unless silent
-      (message "org-queue: indexed %d file(s)" (length files)))
-    files))
+                    (file-truename org-queue-directory))))
+    (if (not root)
+        (progn
+          (unless silent
+            (message "org-queue: no valid org-queue-directory; nothing to index"))
+          '())
+      ;; Try cache first.
+      (or
+       (let ((cached (org-queue--read-file-list-cache root)))
+         (when cached
+           (unless silent
+             (message "org-queue: using cached file list (%d file(s))"
+                      (length cached)))
+           cached))
+       ;; Cache miss or stale → rescan and refresh cache.
+       (let* ((files (mapcar #'file-truename
+                             (directory-files-recursively root "\\.org\\'"))))
+         (org-queue--write-file-list-cache root files)
+         (unless silent
+           (message "org-queue: indexed %d file(s) (cache refreshed)"
+                    (length files)))
+         files)))))
 
 ;;; Utility Functions
 (defun random-float (min max)
