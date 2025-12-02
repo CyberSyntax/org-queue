@@ -176,14 +176,28 @@ and the cdr is a cons cell representing the minimum and maximum priority values.
   (unless (file-directory-p org-queue-cache-dir)
     (make-directory org-queue-cache-dir t)))
 
-;; Keep the global org-id DB under our var/ directory
-(setq org-id-locations-file (expand-file-name "org-id-locations" org-queue-cache-dir)
-      org-id-locations-file-relative t)
-
 (defcustom org-queue-directory "~/org-queue"
   "Base directory for org-queue files (searched recursively). Set this or `org-queue-file-roots`."
   :type '(choice (const :tag "Unset" nil) directory)
   :group 'org-queue)
+
+;;; Org-ID configuration (per-directory, portable)
+
+(defun org-queue--configure-org-id-locations ()
+  "Configure `org-id` to store its DB inside `org-queue-directory`.
+
+The DB file is stored as `.org-queue-id-locations` in
+`org-queue-directory`, and all file paths are stored relative to that
+directory. This makes the ID database portable across machines that
+share the same org-queue tree (e.g., via sync)."
+  (when org-queue-directory
+    (let* ((root   (file-name-as-directory (file-truename org-queue-directory)))
+           (idfile (expand-file-name ".org-queue-id-locations" root)))
+      (setq org-id-locations-file         idfile
+            ;; Paths inside the DB are relative to the directory of IDFILE.
+            ;; Since IDFILE lives in org-queue-directory, paths will be
+            ;; relative to org-queue-directory.
+            org-id-locations-file-relative t))))
 
 ;;; Per-day file list cache (lives inside `org-queue-directory`)
 

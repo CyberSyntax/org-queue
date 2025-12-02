@@ -418,9 +418,21 @@ Runs on idle using `org-queue-maintenance-idle-delay`."
   "Whether org-id locations DB has been fully initialized this session.")
 
 (defun my-org-id-initialize-id-locations ()
-  "No-op: global org-id DB is not used in this design."
+  "Ensure `org-id` uses the org-queue-local ID database.
+
+The DB file lives in `org-queue-directory` and stores all paths
+relative to that directory, making it portable across machines
+that share the same org-queue tree."
   (unless my-org-id-locations-initialized
     (setq my-org-id-locations-initialized t)
+    ;; Configure org-id to use the org-queue-local DB file.
+    (org-queue--configure-org-id-locations)
+    ;; Optionally, eagerly load the file if it already exists, mainly
+    ;; to surface errors early and avoid stale warnings.
+    (when (and org-id-locations-file
+               (file-exists-p org-id-locations-file))
+      (ignore-errors
+        (org-id-locations-load)))
     nil))
 
 ;; Task identification functions
