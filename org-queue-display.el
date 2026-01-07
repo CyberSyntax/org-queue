@@ -28,6 +28,11 @@
 (defvar-local org-custom-overlays nil
   "List of overlays for custom syntax highlighting.")
 
+(defvar org-queue-suppress-anki nil
+  "When non-nil, suppress automatic Anki launching for this session.
+Use `org-queue-toggle-anki-suppression' to toggle.
+Resets to nil when Emacs restarts.")
+
 ;; ID generator for {{type#ID|...|ID}}
 (defconst org-custom-syntax--id-length 12)
 (defconst org-custom-syntax--id-charset
@@ -66,46 +71,57 @@
 (defun my-launch-anki ()
   "Run or focus Anki; never spawn duplicate instances."
   (interactive)
-  (if (org-queue-night-shift-p)
-      (progn
-        (message "Night shift active: not launching Anki.")
-        nil)
-    (cond
-     ;; Android
-     ((and (boundp 'my-android-p) my-android-p)
-     (message "Please open the Anki app manually on Android."))
-     ;; macOS
-     ((eq system-type 'darwin)
-      (if (and (fboundp 'my-anki-running-p) (my-anki-running-p))
-          (start-process "anki-activate" nil "osascript" "-e"
-                         "tell application id \"net.ankiweb.dtop\" to activate")
-        (start-process "anki-open" nil "/usr/bin/open" "-a" "Anki")))
-     ;; Windows
-     ((eq system-type 'windows-nt)
-      (if (and (fboundp 'my-anki-running-p) (my-anki-running-p))
-          (ignore-errors
-            (start-process "anki-activate" nil "powershell" "-NoProfile" "-Command"
-                           "$p=Get-Process -Name anki -ErrorAction SilentlyContinue; if($p){$ws=New-Object -ComObject WScript.Shell; $ws.AppActivate($p.Id)}"))
-        (w32-shell-execute "open" "anki.exe")))
-     ;; GNU/Linux
-     (t
-      (if (and (fboundp 'my-anki-running-p) (my-anki-running-p))
-          (cond
-           ((executable-find "wmctrl")
-            (or (zerop (call-process "wmctrl" nil nil nil "-x" "-a" "anki.Anki"))
-                (zerop (call-process "wmctrl" nil nil nil "-a" "Anki"))
-                (message "Anki is running; could not raise via wmctrl.")))
-           ((executable-find "xdotool")
-           (start-process
-             "anki-activate" nil "sh" "-c"
-             "xdotool search --onlyvisible --class anki | head -n1 | xargs -r -I{} xdotool windowactivate --sync {}"))
-           (t
-            (message "Anki is running; install wmctrl/xdotool to raise it.")))
-        (let ((exe (or (executable-find "anki")
-                       (executable-find "anki.bin"))))
-          (if exe
-              (start-process "Anki" nil exe)
-            (message "Anki executable not found on PATH."))))))))
+  (cond
+   (org-queue-suppress-anki
+    (message "Anki suppressed for this session.")
+    nil)
+   ((org-queue-night-shift-p)
+    (message "Night shift active: not launching Anki.")
+    nil)
+   ;; Android
+   ((and (boundp 'my-android-p) my-android-p)
+    (message "Please open the Anki app manually on Android."))
+   ;; macOS
+   ((eq system-type 'darwin)
+    (if (and (fboundp 'my-anki-running-p) (my-anki-running-p))
+        (start-process "anki-activate" nil "osascript" "-e"
+                       "tell application id \"net.ankiweb.dtop\" to activate")
+      (start-process "anki-open" nil "/usr/bin/open" "-a" "Anki")))
+   ;; Windows
+   ((eq system-type 'windows-nt)
+    (if (and (fboundp 'my-anki-running-p) (my-anki-running-p))
+        (ignore-errors
+          (start-process "anki-activate" nil "powershell" "-NoProfile" "-Command"
+                         "$p=Get-Process -Name anki -ErrorAction SilentlyContinue; if($p){$ws=New-Object -ComObject WScript.Shell; $ws.AppActivate($p.Id)}"))
+      (w32-shell-execute "open" "anki.exe")))
+   ;; GNU/Linux
+   (t
+    (if (and (fboundp 'my-anki-running-p) (my-anki-running-p))
+        (cond
+         ((executable-find "wmctrl")
+          (or (zerop (call-process "wmctrl" nil nil nil "-x" "-a" "anki.Anki"))
+              (zerop (call-process "wmctrl" nil nil nil "-a" "Anki"))
+              (message "Anki is running; could not raise via wmctrl.")))
+         ((executable-find "xdotool")
+          (start-process
+           "anki-activate" nil "sh" "-c"
+           "xdotool search --onlyvisible --class anki | head -n1 | xargs -r -I{} xdotool windowactivate --sync {}"))
+         (t
+          (message "Anki is running; install wmctrl/xdotool to raise it.")))
+      (let ((exe (or (executable-find "anki")
+                     (executable-find "anki.bin"))))
+        (if exe
+            (start-process "Anki" nil exe)
+          (message "Anki executable not found on PATH.")))))))
+
+(defun org-queue-toggle-anki-suppression ()
+  "Toggle Anki auto-launch suppression for this session.
+When suppressed, `my-launch-anki' will silently skip launching.
+Resets automatically when Emacs restarts."
+  (interactive)
+  (setq org-queue-suppress-anki (not org-queue-suppress-anki))
+  (message "Anki auto-launch %s for this session"
+           (if org-queue-suppress-anki "suppressed" "enabled")))
 
 (defcustom org-queue-anki-buffer-size-threshold 262144
   "Minimum buffer size (in characters) that counts as \"large\" for Anki auto-launch.
@@ -301,7 +317,9 @@ Defaults to 0.2 seconds."
         (org-overview)
         (org-reveal t)
         (org-show-entry)
-        (org-show-children))
+        (org-show-children)
+        ;; Highlight custom syntax only on narrowed subtree (fast)
+        (org-highlight-custom-syntax))
       (org-queue-srs-maybe-conceal-here)
       (add-hook 'kill-buffer-hook #'org-queue-srs--clear-conceal nil t)
       (recenter))))
@@ -634,29 +652,37 @@ Other cloze markers are unwrapped on the Front only."
         (message "Removed %d extract blocks" count)))
     (org-highlight-custom-syntax)))
 
-;; make the timer buffer-local
-(defvar-local org-custom-syntax-timer nil)
+;; NOTE: org-highlight-custom-syntax removed from org-mode-hook (T006)
+;; It was scanning entire 1MB+ files on open, causing 3-6s delays.
+;; Now called only on the narrowed subtree in my-display-task-at-marker.
+
+;; Custom syntax auto-update (T008 revised):
+;; Only run in NARROWED buffers (task display) where region is small.
+;; Skip in widened buffers to avoid 3-6s full-buffer scans.
+(defvar-local org-custom-syntax-timer nil
+  "Timer for debounced custom syntax update in narrowed buffers.")
 
 (defun org-update-custom-syntax-after-change (_beg _end _len)
-  "Update custom syntax highlighting after buffer changes."
-  (when (eq major-mode 'org-mode)
+  "Update custom syntax highlighting after changes, ONLY in narrowed buffers."
+  (when (and (eq major-mode 'org-mode)
+             (buffer-narrowed-p))  ; Only if narrowed (small region)
     (when org-custom-syntax-timer
       (cancel-timer org-custom-syntax-timer))
     (let ((buf (current-buffer)))
       (setq org-custom-syntax-timer
             (run-with-idle-timer
-             0.2 nil
+             0.15 nil
              (lambda (b)
-               (when (buffer-live-p b)
+               (when (and (buffer-live-p b)
+                          (with-current-buffer b (buffer-narrowed-p)))
                  (with-current-buffer b
                    (org-highlight-custom-syntax))))
              buf)))))
 
-(add-hook 'org-mode-hook 'org-highlight-custom-syntax)
 (add-hook 'org-mode-hook
           (lambda ()
             (add-hook 'after-change-functions
-                      'org-update-custom-syntax-after-change nil t)))
+                      #'org-update-custom-syntax-after-change nil t)))
 
 (defvar-local org-syntax-markers-visible nil
   "Whether syntax markers are visible.")

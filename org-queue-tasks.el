@@ -26,6 +26,101 @@ The set is centered on the current queue index, scanning forward with wrap."
 (defvar my-queue--last-head-key nil
   "Cache of the queue head key to debounce visibility limiting.")
 
+;; --- Cache variables for 'best next' validity checking ---
+;; These enable org-queue-show-top to short-circuit when:
+;; 1. Current time < head-valid-until
+;; 2. Head task key matches cached key
+;; 3. Generation counter has not changed
+
+(defvar org-queue--head-valid-until nil
+  "Timestamp when current head expires (nil = invalid).
+When non-nil, the cached head remains valid until this time.
+Used for TTL-based cache invalidation.")
+
+(defvar org-queue--head-task-key nil
+  "Unique key of cached head task for identity check.
+Used to verify the head task has not been replaced.")
+
+(defvar org-queue--last-promotion-time nil
+  "Timestamp when pending promotion last ran.
+Used for throttling promotion checks to avoid redundant work.")
+
+(defvar org-queue--pending-earliest-due nil
+  "Earliest :available-at in pending tasks.
+Enables O(1) check whether any pending task might be due now.")
+
+(defvar org-queue--queue-generation 0
+  "Counter incremented on any queue mutation.
+Enables fast staleness detection for cached computations.")
+
+(defvar org-queue--cached-generation nil
+  "Generation counter value when head cache was last set.
+Used by `org-queue--head-still-valid-p' to detect queue mutations.")
+
+(defcustom org-queue-head-cache-max-ttl 300
+  "Maximum seconds the head cache remains valid (safety bound).
+The actual validity may be shorter if pending tasks become due sooner
+or the head task's scheduling window ends earlier."
+  :type 'integer
+  :group 'org-queue)
+
+(defun org-queue--compute-head-validity (head-task)
+  "Compute when HEAD-TASK becomes invalid as the queue head.
+Returns an Emacs timestamp representing the earliest of:
+  1. Maximum TTL (org-queue-head-cache-max-ttl seconds from now)
+  2. When a pending task becomes due (org-queue--pending-earliest-due)
+  3. The head task's scheduling window end (if determinable)
+
+Returns nil if HEAD-TASK is nil (indicating immediate invalidity)."
+  (when head-task
+    (let* ((now (current-time))
+           (max-ttl-time (time-add now org-queue-head-cache-max-ttl))
+           (validity max-ttl-time))
+      ;; Check pending earliest due - if something from pending becomes due sooner
+      (when (and org-queue--pending-earliest-due
+                 (time-less-p org-queue--pending-earliest-due validity))
+        (setq validity org-queue--pending-earliest-due))
+      ;; Check head task's available-at for scheduling window considerations
+      ;; If the task has an :available-at in the future (shouldn't normally happen
+      ;; for head, but defensive), that's when it would truly start
+      (let ((head-avail (plist-get head-task :available-at)))
+        (when (and head-avail
+                   (time-less-p now head-avail)
+                   (time-less-p head-avail validity))
+          ;; Head isn't actually due yet - validity is when it becomes due
+          (setq validity head-avail)))
+      validity)))
+
+(defun org-queue--head-still-valid-p ()
+  "Return non-nil when the current queue head is still valid.
+This predicate enables `org-queue-save-and-show-top' to short-circuit
+when the cached head remains correct, avoiding expensive recomputation.
+
+Returns nil (cache invalid) if ANY of the following is true:
+- `my-outstanding-tasks-list' is nil (no queue)
+- `org-queue--head-valid-until' is nil or current time has passed it
+- The head task's marker is dead (buffer killed)
+- The head task's unique key differs from `org-queue--head-task-key'
+- `org-queue--queue-generation' differs from `org-queue--cached-generation'
+
+Uses short-circuit evaluation for efficiency."
+  (let ((head (car my-outstanding-tasks-list)))
+    (and
+     ;; 1. Queue must exist
+     my-outstanding-tasks-list
+     ;; 2. TTL must be valid and not expired
+     org-queue--head-valid-until
+     (time-less-p (current-time) org-queue--head-valid-until)
+     ;; 3. Head task marker must still be live
+     head
+     (let ((marker (plist-get head :marker)))
+       (and (markerp marker)
+            (marker-buffer marker)))
+     ;; 4. Head task key must match cached key
+     (equal (my--task-unique-key head) org-queue--head-task-key)
+     ;; 5. Generation must not have changed since cache was set
+     (eql org-queue--queue-generation org-queue--cached-generation))))
+
 (defun my-queue--buffer-at-index (idx)
   "Return the buffer of the queue entry at IDX or nil."
   (when (and my-outstanding-tasks-list
@@ -68,6 +163,38 @@ Does not reorder buffers; only buries buffers that just left the visible window.
             (setq my-queue--last-visible-buffers allowed-list)))))))
 
 ;; --- Lazy prune helpers: remove not-due items on departure/arrival ---
+
+(defun my-queue--task-due-p-fast (task)
+  "Fast due check using only cached :available-at. No marker resolution.
+Returns:
+- nil if task has :available-at in the future (definitely not due)
+- nil if SRS task during night shift
+- t otherwise (assume due; actual check happens on display)."
+  (let* ((avail (plist-get task :available-at))
+         (is-srs (plist-get task :srs)))
+    (cond
+     ;; SRS suppressed during night shift
+     ((and is-srs (org-queue-night-shift-p)) nil)
+     ;; If available-at is set and in the future, not due
+     ((and avail (time-less-p (org-queue--now) avail)) nil)
+     ;; Otherwise assume due (conservative: don't remove valid tasks)
+     (t t))))
+
+(defun my-queue--task-has-live-marker-p (task)
+  "Check if TASK has a live cached :marker. Does NOT attempt re-resolution.
+Returns the marker if live, nil otherwise."
+  (let ((m (plist-get task :marker)))
+    (and (markerp m)
+         (marker-buffer m)
+         (buffer-live-p (marker-buffer m))
+         m)))
+
+(defun my-queue--task-resolvable-p (task)
+  "Check if TASK can potentially be resolved (has :id or :file/:pos).
+Does NOT actually resolve - just checks if metadata exists."
+  (or (plist-get task :id)
+      (and (plist-get task :file)
+           (plist-get task :pos))))
 
 (defun my-queue--task-due-p (task)
   "Return non-nil if TASK is due now using :available-at when present.
@@ -117,30 +244,27 @@ If NO-SAVE is non-nil, do not write caches here (caller will save once)."
       (unless quiet
         (message "Removed 1 item from queue; now %d total."
                 (length my-outstanding-tasks-list)))
+      ;; Invalidate head cache - queue has mutated
+      (setq org-queue--head-valid-until nil)
+      (cl-incf org-queue--queue-generation)
       t)))
 
 (defun my-queue-filter-not-due-in-place (&optional quiet)
   "Remove all not-due items from the current queue list in one pass.
-Returns the number of removed items. Only touches items already in the queue."
+Returns the number of removed items. Only touches items already in the queue.
+Uses fast due-check (no marker resolution) for O(n) time."
   (when my-outstanding-tasks-list
     (let* ((old my-outstanding-tasks-list)
            (new (let (acc)
                   (dolist (task old (nreverse acc))
-                    (when (my-queue--task-due-p task)
+                    (when (my-queue--task-due-p-fast task)
                       (push task acc)))))
            (removed (- (length old) (length new))))
       (setq my-outstanding-tasks-list new)
       ;; Clamp index if needed
       (when (>= my-outstanding-tasks-index (length new))
         (setq my-outstanding-tasks-index (max 0 (1- (length new)))))
-      ;; If we removed anything and both pools still exist, re‑interleave.
-      (when (> removed 0)
-        (let ((has-non (seq-some (lambda (t) (not (plist-get t :srs)))
-                                 my-outstanding-tasks-list))
-              (has-srs (seq-some (lambda (t) (plist-get t :srs))
-                                 my-outstanding-tasks-list)))
-          (when (and has-non has-srs)
-            (org-queue--reinterleave-outstanding!))))
+      ;; Note: reinterleave removed from hot path (T001)
       ;; Tidy, save, refresh chooser
       (my-queue-limit-visible-buffers)
       (unless quiet
@@ -220,16 +344,37 @@ Does not touch SRS items order; O(n) stable insertion."
                           (seq-drop my-outstanding-tasks-list (1+ last-non-srs))))
           (setq my-outstanding-tasks-list (cons task my-outstanding-tasks-list)))))))
 
+(defun org-queue--pending-compute-earliest-due ()
+  "Recompute `org-queue--pending-earliest-due' from `my-today-pending-tasks'.
+Returns the earliest time, or nil if the pending list is empty."
+  (let ((earliest nil))
+    (dolist (task my-today-pending-tasks)
+      (let ((avail (plist-get task :available-at)))
+        (when (and avail (or (null earliest) (time-less-p avail earliest)))
+          (setq earliest avail))))
+    (setq org-queue--pending-earliest-due earliest)
+    earliest))
+
 (defun org-queue--promote-pending-due-now! ()
-  "Move any tasks from `my-today-pending-tasks` whose :available-at ≤ now
+  "Move any tasks from `my-today-pending-tasks` whose :available-at <= now
 into `my-outstanding-tasks-list`, preserving pool-local order.
 
-- Non‑SRS: keep the non‑SRS local ordering via
-  `org-queue--insert-non-srs-outstanding-sorted`.
+- Non-SRS: keep the non-SRS local ordering via
+  `org-queue--insert-non-srs-outstanding-sorted'.
 - SRS: append near the end of the existing SRS block (same approach used
   by the micro-update code).
 - Night shift: never promote SRS during night shift.
+
+Optimized: returns 0 immediately (O(1)) when `org-queue--pending-earliest-due'
+indicates nothing is due yet.
+
 Returns the number of tasks promoted."
+  ;; Early exit: if we know the earliest pending is still in the future, skip iteration
+  (let ((now (org-queue--now)))
+    (when (and org-queue--pending-earliest-due
+               (time-less-p now org-queue--pending-earliest-due))
+      (cl-return-from org-queue--promote-pending-due-now! 0)))
+  ;; Full promotion pass
   (let* ((now (org-queue--now))
          (night (org-queue-night-shift-p))
          (keep '())
@@ -270,9 +415,13 @@ Returns the number of tasks promoted."
           ;; Keep pending
           (push task keep))))
     (setq my-today-pending-tasks (nreverse keep))
-    ;; Keep the global non‑SRS:SRS ratio honest after promotions
+    ;; Recompute earliest due from remaining pending tasks
+    (org-queue--pending-compute-earliest-due)
+    ;; Note: reinterleave removed from hot path (T002)
     (when (> promoted 0)
-      (org-queue--reinterleave-outstanding!))
+      ;; Invalidate head cache - queue has mutated
+      (setq org-queue--head-valid-until nil)
+      (cl-incf org-queue--queue-generation))
     promoted))
 
 (defun org-queue--micro-update-current! (&optional reason)
@@ -337,14 +486,16 @@ REASON is informational ('priority 'schedule 'advance 'postpone 'review 'stamp '
             (if due-now
                 (org-queue--insert-non-srs-outstanding-sorted task)
               (push task my-today-pending-tasks)))))
-          ;; re‑shape outstanding list to maintain global ratio
-          (org-queue--reinterleave-outstanding!)
+        ;; Note: reinterleave removed from hot path (T003)
         ;; finalize
     (setq my-outstanding-tasks-index 0)
     (setq my-queue--last-visible-buffers nil
           my-queue--last-head-key nil)
     (setq org-queue--flag-counts-cache nil)
-    (my-queue-limit-visible-buffers)))))
+    (my-queue-limit-visible-buffers)
+    ;; Invalidate head cache - queue has mutated
+    (setq org-queue--head-valid-until nil)
+    (cl-incf org-queue--queue-generation)))))
 
 ;; Variables for task list management
 (defvar my-outstanding-tasks-list nil
@@ -839,7 +990,10 @@ Keeps the relative order inside the SRS pool and inside the non‑SRS pool (stab
     (let* ((start (org-queue--decide-mix-start a b non-srs srs))
            (mixed (org-queue--interleave-by-ratio-start
                    (copy-sequence non-srs) (copy-sequence srs) a b start)))
-      (setq my-outstanding-tasks-list mixed))))
+      (setq my-outstanding-tasks-list mixed))
+    ;; Invalidate head cache - queue has mutated
+    (setq org-queue--head-valid-until nil)
+    (cl-incf org-queue--queue-generation)))
 
 (defun org-queue--earliest-time (tasks)
   "Return earliest of :available-at or :srs-due in TASKS, or nil."
@@ -967,6 +1121,9 @@ SRS    : scoped if the next due timestamp (from :SRSITEMS:) has
             (push task acc))))
       (setq my-today-pending-tasks (nreverse acc)))
 
+    ;; Initialize earliest-due cache for O(1) promotion checks
+    (org-queue--pending-compute-earliest-due)
+
     (my-dedupe-outstanding-tasks)
 
     (let ((todo-count (length (cl-remove-if-not
@@ -980,7 +1137,10 @@ SRS    : scoped if the next due timestamp (from :SRSITEMS:) has
                (length my-today-pending-tasks)))
 
     (setq my-outstanding-tasks-index 0)
-    (my-queue-limit-visible-buffers)))
+    (my-queue-limit-visible-buffers)
+    ;; Invalidate head cache - queue has mutated
+    (setq org-queue--head-valid-until nil)
+    (cl-incf org-queue--queue-generation)))
 
 (defun my-remove-current-task ()
   "Remove the task at the current index from the queue and keep buffers tidy.
@@ -1029,11 +1189,7 @@ Behavior:
           (setq my-outstanding-tasks-index (1- new-length))))
       (when (buffer-live-p removed-buffer)
         (bury-buffer removed-buffer))
-      ;; Keep global ratio honest after a deletion
-      (let ((has-srs (seq-some (lambda (t) (plist-get t :srs))     my-outstanding-tasks-list))
-            (has-non (seq-some (lambda (t) (not (plist-get t :srs))) my-outstanding-tasks-list)))
-        (when (and has-srs has-non)
-          (org-queue--reinterleave-outstanding!)))
+      ;; Note: reinterleave removed from hot path (T004)
       ;; Limit visible queue buffers (no global MRU reordering)
       (my-queue-limit-visible-buffers)
       ;; Save
@@ -1231,67 +1387,92 @@ Saves buffers and regenerates the task list for consistency."
 
 (defun org-queue-show-top (&optional pulse)
   (interactive)
-  (my-ensure-task-list-present)
-  ;; Promote anything that just became available (can be O(n), keep it)
-  (ignore-errors (org-queue--promote-pending-due-now!))
-  (let ((head (car my-outstanding-tasks-list)))
-    (when (and head (not (plist-get head :srs)))
-      (my-launch-anki)))
-  (if (or (null my-outstanding-tasks-list)
-          (zerop (length my-outstanding-tasks-list)))
-      (message "No outstanding tasks found.")
-    (setq my-outstanding-tasks-index 0)
-    (let ((pruned 0)
-          (dropped 0)
-          (org-queue--suppress-ui t))  ;; suppress chooser churn while pruning
-      ;; 1) Prune head items that aren't due yet
-      (while (and my-outstanding-tasks-list
-                  (>= my-outstanding-tasks-index 0)
-                  (< my-outstanding-tasks-index (length my-outstanding-tasks-list))
-                  (not (my-queue--task-due-p (nth 0 my-outstanding-tasks-list))))
-        (my-queue--remove-index 0 t t)       ;; quiet remove, no save
-        (setq my-outstanding-tasks-index 0)
-        (setq pruned (1+ pruned)))
-      ;; 2) Drop head items whose marker/buffer is dead
-      (while (and my-outstanding-tasks-list
-                  (let* ((task (nth 0 my-outstanding-tasks-list))
-                         (m (my-extract-marker task)))
-                    (not (and (markerp m)
-                              (marker-buffer m)
-                              (buffer-live-p (marker-buffer m))))))
-        (my-queue--remove-index 0 t t)
-        (setq my-outstanding-tasks-index 0)
-        (setq dropped (1+ dropped)))
-      ;; 3) If anything changed, re‑shape and ensure head is due
-      (when (> (+ pruned dropped) 0)
-        (let ((had-srs (seq-some (lambda (t) (plist-get t :srs))     my-outstanding-tasks-list))
-              (had-non (seq-some (lambda (t) (not (plist-get t :srs))) my-outstanding-tasks-list)))
-          (when (and had-srs had-non)
-            (org-queue--reinterleave-outstanding!)))
-        ;; One quick head prune pass in case re‑interleave brought a not‑due to head.
-        (let ((org-queue--suppress-ui t))
-          (while (and my-outstanding-tasks-list
-                      (not (my-queue--task-due-p (nth 0 my-outstanding-tasks-list))))
-            (my-queue--remove-index 0 t t)
-            (setq my-outstanding-tasks-index 0)))))
-    ;; 4) Show current head immediately; feels instant
-    (my-show-current-outstanding-task-no-srs (or pulse t))))
+  (if (org-queue--head-still-valid-p)
+      ;; Fast path: cache hit -- just show and return (O(1))
+      (my-show-current-outstanding-task-no-srs (or pulse t))
+    ;; Slow path: cache miss -- full validation and cache refresh
+    (my-ensure-task-list-present)
+    ;; Promote anything that just became available (can be O(n), keep it)
+    (ignore-errors (org-queue--promote-pending-due-now!))
+    (let ((head (car my-outstanding-tasks-list)))
+      (when (and head (not (plist-get head :srs)))
+        (my-launch-anki)))
+    (if (or (null my-outstanding-tasks-list)
+            (zerop (length my-outstanding-tasks-list)))
+        (message "No outstanding tasks found.")
+      (setq my-outstanding-tasks-index 0)
+      (let ((pruned 0)
+            (dropped 0)
+            (org-queue--suppress-ui t))  ;; suppress chooser churn while pruning
+        ;; 1) Prune head items that aren't due yet (FAST: no marker resolution)
+        (while (and my-outstanding-tasks-list
+                    (>= my-outstanding-tasks-index 0)
+                    (< my-outstanding-tasks-index (length my-outstanding-tasks-list))
+                    (not (my-queue--task-due-p-fast (nth 0 my-outstanding-tasks-list))))
+          (my-queue--remove-index 0 t t)       ;; quiet remove, no save
+          (setq my-outstanding-tasks-index 0)
+          (setq pruned (1+ pruned)))
+        ;; 2) Drop truly unresolvable tasks (no ID, no file/pos)
+        ;; NOTE: Dead markers are OK - they'll be re-resolved on display.
+        ;; This only drops tasks that can NEVER be resolved.
+        (while (and my-outstanding-tasks-list
+                    (let ((task (nth 0 my-outstanding-tasks-list)))
+                      (not (or (my-queue--task-has-live-marker-p task)
+                               (my-queue--task-resolvable-p task)))))
+          (my-queue--remove-index 0 t t)
+          (setq my-outstanding-tasks-index 0)
+          (setq dropped (1+ dropped)))
+        ;; 3) If anything changed, one more fast prune pass
+        ;; Note: reinterleave removed from hot path (T005)
+        (when (> (+ pruned dropped) 0)
+          (let ((org-queue--suppress-ui t))
+            (while (and my-outstanding-tasks-list
+                        (not (my-queue--task-due-p-fast (nth 0 my-outstanding-tasks-list))))
+              (my-queue--remove-index 0 t t)
+              (setq my-outstanding-tasks-index 0)))))
+      ;; 4) Update head cache for next call
+      (let ((new-head (car my-outstanding-tasks-list)))
+        (when new-head
+          (setq org-queue--head-task-key (my--task-unique-key new-head))
+          (setq org-queue--head-valid-until (org-queue--compute-head-validity new-head))
+          (setq org-queue--cached-generation org-queue--queue-generation)))
+      ;; 5) Show current head immediately; feels instant
+      (my-show-current-outstanding-task-no-srs (or pulse t)))))
+
+(defvar org-queue--roam-hooks-to-skip
+  '(org-roam-db-autosync--try-update-on-save-h
+    org-roam-overlay-redisplay
+    org-roam-ui--on-save)
+  "org-roam after-save hooks to skip during org-queue saves (T009).
+These hooks update SQLite DB and UI on every save, causing 3-6s blocking
+in large directories (400+ files).")
+
+(defun org-queue--save-buffer-fast ()
+  "Save current buffer with org-roam hooks temporarily disabled."
+  (let ((after-save-hook
+         (cl-remove-if
+          (lambda (fn) (memq fn org-queue--roam-hooks-to-skip))
+          after-save-hook)))
+    (save-buffer)))
 
 (defun org-queue-save-and-show-top ()
   "Display the next task immediately, then save all modified Org files.
-   Uses idle timer to avoid saving *before* the visual switch occurs."
+Bypasses org-roam hooks to avoid 3-6s blocking on large directories (T009)."
   (interactive)
   (org-queue-show-top)
   (my-pulse-highlight-current-line)
-  (run-with-idle-timer
-   0.05 nil
-   (lambda ()
-     (let ((message-log-max nil))  ; suppress "Saved..." spam if desired
-       (save-some-buffers t
-         (lambda ()
-           (and (derived-mode-p 'org-mode)
-                (buffer-modified-p)
-                (buffer-file-name))))))))
+  ;; Save immediately but bypass expensive org-roam hooks
+  (let ((message-log-max nil)
+        (bufs (cl-remove-if-not
+               (lambda (b)
+                 (and (buffer-live-p b)
+                      (buffer-file-name b)
+                      (buffer-modified-p b)
+                      (with-current-buffer b (derived-mode-p 'org-mode))))
+               (buffer-list))))
+    (dolist (buf bufs)
+      (with-current-buffer buf
+        (org-queue--save-buffer-fast)))))
 
 (defvar org-queue--midnight-timer nil
   "Timer that triggers a daily midnight refresh of org-queue.")
