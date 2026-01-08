@@ -1580,52 +1580,71 @@ Schedules a single micro-update + autosave (+ optional show-top) after brief idl
 
 (defun org-queue-maintenance ()
   "Run org-queue maintenance.
-Runs the complete maintenance pipeline and flushes a single save at the end."
+Runs the complete maintenance pipeline and flushes a single save at the end.
+
+Anki is suppressed during maintenance operations and saves, then restored
+to its previous state. This preserves user intent: if Anki was already
+suppressed (manual toggle or night-shift), it stays suppressed after
+maintenance. If it was enabled, it becomes enabled again."
   (interactive)
   (my-org-id-initialize-id-locations)
 
-  ;; Suppress UI refresh during the heavy run; batch-suppress saves and flush once at the end.
-  (let ((org-queue--suppress-ui t))
-    (org-queue--without-autosave
-      (progn
-        ;; Optional: org-roam one-shot DB sync (no autosync hooks)
-        (when (require 'org-roam nil t)
-          (let ((warning-minimum-level :error))
-            (when (fboundp 'org-roam-db-sync)
-              (ignore-errors (org-roam-db-sync)))))
+  ;; Suppress Anki during maintenance, restore afterward.
+  ;; Edge case: if already suppressed (night-shift or manual toggle),
+  ;; the saved value preserves that state after maintenance completes.
+  (let ((saved-suppress-anki org-queue-suppress-anki))
+    (unwind-protect
+        (progn
+          (setq org-queue-suppress-anki t)  ;; Suppress during maintenance
 
-        ;; Ensure base invariants
-        (when (fboundp 'my-ensure-priorities-and-schedules-for-all-headings)
-          (my-ensure-priorities-and-schedules-for-all-headings))
+          ;; Suppress UI refresh during the heavy run; batch-suppress saves.
+          (let ((org-queue--suppress-ui t))
+            (org-queue--without-autosave
+              (progn
+                ;; Optional: org-roam one-shot DB sync (no autosync hooks)
+                (when (require 'org-roam nil t)
+                  (let ((warning-minimum-level :error))
+                    (when (fboundp 'org-roam-db-sync)
+                      (ignore-errors (org-roam-db-sync)))))
 
-        ;; Advance near-future schedules so the queue is meaningful today
-        (when (fboundp 'my-auto-advance-schedules)
-          (my-auto-advance-schedules 8))
+                ;; Ensure base invariants
+                (when (fboundp 'my-ensure-priorities-and-schedules-for-all-headings)
+                  (my-ensure-priorities-and-schedules-for-all-headings))
 
-        ;; Reduce noise
-        (my-auto-postpone-overdue-tasks)
-        (my-postpone-duplicate-priority-tasks)
+                ;; Advance near-future schedules so the queue is meaningful today
+                (when (fboundp 'my-auto-advance-schedules)
+                  (my-auto-advance-schedules 8))
 
-        ;; Enforce "higher priority caps lower priority counts"
-        (when (fboundp 'my-enforce-priority-constraints)
-          (my-enforce-priority-constraints))
+                ;; Reduce noise
+                (my-auto-postpone-overdue-tasks)
+                (my-postpone-duplicate-priority-tasks)
 
-        ;; Re-ensure after changes
-        (when (fboundp 'my-ensure-priorities-and-schedules-for-all-headings)
-          (my-ensure-priorities-and-schedules-for-all-headings))
+                ;; Enforce "higher priority caps lower priority counts"
+                (when (fboundp 'my-enforce-priority-constraints)
+                  (my-enforce-priority-constraints))
 
-        ;; Keep only the first consecutive task per file
-        (when (fboundp 'my-postpone-consecutive-same-file-tasks)
-          (my-postpone-consecutive-same-file-tasks))
+                ;; Re-ensure after changes
+                (when (fboundp 'my-ensure-priorities-and-schedules-for-all-headings)
+                  (my-ensure-priorities-and-schedules-for-all-headings))
 
-        ;; Remove DONE cruft
-        (when (fboundp 'my-cleanup-all-done-tasks)
-          (my-cleanup-all-done-tasks)))
+                ;; Keep only the first consecutive task per file
+                (when (fboundp 'my-postpone-consecutive-same-file-tasks)
+                  (my-postpone-consecutive-same-file-tasks))
 
-      ;; Rebuild/refresh lists (single canonical path)
-      (my-get-outstanding-tasks)))
+                ;; Remove DONE cruft
+                (when (fboundp 'my-cleanup-all-done-tasks)
+                  (my-cleanup-all-done-tasks)))
 
-  (save-some-buffers t)
+              ;; Rebuild/refresh lists (single canonical path)
+              (my-get-outstanding-tasks)))
+
+          ;; Save while Anki still suppressed (before-save-hook may trigger
+          ;; my-launch-anki-if-large-buffer, which should be suppressed)
+          (save-some-buffers t))
+
+      ;; Restore Anki suppression state (runs even on error)
+      (setq org-queue-suppress-anki saved-suppress-anki)))
+
   (delete-other-windows)
   (org-queue-show-top t)
   (org-queue--write-maintenance-stamp)
