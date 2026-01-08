@@ -310,6 +310,7 @@ When `gptel` is installed, sending a request automatically launches Anki (daytim
 - Postpone overdue TODOs
 - Clean DONE tasks (remove SCHEDULED/PRIORITY)
 - Drop unresolved ID entries
+- Temporarily suppress Anki during maintenance and saving, then restore the prior suppression state
 
 A midnight timer rebuilds queues and runs maintenance daily.
 
