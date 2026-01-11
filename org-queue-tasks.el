@@ -1549,7 +1549,6 @@ Schedules a single micro-update + autosave (+ optional show-top) after brief idl
   otherwise, build and save the queue.
 - Schedule initial task display (no automatic SRS/Anki here)."
   (interactive)
-  (my-launch-anki)
   ;; IDs first
   (my-org-id-initialize-id-locations)
 
