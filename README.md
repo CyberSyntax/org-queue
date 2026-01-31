@@ -39,12 +39,12 @@ org-queue scans `.org` files recursively under `org-queue-directory`. It does no
 | `org-queue-srs-bridge.el` | org-srs integration, rating commands |
 | `org-queue-id-guard.el` | ID resolution with timeout, auto-drop unresolved |
 | `org-queue-chooser.el` | Tabulated list UI for browsing/bulk operations |
-| `org-queue-keys.el` | Global keybindings (prefix `C-;`) |
+| `org-queue-keys.el` | Global keybindings (prefix `C-q`) |
 | `org-queue-gptel-bridge.el` | gptel integration (launches Anki after AI requests) |
 
 ## Keybindings
 
-Default prefix: `C-;`
+Default prefix: `C-q`
 
 ### Core Navigation
 
