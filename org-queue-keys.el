@@ -46,7 +46,7 @@
   (define-key org-queue-prefix-map (kbd "3") #'org-queue-srs-rate-good-and-prioritize))
 
 ;; Install the prefix globally
-(global-set-key (kbd "C-;") org-queue-prefix-map)
+(global-set-key (kbd "C-q") org-queue-prefix-map)
 
 (provide 'org-queue-keys)
 ;;; org-queue-keys.el ends here
